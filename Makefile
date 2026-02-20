@@ -8,7 +8,7 @@ all: server
 
 server: server.o
 clean:
-	rm -f *.o
+	rm -f *.o server
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
