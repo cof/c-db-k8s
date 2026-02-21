@@ -70,7 +70,7 @@ void process_line(const char *line)
 }
 
 
-struct strvec {
+struct span {
     char *base;
     size_t len;
 };
@@ -127,7 +127,7 @@ int read_sock(int fd, struct rwbuf *buf)
     return tr;
 }
 
-int read_line(struct rwbuf *buf, struct strvec *line)
+int read_line(struct rwbuf *buf, struct span *line)
 {
     char *eol = memchr(buf->rptr, '\n', buf->len);
     if (eol) {
@@ -148,7 +148,6 @@ int read_line(struct rwbuf *buf, struct strvec *line)
         return len > MAX_LINE ? ERR_READLINE : (int) len;
     }
 
-
     // incomplete line
     if (buf->len >= MAX_LINE) return ERR_READLINE;
 
@@ -165,7 +164,7 @@ int read_line(struct rwbuf *buf, struct strvec *line)
 void handle_client(int fd)
 {
     struct rwbuf buf;
-    struct strvec line;
+    struct span line;
     int rc;
 
     init_rwbuf(&buf);
