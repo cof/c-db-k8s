@@ -9,9 +9,9 @@
 #include <unistd.h>
 #include <errno.h>
 
+#include "util.h"
+#include "db.h"
 
-#define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
-#define STR_LIT(s) (s), (sizeof(s) - 1)
 
 #define MAX_LINE 256
 #define TCP_PORT 6379
@@ -64,6 +64,18 @@ void log_info(const char *fmt, ...)
     vfprintf(stdout, fmt, args);
     va_end(args);
     fprintf(stdout, "\n");
+}
+
+int log_err(int ec, const char *fmt, ...)
+{
+    va_list args;  
+
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+    fprintf(stderr, "\n");
+
+    return ec;
 }
 
 
@@ -124,20 +136,6 @@ int accept_client(int sfd)
 }
 
 
-struct str_slice {
-    char *ptr;
-    size_t len;
-};
-
-static inline struct str_slice make_slice(char *str, size_t len)
-{
-    struct str_slice dst;
-
-    dst.ptr = str;
-    dst.len = len;
-
-    return dst;
-}
 
 struct rwbuf {
     size_t cap; // fixed size 
@@ -225,45 +223,10 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
     return 0;
 }
 
-void str2lower(char *str, size_t len)
-{
-    while (len) {
-        int ch = *str;
-        if (ch >= 'A' && ch <= 'Z') ch += 0x20;
-        *str++ = ch;
-        len--;
-    }
-}
 
-void str2upper(char *str, size_t len)
-{
-    while (len) {
-        int ch = *str;
-        if (ch >= 'a' && ch <= 'z') ch -= 0x20;
-        *str++ = ch;
-        len--;
-    }
-}
-
-static inline int iswhite(int ch) 
-{
-    return ch == ' ' || ch == '\t' || ch == '\v' || ch == '\r' || ch == '\t' ? 1 : 0;
-}
-
-static struct str_slice ltrim(struct str_slice str)
-{
-    while (str.len && iswhite(*str.ptr)) {
-        str.ptr++;
-        str.len--;
-    }
-
-    return str;
-}
-
-static int send_str(int fd, const char *str)
+static int send_str(int fd, const char *str, size_t len)
 {
     char buf[100];
-    size_t len = strlen(str);
     if (len > sizeof(buf) -2) return ERR_BUFSIZE;
 
     char *dst = buf;
@@ -277,30 +240,63 @@ static int send_str(int fd, const char *str)
     return rc == -1  ? ERR_WRITESOCK : (int) rc;
 }
 
+static int send_slice(int fd, struct str_slice str)
+{
+    return send_str(fd, str.ptr, str.len);
+}
+
 static int cmd_set(int fd, struct str_slice args)
 {
-    return send_str(fd, "OK");
+    char *pos = memchr(args.ptr, ' ', args.len);
+    int key_len = pos ? pos - args.ptr : args.len;
+
+    struct str_slice key = make_slice(args.ptr, key_len);
+    struct str_slice val = ltrim(make_slice(pos, args.len - key_len));
+    struct str_slice res;
+
+    if (!key.len || ! val.len)
+        res = make_slice(STR_LIT("FAIL"));
+    else if (!db_set(key, val)) 
+        res = make_slice(STR_LIT("FAIL"));
+    else
+        res = make_slice(STR_LIT("OK"));
+
+    return send_slice(fd, res);
 }
 
-static int cmd_get(int fd, struct str_slice args)
+static int cmd_get(int fd, struct str_slice key)
 {
-    return send_str(fd, "OK");
+    struct str_slice res = db_get(key);
+
+    if (!res.ptr)
+        res = make_slice(STR_LIT("FAIL"));
+
+    return send_slice(fd, res);
 }
 
-static int cmd_del(int fd, struct str_slice args)
+static int cmd_del(int fd, struct str_slice key)
 {
-    return send_str(fd, "OK");
+    struct str_slice res;
+
+    if (!key.len)
+        res = make_slice(STR_LIT("FAIL"));
+    else if (!db_del(key))
+        res = make_slice(STR_LIT("FAIL"));
+    else 
+        res = make_slice(STR_LIT("OK"));
+
+    return send_slice(fd, res);
 }
 
 static int cmd_quit(int fd, struct str_slice args)
 {
-    send_str(fd, "OK");
+    send_str(fd, STR_LIT("OK"));
     return ERR_QUIT;
 }
 
 static int cmd_unsupp(int fd, struct str_slice args)
 {
-    return send_str(fd, "UNSUPP");
+    return send_str(fd, STR_LIT("UNSUPP"));
 }
 
 static struct {
@@ -369,12 +365,9 @@ void handle_client(int fd)
 
 int main(int argc, char *argv[])
 {
+    if (!db_init()) return log_err(-1, "db_init failed");
     int sfd = setup_listener();
-
-    if (sfd < 0) {
-        fprintf(stderr, "setup_listener failed\n");
-        return -1;
-    }
+    if (sfd < 0) return log_err(-1, "setup_listener failed");
 
     while (1) {
         int fd = accept_client(sfd);

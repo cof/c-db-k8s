@@ -4,7 +4,7 @@
 CC = gcc
 
 #CFLAGS = -Wall -Wextra -O2
-CFLAGS = -Wall -O2
+CFLAGS = -Wall -O2 -Isrc -MMD -MP
 ifdef DEBUG 
 	CFLAGS += -O0 -g
 endif
@@ -22,8 +22,10 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 
-SERVER_SRCS = src/server.c
+SERVER_SRCS = src/db.c src/server.c
 SERVER_OBJS = $(SERVER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+SERVER_DEPS = $(SERVER_OBJS:.o=.d)
+-include $(SERVER_DEPS)
 
 server: $(SERVER_OBJS)
 	$(CC) $(SERVER_OBJS) -o $@
@@ -36,7 +38,7 @@ test: server
 	./server & SERVER_PID=$$!; \
     timeout 3 bash -c 'until nc -z localhost 6379; do sleep 0.1; done'; \
 	echo "SET foo bar" | nc -w 1 -N localhost 6379 | grep -q "OK" || echo "SET failed"; \
-	echo "GET foo" | nc -w 1 -N localhost 6379 | grep -q "OK" || echo "GET failed"; \
+	echo "GET foo" | nc -w 1 -N localhost 6379 | grep -q "bar" || echo "GET failed"; \
 	echo "DEL foo" | nc -w 1 -N localhost 6379 | grep -q "OK" || echo "DEL failed"; \
 	kill $$SERVER_PID
 
