@@ -1,16 +1,70 @@
 #include <stdio.h>
 #include <stdlib.h> 
+#include <stdarg.h>
 #include <string.h> 
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netdb.h> 
 #include <unistd.h>
 #include <errno.h>
 
+
+#define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
+#define STR_LIT(s) (s), (sizeof(s) - 1)
+
+#define MAX_LINE 256
 #define TCP_PORT 6379
 #define ERR_READSOCK -1
-#define ERR_CLOSESOCK -2
-#define ERR_READLINE -3
+#define ERR_WRITESOCK -2
+#define ERR_CLOSESOCK -3
+#define ERR_READLINE -4
+#define ERR_BUFSIZE -5
+#define ERR_SOCKNAME -6
+#define ERR_QUIT -7
+
+#define MAX_HOSTPORT (3 + NI_MAXHOST + NI_MAXSERV)
+
+int get_addr(int sockfd, char *dst, int dst_len)
+{
+    struct sockaddr_storage addr;
+    socklen_t len = sizeof(addr);
+    int rc;
+
+    rc = getsockname(sockfd, (struct sockaddr *)&addr, &len);
+    if (rc != 0) return ERR_SOCKNAME;
+
+    char host[NI_MAXHOST];
+    char port[NI_MAXSERV];
+
+    rc = getnameinfo((struct sockaddr *) &addr, len, 
+        host, sizeof(host),
+        port, sizeof(port),
+        NI_NUMERICHOST | NI_NUMERICSERV
+    );
+
+    if (rc != 0) return ERR_SOCKNAME;
+
+    if (addr.ss_family == AF_INET6) {
+        rc = snprintf(dst, dst_len, "[%s]:%s", host, port);
+    }
+    else {
+        rc = snprintf(dst, dst_len, "%s:%s", host, port);
+    }
+
+    return rc > 0 ? 0 : ERR_SOCKNAME;
+}
+
+
+void log_info(const char *fmt, ...)
+{
+    va_list args;  
+
+    va_start(args, fmt);
+    vfprintf(stdout, fmt, args);
+    va_end(args);
+    fprintf(stdout, "\n");
+}
 
 
 int setup_listener(void)
@@ -46,8 +100,15 @@ int setup_listener(void)
     if (listen(fd, SOMAXCONN) == -1) {
         perror("listn addr");
         return -1;
-
     }
+
+    char tmp[MAX_HOSTPORT];
+    if (get_addr(fd, tmp, sizeof(tmp)) != 0) {
+        perror("get_addr failed");
+        return -1;
+    }
+
+    log_info("Database listening on %s", tmp);
 
     return fd;
 }
@@ -62,18 +123,21 @@ int accept_client(int sfd)
     return cfd;
 }
 
-#define MAX_LINE 256
 
-void process_line(const char *line)
-{
-    puts(line);
-}
-
-
-struct span {
-    char *base;
+struct str_slice {
+    char *ptr;
     size_t len;
 };
+
+static inline struct str_slice make_slice(char *str, size_t len)
+{
+    struct str_slice dst;
+
+    dst.ptr = str;
+    dst.len = len;
+
+    return dst;
+}
 
 struct rwbuf {
     size_t cap; // fixed size 
@@ -120,16 +184,16 @@ int read_sock(int fd, struct rwbuf *buf)
 
         // socket has less 
         break;
-
     }
 
     // total read or errcode
     return tr;
 }
 
-int read_line(struct rwbuf *buf, struct span *line)
+int read_line(struct rwbuf *buf, struct str_slice *line)
 {
     char *eol = memchr(buf->rptr, '\n', buf->len);
+
     if (eol) {
         // found line
         size_t len = eol - buf->rptr + 1;
@@ -137,12 +201,12 @@ int read_line(struct rwbuf *buf, struct span *line)
         // remove from buffer
         buf->len -= len ;
         buf->rptr += len;
-        // chop cr/lf
+        // chop cr/lf - TODO remove this ?
         if (len && str[len - 1] == '\n') len--;
         if (len && str[len - 1] == '\r') len--;
         str[len] = '\0';
         // store line
-        line->base = str;
+        line->ptr = str;
         line->len = len;
         // have line or error
         return len > MAX_LINE ? ERR_READLINE : (int) len;
@@ -157,14 +221,135 @@ int read_line(struct rwbuf *buf, struct span *line)
         buf->rptr = buf->data;
     }
 
+    // wait for eol
     return 0;
+}
+
+void str2lower(char *str, size_t len)
+{
+    while (len) {
+        int ch = *str;
+        if (ch >= 'A' && ch <= 'Z') ch += 0x20;
+        *str++ = ch;
+        len--;
+    }
+}
+
+void str2upper(char *str, size_t len)
+{
+    while (len) {
+        int ch = *str;
+        if (ch >= 'a' && ch <= 'z') ch -= 0x20;
+        *str++ = ch;
+        len--;
+    }
+}
+
+static inline int iswhite(int ch) 
+{
+    return ch == ' ' || ch == '\t' || ch == '\v' || ch == '\r' || ch == '\t' ? 1 : 0;
+}
+
+static struct str_slice ltrim(struct str_slice str)
+{
+    while (str.len && iswhite(*str.ptr)) {
+        str.ptr++;
+        str.len--;
+    }
+
+    return str;
+}
+
+static int send_str(int fd, const char *str)
+{
+    char buf[100];
+    size_t len = strlen(str);
+    if (len > sizeof(buf) -2) return ERR_BUFSIZE;
+
+    char *dst = buf;
+    dst += sprintf(dst, "%.*s", (int) len, str);
+    *dst++ = '\r';
+    *dst++ = '\n';
+    len = dst - buf;
+
+    // TODO buffer up writes in case full
+    size_t rc = write(fd, buf, len);
+    return rc == -1  ? ERR_WRITESOCK : (int) rc;
+}
+
+static int cmd_set(int fd, struct str_slice args)
+{
+    return send_str(fd, "OK");
+}
+
+static int cmd_get(int fd, struct str_slice args)
+{
+    return send_str(fd, "OK");
+}
+
+static int cmd_del(int fd, struct str_slice args)
+{
+    return send_str(fd, "OK");
+}
+
+static int cmd_quit(int fd, struct str_slice args)
+{
+    send_str(fd, "OK");
+    return ERR_QUIT;
+}
+
+static int cmd_unsupp(int fd, struct str_slice args)
+{
+    return send_str(fd, "UNSUPP");
+}
+
+static struct {
+    const char *cmd;
+    size_t len;
+    int (*func)(int fd, struct str_slice args);
+} cmds[] = {
+    { STR_LIT("SET"), cmd_set },
+    { STR_LIT("GET"), cmd_get },
+    { STR_LIT("DEL"), cmd_del },
+    { STR_LIT("QUIT"), cmd_quit },
+};
+
+static int find_cmd(const char *cmd, int len)
+{
+    for (int i = 0; i < ARR_LEN(cmds); i++) {
+        if (cmds[i].len == len && !memcmp(cmd, cmds[i].cmd, len)) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+int process_line(int fd, char *cmd_str, int len)
+{
+    char *args = memchr(cmd_str, ' ', len);
+    int cmd_len = args ? args - cmd_str : len;
+    struct str_slice cmd_args = ltrim(make_slice(args, len - cmd_len));
+
+    str2upper(cmd_str, cmd_len);
+    int cmd_idx = find_cmd(cmd_str, cmd_len);
+    int rc;
+
+    if (cmd_idx != -1) {
+        rc = cmds[cmd_idx].func(fd, cmd_args);
+    }
+    else {
+        rc = cmd_unsupp(fd, cmd_args); 
+    }
+
+    return rc;
 }
 
 
 void handle_client(int fd)
 {
     struct rwbuf buf;
-    struct span line;
+    struct str_slice line;
     int rc;
 
     init_rwbuf(&buf);
@@ -173,7 +358,8 @@ void handle_client(int fd)
         rc = read_sock(fd, &buf);
         if (rc < 0) break;
         while ((rc = read_line(&buf, &line)) > 0) {
-            process_line(line.base);
+            rc = process_line(fd, line.ptr, line.len);
+            if (rc != 0) break;
         }
         if (rc < 0) break;
     }
@@ -184,6 +370,11 @@ void handle_client(int fd)
 int main(int argc, char *argv[])
 {
     int sfd = setup_listener();
+
+    if (sfd < 0) {
+        fprintf(stderr, "setup_listener failed\n");
+        return -1;
+    }
 
     while (1) {
         int fd = accept_client(sfd);
