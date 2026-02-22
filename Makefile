@@ -1,4 +1,6 @@
-# Makefile
+# Makefile for c-db-k8s
+# make all
+# make tests
 CC = gcc
 
 #CFLAGS = -Wall -Wextra -O2
@@ -8,14 +10,26 @@ ifdef DEBUG
 endif
 LDFLAGS = -static
 
+BUILD_DIR = build
+SRC_DIR = src
+TARGETS = server
+
 .PHONY: all clean test
 
-all: server
+all: $(BUILD_DIR) $(TARGETS)
 
-server: server.o
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+
+SERVER_SRCS = src/server.c
+SERVER_OBJS = $(SERVER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+
+server: $(SERVER_OBJS)
+	$(CC) $(SERVER_OBJS) -o $@
 
 clean:
-	rm -f *.o server
+	rm -rf $(BUILD_DIR) $(TARGETS)
 
 test: server
 	@echo "Starting tests"; \
@@ -26,5 +40,5 @@ test: server
 	echo "DEL foo" | nc -w 1 -N localhost 6379 | grep -q "OK" || echo "DEL failed"; \
 	kill $$SERVER_PID
 
-%.o: %.c
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c 
 	$(CC) $(CFLAGS) -c $< -o $@
