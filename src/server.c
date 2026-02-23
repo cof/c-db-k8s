@@ -1,12 +1,18 @@
+
+#define _GNU_SOURCE 1
 #include <stdio.h>
 #include <stdlib.h> 
 #include <stdarg.h>
+#include <stddef.h>
 #include <string.h> 
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <netdb.h> 
 #include <unistd.h>
+#include <sys/epoll.h>
+
 #include <errno.h>
 
 #include "util.h"
@@ -15,6 +21,8 @@
 
 #define MAX_LINE 256
 #define TCP_PORT 6379
+#define MAX_EVENTS 10
+
 #define ERR_READSOCK -1
 #define ERR_WRITESOCK -2
 #define ERR_CLOSESOCK -3
@@ -22,6 +30,7 @@
 #define ERR_BUFSIZE -5
 #define ERR_SOCKNAME -6
 #define ERR_QUIT -7
+#define ERR_POLL -8
 
 #define MAX_HOSTPORT (3 + NI_MAXHOST + NI_MAXSERV)
 
@@ -66,7 +75,17 @@ void log_info(const char *fmt, ...)
     fprintf(stdout, "\n");
 }
 
-int log_err(int ec, const char *fmt, ...)
+void log_err(const char *fmt, ...)
+{
+    va_list args;  
+
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+    fprintf(stderr, "\n");
+}
+
+int log_err_ret(int ec, const char *fmt, ...)
 {
     va_list args;  
 
@@ -78,10 +97,25 @@ int log_err(int ec, const char *fmt, ...)
     return ec;
 }
 
-
-int setup_listener(void)
+int log_errno(int ec, const char *fmt, ...)
 {
-    int fd = socket(AF_INET6, SOCK_STREAM, 0); 
+    va_list args;
+
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, ": %s\n", strerror(ec));
+    va_end(args);
+
+    // TODO just call abort ?
+
+    return 0;
+}
+
+
+// create inet(4|6) tcp listener socket
+int open_listener(void)
+{
+    int fd = socket(AF_INET6, SOCK_STREAM | SOCK_NONBLOCK, 0); 
     if (fd == -1) {
         perror("create listen socket");
         return -1;
@@ -125,30 +159,70 @@ int setup_listener(void)
     return fd;
 }
 
-int accept_client(int sfd)
-{
-    struct sockaddr_storage caddr;
-    socklen_t clen = sizeof(caddr);
-
-    int cfd = accept(sfd, (struct sockaddr *) &caddr, &clen);
-
-    return cfd;
-}
-
-
-
 struct rwbuf {
     size_t cap; // fixed size 
     size_t len; // bytes avail to read
     char *rptr;  // start of bytes to read
-    char data[4096];
+    char *data;
 };
 
-void init_rwbuf(struct rwbuf *buf)
+
+#define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
+
+int resize_cap(struct rwbuf *buf, size_t cap)
 {
-    buf->cap = sizeof(buf->data);
+    cap = ALIGN_UP(cap, 128);
+    void *data = malloc(cap);
+    if (!data) return 0;
+
+    if (buf->data) {
+        memcpy(data, buf->rptr, buf->len);
+        free(buf->data);
+    }
+
+    buf->data = data;
+    buf->rptr = data;
+    buf->cap = cap;
+
+    return 1;
+}
+
+char *make_space(struct rwbuf *buf, size_t len)
+{
+    char *wptr = buf->rptr + buf->len;
+    size_t rem = buf->data + buf->cap - wptr;
+
+    if (rem < len) {
+        // not enough space
+        if (!resize_cap(buf, len + buf->len)) {
+            return NULL;
+        }
+        wptr = buf->rptr + buf->len;
+    }
+
+    buf->len += len;
+
+    return wptr;
+}
+
+void init_rwbuf(struct rwbuf *buf, size_t cap)
+{
+    memset(buf, 0, sizeof(*buf));
+
+    if (cap) 
+        resize_cap(buf, cap);
+}
+
+void deinit_rwbuf(struct rwbuf *buf)
+{
     buf->len = 0;
-    buf->rptr = buf->data;
+    buf->cap = 0;
+    buf->rptr = NULL;
+
+    if (buf->data) {
+        free(buf->data);
+        buf->data = NULL;
+    }
 }
 
 int read_sock(int fd, struct rwbuf *buf)
@@ -156,8 +230,8 @@ int read_sock(int fd, struct rwbuf *buf)
     int tr = 0;
     char *rptr = buf->rptr + buf->len;
     size_t rem = buf->data + buf->cap - rptr;
-
-    while (1) {
+    
+    while (rem) {
         
         // read as much as we can
         ssize_t nr = read(fd, rptr, rem);
@@ -165,7 +239,10 @@ int read_sock(int fd, struct rwbuf *buf)
         if (nr == -1)  {
             // read failed
            if (errno == EINTR) continue; // interrupt ?
-           if (errno != EAGAIN) tr = ERR_READSOCK;
+           if (errno != EAGAIN) {
+               log_errno(errno, "read socket");
+               tr = ERR_READSOCK;
+           }
            break;
         }
         if (nr == 0) {
@@ -179,13 +256,35 @@ int read_sock(int fd, struct rwbuf *buf)
         rptr += nr;
         rem -= nr;
         buf->len += nr;
-
-        // socket has less 
-        break;
     }
 
-    // total read or errcode
+    // total read or err
     return tr;
+}
+
+static int write_sock(int fd, struct rwbuf *buf)
+{
+    int tw = 0;
+
+    while (buf->len) {
+
+        size_t nw = write(fd, buf->rptr, buf->len);
+        if (nw == -1) {
+            // write failed
+            if (errno == EINTR) continue;
+            if (errno != EAGAIN) {
+                log_errno(errno, "write socket");
+                tw = ERR_WRITESOCK;
+            }
+            break;
+        }
+
+        tw += nw;
+        buf->rptr += nw;
+        buf->len -= nw;
+    }
+
+    return tw;
 }
 
 int read_line(struct rwbuf *buf, struct str_slice *line)
@@ -223,29 +322,90 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
     return 0;
 }
 
+// simple wrapper around fd
+struct simple_sock {
+    int fd; // socket_fd
+    // bit fields
+    unsigned int is_server; // 1 = simple_server, 0= simple_client
+    unsigned int is_epoll; // 1 = registered
+    unsigned int is_closed; // 
+    unsigned int wait_write;
+};
 
-static int send_str(int fd, const char *str, size_t len)
+struct simple_buf {
+    struct list_elem node;
+    struct str_slice buf;
+};
+
+struct simple_client {
+    struct simple_sock sock;
+    struct list_elem node;
+    struct simple_server *parent;
+    struct rwbuf read_buf;
+    struct rwbuf write_buf;
+};
+
+struct simple_server {
+    struct simple_sock sock;
+    struct list_elem clients;
+    int epoll_fd; // epoll_create1
+};
+
+
+static int poll_ctrl(struct simple_server *state, struct simple_sock *sock, uint32_t events);
+static void destroy_client(struct simple_client *client);
+
+
+static int do_client_write(struct simple_client *client)
 {
-    char buf[100];
-    if (len > sizeof(buf) -2) return ERR_BUFSIZE;
+    int nw = write_sock(client->sock.fd, &client->write_buf);
+    if (nw < 0) return nw;
 
-    char *dst = buf;
-    dst += sprintf(dst, "%.*s", (int) len, str);
+    if (client->write_buf.len) {
+        // write pending - wait for EPOLLOUT event
+        if (!poll_ctrl(client->parent, &client->sock, EPOLLOUT | EPOLLIN | EPOLLRDHUP)) {
+            return log_err_ret(ERR_POLL, "client enable poll write");
+        }
+        client->sock.wait_write = 1;
+        return 0;
+    }
+
+    if (client->sock.wait_write) {
+        if (!poll_ctrl(client->parent, &client->sock, EPOLLIN | EPOLLRDHUP)) {
+            return log_err_ret(ERR_POLL, "client disable poll write");
+        }
+        client->sock.wait_write = 0;
+    }
+
+    // write buffer empty
+    client->write_buf.rptr = client->write_buf.data;
+    if (client->sock.is_closed) {
+        // safe to close
+        destroy_client(client);
+    }
+
+    return 0;
+}
+
+static int send_str(struct simple_client *client, struct str_slice str)
+{
+    char *dst = make_space(&client->write_buf, str.len + 2);
+    if (!dst) return ERR_BUFSIZE;
+
+    memcpy(dst, str.ptr, str.len);
+    dst += str.len;
     *dst++ = '\r';
     *dst++ = '\n';
-    len = dst - buf;
 
-    // TODO buffer up writes in case full
-    size_t rc = write(fd, buf, len);
-    return rc == -1  ? ERR_WRITESOCK : (int) rc;
+    return do_client_write(client);
 }
 
-static int send_slice(int fd, struct str_slice str)
+static int send_rsp(struct simple_client *client, struct str_slice rsp)
 {
-    return send_str(fd, str.ptr, str.len);
+    return send_str(client, rsp);
 }
 
-static int cmd_set(int fd, struct str_slice args)
+static int cmd_set(struct simple_client *client, struct str_slice args)
 {
     char *pos = memchr(args.ptr, ' ', args.len);
     int key_len = pos ? pos - args.ptr : args.len;
@@ -261,20 +421,20 @@ static int cmd_set(int fd, struct str_slice args)
     else
         res = make_slice(STR_LIT("OK"));
 
-    return send_slice(fd, res);
+    return send_rsp(client, res);
 }
 
-static int cmd_get(int fd, struct str_slice key)
+static int cmd_get(struct simple_client *client, struct str_slice key)
 {
     struct str_slice res = db_get(key);
 
     if (!res.ptr)
         res = make_slice(STR_LIT("FAIL"));
 
-    return send_slice(fd, res);
+    return send_rsp(client, res);
 }
 
-static int cmd_del(int fd, struct str_slice key)
+static int cmd_del(struct simple_client *client, struct str_slice key)
 {
     struct str_slice res;
 
@@ -285,24 +445,29 @@ static int cmd_del(int fd, struct str_slice key)
     else 
         res = make_slice(STR_LIT("OK"));
 
-    return send_slice(fd, res);
+    return send_rsp(client, res);
 }
 
-static int cmd_quit(int fd, struct str_slice args)
+static int cmd_quit(struct simple_client *client, struct str_slice args)
 {
-    send_str(fd, STR_LIT("OK"));
+    struct str_slice res = make_slice(STR_LIT("OK"));
+
+    send_rsp(client, res);
+
     return ERR_QUIT;
 }
 
-static int cmd_unsupp(int fd, struct str_slice args)
+static int cmd_unsupp(struct simple_client *client, struct str_slice args)
 {
-    return send_str(fd, STR_LIT("UNSUPP"));
+    struct str_slice res = make_slice(STR_LIT("UNSUPP"));
+
+    return send_rsp(client, res);
 }
 
 static struct {
     const char *cmd;
     size_t len;
-    int (*func)(int fd, struct str_slice args);
+    int (*func)(struct simple_client *client, struct str_slice args);
 } cmds[] = {
     { STR_LIT("SET"), cmd_set },
     { STR_LIT("GET"), cmd_get },
@@ -321,58 +486,245 @@ static int find_cmd(const char *cmd, int len)
     return -1;
 }
 
-int process_line(int fd, char *cmd_str, int len)
+int process_cmd(struct simple_client *client, struct str_slice cmd)
 {
-    char *args = memchr(cmd_str, ' ', len);
-    int cmd_len = args ? args - cmd_str : len;
-    struct str_slice cmd_args = ltrim(make_slice(args, len - cmd_len));
+    char *args = memchr(cmd.ptr, ' ', cmd.len);
+    int cmd_len = args ? args - cmd.ptr : cmd.len;
+    struct str_slice cmd_args = ltrim(make_slice(args, cmd.len - cmd_len));
 
-    str2upper(cmd_str, cmd_len);
-    int cmd_idx = find_cmd(cmd_str, cmd_len);
+    str2upper(cmd.ptr, cmd_len);
+    int cmd_idx = find_cmd(cmd.ptr, cmd_len);
     int rc;
 
     if (cmd_idx != -1) {
-        rc = cmds[cmd_idx].func(fd, cmd_args);
+        rc = cmds[cmd_idx].func(client, cmd_args);
     }
     else {
-        rc = cmd_unsupp(fd, cmd_args); 
+        rc = cmd_unsupp(client, cmd_args); 
     }
 
     return rc;
 }
 
 
-void handle_client(int fd)
+
+struct simple_client *create_client(int fd, struct simple_server *server)
 {
-    struct rwbuf buf;
+    struct simple_client *client;
+
+    client = malloc(sizeof(*client));
+    if (!client) return NULL;
+
+    memset(client, 0,  sizeof(*client));
+    client->sock.fd = fd;
+    client->parent = server;
+
+    init_rwbuf(&client->read_buf, 128);
+
+    return client;
+}
+
+static void destroy_client(struct simple_client *client)
+{
+    if (client->sock.fd != -1) {
+        close(client->sock.fd);
+    }
+
+    deinit_rwbuf(&client->read_buf);
+    deinit_rwbuf(&client->write_buf);
+    
+    free(client);
+}
+
+static void close_client(struct simple_client *client, int force)
+{
+    client->sock.is_closed = 1;
+
+    if (force || !client->write_buf.len) {
+        destroy_client(client);
+    }
+}
+
+void do_client_read(struct simple_client *client)
+{
     struct str_slice line;
     int rc;
 
-    init_rwbuf(&buf);
-
-    while (1) {
-        rc = read_sock(fd, &buf);
-        if (rc < 0) break;
-        while ((rc = read_line(&buf, &line)) > 0) {
-            rc = process_line(fd, line.ptr, line.len);
-            if (rc != 0) break;
-        }
-        if (rc < 0) break;
+    rc = read_sock(client->sock.fd, &client->read_buf);
+    if (rc < 0) {
+        // closed|err - XXX we don't support half close
+        close_client(client, 1);
+        return;
     }
 
-    close(fd);
+    while ((rc = read_line(&client->read_buf, &line)) > 0) {
+        rc = process_cmd(client, line);
+        if (rc != 0) break;
+    }
+
+    if (rc < 0) {
+        // read|procees error
+        close_client(client, rc != ERR_QUIT);
+    }
 }
+
+static void handle_client(struct simple_client *client, uint32_t events)
+{
+    if (events & EPOLLOUT) {
+        // handle writable event
+        do_client_write(client);
+    }
+
+    if (events & EPOLLIN) {
+        // handle read event
+        do_client_read(client);
+    }
+
+    // TODO EPOLLHUP | EPOLLERR
+}
+
+static int poll_ctrl(struct simple_server *state, struct simple_sock *sock, uint32_t events) 
+{
+    struct epoll_event ev = { 0 };
+
+    ev.events = events;
+    ev.data.ptr = sock;
+    int op = !sock->is_epoll ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
+
+    // do epoll - loop if interuppted
+    int rc;
+    do {
+        rc = epoll_ctl(state->epoll_fd, op, sock->fd, &ev);
+    } while (rc == -1 && errno == EINTR);
+
+    if (rc == -1) {
+        return 0;
+    }
+
+    // registered
+    sock->is_epoll = 1;
+
+    return 1;
+}
+
+struct simple_client *accept_client(struct simple_server *server)
+{
+    struct sockaddr_storage addr;
+    socklen_t len = sizeof(addr);
+
+    int fd = accept4(server->sock.fd, (struct sockaddr *) &addr, &len, SOCK_NONBLOCK);
+    if (fd == -1) {
+        /// EAGAIN|EWOULDBLOCK - means no more pending accepts ..
+        return NULL;
+    }
+
+    struct simple_client *client = create_client(fd, server);
+    if (!client) {
+        // out of memory ?
+        log_err("client_create failed!");
+        close(fd);
+        return NULL;
+    }
+
+    // turn off nagle
+    int opt = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+
+    // XXX - only set EPOLLOUT when a write(fd) reports EAGAIN/EWOULDBLOCK
+    if (!poll_ctrl(server, &client->sock, EPOLLIN | EPOLLRDHUP)) { 
+        // register failed ?
+        log_err("epoll_ctl failed");
+        destroy_client(client);
+        return NULL;
+    }
+
+    // add to servers client list 
+    //list_append(&server->clients, &client->node);
+
+    return client;
+}
+
+static void handle_server(struct simple_server *state, uint32_t events)
+{
+    if (events & EPOLLIN) {
+        // incomming accept
+        int n = 5;
+        do {
+            struct simple_client *client = accept_client(state);
+            if (!client) {
+                // no nore clients or oom ?
+                break;
+            }
+        } while(--n);
+    }
+
+    // TODO handle  EPOLLHUP | EPOLLERR
+}
+
+
+int do_poll(struct simple_server *server)
+{
+    struct epoll_event events[MAX_EVENTS];
+
+    int nfd = epoll_wait(server->epoll_fd, events, MAX_EVENTS, -1);
+
+    for (int i = 0; i < nfd; i++) {
+        struct simple_sock *sock = events[i].data.ptr;
+        if (sock->is_server) {
+            handle_server(server, events[i].events);
+        }
+        else {
+            struct simple_client *client = containerof(sock, struct simple_client, sock);
+            handle_client(client, events[i].events);
+        }
+    }
+
+    return 0;
+}
+
+int setup_listener(struct simple_server *state)
+{
+    state->sock.fd = open_listener();
+    if (!state->sock.fd) return 0;
+
+    state->epoll_fd = epoll_create1(0);
+    if (!state->epoll_fd) {
+        return log_err_ret(errno, "epoll_create1");
+    }
+
+    if (!poll_ctrl(state, &state->sock, EPOLLIN)) {
+        return log_err_ret(errno, "epoll_ctl - add listener");
+    }
+
+    // XXX setup epoll AFTER socket/bind/listen
+    return 1;
+}
+
+int setup_database(struct simple_server *state)
+{
+    return db_init() == 0;
+}
+
+static void init_state(struct simple_server *state)
+{
+    memset(state, 0, sizeof(*state));
+    state->sock.is_server = 1;
+    list_init(&state->clients);
+}
+
 
 int main(int argc, char *argv[])
 {
-    if (!db_init()) return log_err(-1, "db_init failed");
-    int sfd = setup_listener();
-    if (sfd < 0) return log_err(-1, "setup_listener failed");
+    struct simple_server server;
+
+    init_state(&server);
+    // TODO parse command line args
+    if (!setup_database(&server)) return log_err_ret(-1, "setup_db failed");
+    if (!setup_listener(&server)) return log_err_ret(-1, "setup_listener failed");
 
     while (1) {
-        int fd = accept_client(sfd);
-        handle_client(fd);
-    }
+        do_poll(&server);
+    }    
 
     return 0;
 }

@@ -42,5 +42,6 @@ test: server
 	echo "DEL foo" | nc -w 1 -N localhost 6379 | grep -q "OK" || echo "DEL failed"; \
 	kill $$SERVER_PID
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c 
+# XXX force BUILD_DIR as a prerequisite
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@

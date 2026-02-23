@@ -156,7 +156,7 @@ int db_init(void)
 {
     hash_init();
 
-    return 1;
+    return 0;
 }
 
 void db_deinit()
