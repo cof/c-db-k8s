@@ -22,6 +22,7 @@ static inline struct str_slice make_slice(char *str, size_t len)
     return dst;
 }
 
+
 static inline void str2lower(char *str, size_t len)
 {
     while (len) {
