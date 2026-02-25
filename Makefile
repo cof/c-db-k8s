@@ -1,8 +1,8 @@
 # Makefile for c-db-k8s
 # make all
 # make tests
-CC = gcc
 
+CC = gcc
 #CFLAGS = -Wall -Wextra -O2
 CFLAGS += -D_GNU_SOURCE -Wall -O2 -Isrc -MMD -MP
 ifdef DEBUG 
@@ -12,7 +12,7 @@ LDFLAGS = -static
 
 BUILD_DIR = build
 SRC_DIR = src
-TARGETS = server client
+TARGETS = server client launcher
 
 .PHONY: all clean test
 
@@ -36,6 +36,14 @@ CLIENT_DEPS = $(CLIENT_OBJS:.o=.d)
 -include $(CLIENT_DEPS)
 client: $(CLIENT_OBJS)
 	$(CC) $(CLIENT_OBJS) -o $@
+
+# launcher
+LAUNCHER_SRCS = src/launcher.c
+LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+LAUNCHER_DEPS = $(LAUNCHER_OBJS:.o=.d)
+-include $(LAUNCHER_DEPS)
+launcher: $(LAUNCHER_OBJS)
+	$(CC) $(LAUNCHER_OBJS) -o $@
 
 clean:
 	rm -rf $(BUILD_DIR) $(TARGETS)
