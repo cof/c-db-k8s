@@ -4,20 +4,59 @@
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
 #define STR_LIT(s) (s), (sizeof(s) - 1)
-
 #define containerof(ptr, type, member) ((type *)((char *)(ptr)-offsetof(type, member)))
+#define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
 
+// Stringification macros
+#define XSTR(a) #a
+#define STR(a) XSTR(a)
+
+// logger
+void log_info(const char *fmt, ...);
+void log_estr(const char *file, int line, const char *estr, const char *fmt, ...);
+#define LOG_ESTR(fmt, ...)  log_estr(__FILE__, __LINE__, "", fmt, ##__VA_ARGS__)
+#define LOG_ERRNO(...)  log_estr(__FILE__, __LINE__, strerror(errno), __VA_ARGS__)
+
+// general errs
+#define ERR_READSOCK -1
+#define ERR_WRITESOCK -2
+#define ERR_CLOSESOCK -3
+#define ERR_READLINE -4
+#define ERR_BUFSIZE -5
+#define ERR_SOCKNAME -6
+#define ERR_QUIT -7
+#define ERR_POLL -8
+
+// string handling code
 struct str_slice {
     char *ptr;
     size_t len;
 };
 
-static inline struct str_slice make_slice(char *str, size_t len)
+static inline struct str_slice slice_make(char *str, size_t len)
 {
     struct str_slice dst;
 
     dst.ptr = str;
     dst.len = len;
+
+    return dst;
+}
+
+static inline struct str_slice slice_split(struct str_slice *src, int ch)
+{
+    struct str_slice dst;
+   
+    dst.ptr = memrchr(src->ptr, ch, src->len);
+
+    if (dst.ptr) {
+        dst.len = src->len - (dst.ptr - src->ptr + 1);
+        src->len -= dst.len + 1;
+        dst.ptr++;
+    }
+    else {
+        dst.len = 0;
+    }
 
     return dst;
 }
@@ -58,8 +97,7 @@ static inline struct str_slice ltrim(struct str_slice str)
     return str;
 }
 
-
-// doubly linked list
+// doubly linked list code
 struct list_elem {
     struct list_elem *next;
     struct list_elem *prev;

@@ -4,7 +4,7 @@
 CC = gcc
 
 #CFLAGS = -Wall -Wextra -O2
-CFLAGS = -Wall -O2 -Isrc -MMD -MP
+CFLAGS += -D_GNU_SOURCE -Wall -O2 -Isrc -MMD -MP
 ifdef DEBUG 
 	CFLAGS += -O0 -g
 endif
@@ -12,7 +12,7 @@ LDFLAGS = -static
 
 BUILD_DIR = build
 SRC_DIR = src
-TARGETS = server
+TARGETS = server client
 
 .PHONY: all clean test
 
@@ -21,14 +21,21 @@ all: $(BUILD_DIR) $(TARGETS)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-
-SERVER_SRCS = src/db.c src/server.c
+# server
+SERVER_SRCS = src/util.c src/sock.c src/db.c src/server.c
 SERVER_OBJS = $(SERVER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 SERVER_DEPS = $(SERVER_OBJS:.o=.d)
 -include $(SERVER_DEPS)
-
 server: $(SERVER_OBJS)
 	$(CC) $(SERVER_OBJS) -o $@
+
+# client
+CLIENT_SRCS = src/client.c
+CLIENT_OBJS = $(CLIENT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+CLIENT_DEPS = $(CLIENT_OBJS:.o=.d)
+-include $(CLIENT_DEPS)
+client: $(CLIENT_OBJS)
+	$(CC) $(CLIENT_OBJS) -o $@
 
 clean:
 	rm -rf $(BUILD_DIR) $(TARGETS)

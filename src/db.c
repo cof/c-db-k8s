@@ -172,7 +172,9 @@ int db_set(struct str_slice key, struct str_slice val)
 struct str_slice db_get(struct str_slice key)
 {
     struct nlist *np = hash_find(key.ptr, key.len);
-    return np ? make_slice(np->data + np->key_len, np->key_len) : make_slice(NULL, 0);
+    return np
+        ? slice_make(np->data + np->key_len, np->key_len) 
+        : slice_make(NULL, 0);
 }
 
 int db_del(struct str_slice key)
