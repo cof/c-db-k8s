@@ -17,8 +17,6 @@
  * - Kerrisk - TLPI - The Linux Progamming Interface
  *
  */
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -35,22 +33,6 @@
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/syscall.h> 
-
-#define FATAL_ERR(fmt, ...) fatal_err(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
-
-static void fatal_err(const char *file, int line, const char *fmt, ...)
-{
-    va_list args;
-    int _errno = errno;
-
-    va_start(args, fmt);
-    fprintf(stderr, "[%s:%d] ", file, line);
-    vfprintf(stderr, fmt, args);
-    fprintf(stderr, ": %s", strerror(_errno));
-    va_end(args);
-
-    exit(2);
-}
 
 #define LOG_ERR(fmt, ...) do { \
     int _errno = errno; \
@@ -237,11 +219,18 @@ int main(int argc, char *argv[])
         PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0
     );
-    if (child_stack == MAP_FAILED) FATAL_ERR("mmap stack failed");
+    if (child_stack == MAP_FAILED) {
+        LOG_ERR("mmap stack %u failed", stack_size);
+        exit(1);
+    }
     child_stack += stack_size; 
 
+    // create a sync pipe
     int sync_fds[2];
-    if (pipe(sync_fds) == -1) FATAL_ERR("pipe failed");
+    if (pipe(sync_fds) == -1) {
+        LOG_ERR("create sync pipe failed");
+        exit(2);
+    }
 
     struct container_args args = { 
         .hostname = "server",
@@ -254,7 +243,10 @@ int main(int argc, char *argv[])
     // launch child 
     int clone_flags = SIGCHLD | CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET;
     pid_t child_pid = clone(child_func, child_stack, clone_flags, &args);
-    if (child_pid == -1) FATAL_ERR("clone child failed");
+    if (child_pid == -1) {
+        LOG_ERR("clone child(%s,%s) failed", args.hostname, args.exec_path);
+        exit(1);
+    }
 
     // close our read end (child still has a copy)
     close(sync_fds[0]);
@@ -273,7 +265,7 @@ int main(int argc, char *argv[])
     } while(0);
 
     if (!all_done) {
-        // run_cmd or sync wite failed ?
+        // run_cmd or write_sync failed ?
         kill(child_pid, SIGKILL);
     }
 
@@ -297,7 +289,7 @@ int main(int argc, char *argv[])
            printf("continued\n");
     } while (!WIFEXITED(status) && !WIFSIGNALED(status));
 
-    // child has exited
+    // child has exited okay
     return 0;
 }
 
