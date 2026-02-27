@@ -297,11 +297,13 @@ static int set_proc(void)
     return 0; 
 }
 
+// bring up child containers lo,eth0 and ip address
 int setup_network(const char *veth, const char *ip_addr)
 {
     RUN_CMD("ip link set %s name eth0", veth); 
     RUN_CMD("ip link set eth0 up");
     RUN_CMD("ip link set lo up");
+
     RUN_CMD("ip addr add %s dev eth0", ip_addr);
 
     return 0;
@@ -333,7 +335,7 @@ static int write_pipe(int fd)
     return 0;
 }
 
-void close_pipe(int pipefd[2])
+static void close_pipe(int pipefd[2])
 {
     if (pipefd[0] != -1) {
         close(pipefd[0]);
@@ -343,6 +345,21 @@ void close_pipe(int pipefd[2])
     if (pipefd[1] != -1) {
         close(pipefd[1]);
         pipefd[1] = -1;
+    }
+}
+
+static void shutdown_pid(int pid, int wait)
+{
+    int status;
+
+    kill(pid, SIGTERM);
+
+    if (waitpid(pid, &status, WNOHANG) == 0) {
+        usleep(wait);
+        if (waitpid(pid, &status, WNOHANG) == 0) {
+            kill(pid, SIGKILL);
+            waitpid(pid, &status, 0);
+        }
     }
 }
 
@@ -391,8 +408,7 @@ struct container_config {
     unsigned int continued : 1;
 };
 
-
-// note new task_struct
+// note child is running inside new task_struct
 static int child_start(void *arg)
 {
     struct container_config *cfg = arg;
@@ -406,14 +422,10 @@ static int child_start(void *arg)
     // wait for parent to configure netns,veth, cgroup,...
     if (read_pipe(cfg->go_pipe[0]) != 0) _exit(2);
 
-    if (cfg->netns_path && child_setns(cfg->netns_path) != 0) {
-        _exit(3);
-    }
-
+    if (cfg->netns_path && child_setns(cfg->netns_path) != 0) _exit(3);
     if (set_rootfs(cfg->rootfs_path) !=0) _exit(3);
     if (set_proc() != 0) _exit(4);
 
-    // bring up eth0,lo and set ip address
     if (setup_network(cfg->veth, cfg->ip_addr) !=0) _exit(5);
 
     // tell parent network is up
@@ -471,21 +483,6 @@ int container_start(struct container_config *cfg)
 
     // all done
     return 0;
-}
-
-void shutdown_pid(int pid, int wait)
-{
-    int status;
-
-    kill(pid, SIGTERM);
-
-    if (waitpid(pid, &status, WNOHANG) == 0) {
-        usleep(wait);
-        if (waitpid(pid, &status, WNOHANG) == 0) {
-            kill(pid, SIGKILL);
-            waitpid(pid, &status, 0);
-        }
-    }
 }
 
 void container_cleanup(struct container_config *cfg)
