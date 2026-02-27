@@ -1,0 +1,5 @@
+#cloud-config
+hostname: launcher
+datasource_list: [ NoCloud ]
+runcmd:
+  - echo "alpine:alpine" | chpasswd

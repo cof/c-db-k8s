@@ -57,6 +57,58 @@ test: server
 	echo "DEL foo" | nc -w 1 -N localhost 6379 | grep -q "OK" || echo "DEL failed"; \
 	kill $$SERVER_PID
 
+# nocloud alpine
+USER_DATA = tests/user-data.yaml
+OS_VARIANT= alpinelinux3.21
+OS_NAME=alpine
+REL_VER= 3.21
+PATCH_VER=.6
+IMAGE_VER = $(OS_NAME)-$(REL_VER)$(PATCH_VER)
+IMAGE_NAME = nocloud_$(IMAGE_VER)-x86_64-bios-cloudinit-r0.qcow2
+REL_DIR=v$(REL_VER)
+MIRROR_URL = https://dl-cdn.alpinelinux.org
+IMAGE_URL = $(MIRROR_URL)/$(REL_DIR)/releases/cloud/$(IMAGE_NAME)
+IMAGE_PATH = $(BUILD_DIR)/$(IMAGE_NAME)
+TEST_IMAGE = $(BUILD_DIR)/myalpine.qcow2
+TEST_VM = test-launcher
+
+# download image
+$(IMAGE_PATH):
+	wget -nv --no-verbose --show-progress -O $(IMAGE_PATH) $(IMAGE_URL)
+
+# build image
+# XXX  virt-customize requires root read /boot/vmlinux.
+$(TEST_IMAGE) : $(IMAGE_PATH)
+	@echo "Setting up image file"
+	@cp $(IMAGE_PATH) $(TEST_IMAGE)
+	virt-customize -a $(TEST_IMAGE) \
+	--root-password password:test \
+	--install openssh \
+	--edit '/etc/ssh/sshd_config: s/\#PermitRootLogin.*/PermitRootLogin yes/' \
+	--run-command "rc-update add sshd"
+	@touch $(TEST_IMAGE)
+
+# install image
+install-vms: $(IMAGE_PATH)
+	virt-install \
+	--name $(TEST_VM) \
+	--virt-type kvm \
+	--ram 512 \
+	--vcpus 1 \
+	--disk path=$(IMAGE_PATH),format=qcow2,bus=virtio \
+	--network network=default,model=virtio \
+	--cloud-init user-data=$(USER_DATA) \
+	--os-variant $(OS_VARIANT) \
+	--graphics vnc \
+	--rng /dev/urandom \
+	--noautoconsole \
+	--import
+
+wipe-vms:
+	 virsh destroy $(TEST_VM)  || true
+	 virsh undefine $(TEST_VM) || true
+	
+
 # XXX force BUILD_DIR as a prerequisite
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
