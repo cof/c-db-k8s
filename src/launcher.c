@@ -333,6 +333,19 @@ static int write_pipe(int fd)
     return 0;
 }
 
+void close_pipe(int pipefd[2])
+{
+    if (pipefd[0] != -1) {
+        close(pipefd[0]);
+        pipefd[0] = -1;
+    }
+
+    if (pipefd[1] != -1) {
+        close(pipefd[1]);
+        pipefd[1] = -1;
+    }
+}
+
 static int child_setns(const char *netns_path)
 {
     int fd = open(netns_path, O_RDONLY);
@@ -416,19 +429,6 @@ static int child_start(void *arg)
     _exit(6);
 }
 
-void close_pipe(int pipefd[2])
-{
-    if (pipefd[0] != -1) {
-        close(pipefd[0]);
-        pipefd[0] = -1;
-    }
-
-    if (pipefd[1] != -1) {
-        close(pipefd[1]);
-        pipefd[1] = -1;
-    }
-}
-
 int container_start(struct container_config *cfg)
 {
     // create sync pipes
@@ -471,7 +471,6 @@ int container_start(struct container_config *cfg)
 
     // all done
     return 0;
-
 }
 
 void shutdown_pid(int pid, int wait)
@@ -514,6 +513,7 @@ void container_cleanup(struct container_config *cfg)
         cfg->stack = NULL;
     }
 
+    // release name,exec_path,...
     if (cfg->name) free(cfg->name);
     if (cfg->exec_path) free(cfg->exec_path);
     if (cfg->exec_argc) {
@@ -615,6 +615,7 @@ void state_deinit(struct launcher_state *state)
     for (int i = 0; i < state->num_cfg; i++) {
         container_cleanup(&state->configs[i]);
     }
+    state->num_cfg = 0;
 
     if (state->netns_dir) free(state->netns_dir);
     if (state->runtime_dir)  free(state->runtime_dir);
@@ -633,7 +634,6 @@ int init_state(struct launcher_state *state, int argc, char *argv[])
     state->storage_dir = strdup(STORAGE_DIR);
     state->netns_suffix = strdup("-ns");
     state->cable_prefix = strdup("veth-");
-
 
     return 0;
 }
