@@ -1,6 +1,8 @@
 #ifndef __UTIL_H__
 #define __UTIL_H__
 
+#include <stdint.h>
+
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
 #define STR_LIT(s) (s), (sizeof(s) - 1)
@@ -10,6 +12,7 @@
 // Stringification macros
 #define XSTR(a) #a
 #define STR(a) XSTR(a)
+
 
 // logger
 void log_info(const char *fmt, ...);
@@ -95,6 +98,30 @@ static inline struct str_slice ltrim(struct str_slice str)
     }
 
     return str;
+}
+
+//  djb2a hash algorhtim
+static inline uint64_t dbj2a_hash(const void *key, const int klen)
+{
+    const unsigned char *data,*end;
+    uint64_t hash = 5381;
+
+    end = key + klen;
+    for (data = key; data < end; data++) {
+        hash = ((hash << 5) + hash) ^ *data;
+    }
+
+    return hash;
+}
+
+static inline uint64_t dbj2a_hash_str(const char *name)
+{
+    return dbj2a_hash(name, strlen(name));
+}
+
+static inline uint64_t dbj2a_hash_slice(const struct str_slice str)
+{
+    return dbj2a_hash(str.ptr, str.len);
 }
 
 // doubly linked list code

@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include "util.h"
 
+
 void log_info(const char *fmt, ...)
 {
     va_list args;  

@@ -3,19 +3,6 @@
 #include "util.h"
 #include "db.h"
 
-//  djb2a hash algor
-static unsigned long dbj2a(const void *key, const int klen)
-{
-    const unsigned char *data,*end;
-    unsigned long hash = 5381;
-
-    end = key + klen;
-    for (data = key; data < end; data++) {
-        hash = ((hash << 5) + hash) ^ *data;
-    }
-
-    return hash;
-}
 
 // assume 10000 entries,load factor 2/3
 // table size 10000 * 3/2 = 15000
@@ -34,7 +21,7 @@ static struct nlist *hash_table[HASHSIZE];
 
 static int hash(const void *key, int klen)
 {
-    return dbj2a(key, klen) % HASHSIZE;
+    return dbj2a_hash(key, klen) % HASHSIZE;
 }
 
 static void hash_init(void)
