@@ -2,7 +2,32 @@
 # make all
 # make tests
 
+# verbosity - aka Kbuild/HAProxy style
+V = 0
+Q = @
+ifeq ($V,1)
+Q=
+endif
+
+ifeq ($(V),1)
+cmd_INST = $(INSTALL)
+cmd_TAR = $(TAR)
+cmd_CC  = $(CC)
+cmd_LD  = $(CC)
+else
+cmd_INST = $(Q)echo "  INST  $@";$(INSTALL)
+cmd_TAR  = $(Q)echo "  TAR   $@";$(TAR)
+cmd_CC   = $(Q)echo "  CC    $@";$(CC)
+cmd_LD   = $(Q)echo "  LD    $@";$(CC)
+endif
+
+# build commmand
+INSTALL = install
+TAR = tar
 CC = gcc
+LD = gcc
+
+# compiler flags
 #CFLAGS = -Wall -Wextra -O2
 CFLAGS += -D_GNU_SOURCE -Wall -O2 -Isrc -MMD -MP
 ifdef DEBUG 
@@ -10,19 +35,30 @@ ifdef DEBUG
 endif
 LDFLAGS = -static
 
-
+# dirs
 BUILD_DIR = build
 SRC_DIR = src
+DST_DIR = bin
 
 .PHONY: all
-all: $(BUILD_DIR) cmds publish
+all: $(BUILD_DIR) cmds rootfs install
 
 $(BUILD_DIR):
-	@mkdir -p $(BUILD_DIR)
+	@mkdir -p $@
 
+$(DST_DIR):
+	@mkdir -p $@
+
+# build our binaries
 .PHONY: cmds
 CMDS = server client launcher
-cmds : $(CMDS)
+BIN_CMDS = $(addprefix $(DST_DIR)/, $(CMDS))
+ROOTFS_CMDS = server client
+CMDS_DONE = $(BUILD_DIR)/.cmds_done
+$(CMDS_DONE): $(CMDS) | $(BUILD_DIR)
+	@echo "  CMDS  done"
+	@touch $@
+cmds: $(CMDS_DONE)
 
 # server
 SERVER_SRCS = src/util.c src/sock.c src/db.c src/server.c
@@ -30,8 +66,7 @@ SERVER_OBJS = $(SERVER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 SERVER_DEPS = $(SERVER_OBJS:.o=.d)
 -include $(SERVER_DEPS)
 server: $(SERVER_OBJS)
-	$(E) "  LD       $@"
-	$(Q)$(CC) $(SERVER_OBJS) -o $@
+	$(cmd_LD) $(SERVER_OBJS) -o $@
 
 # client
 CLIENT_SRCS = src/client.c
@@ -39,8 +74,7 @@ CLIENT_OBJS = $(CLIENT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 CLIENT_DEPS = $(CLIENT_OBJS:.o=.d)
 -include $(CLIENT_DEPS)
 client: $(CLIENT_OBJS)
-	$(E) "  LD       $@"
-	$(Q)$(CC) $(CLIENT_OBJS) -o $@
+	$(cmd_LD) $(CLIENT_OBJS) -o $@
 
 # launcher
 LAUNCHER_SRCS = src/launcher.c
@@ -48,69 +82,60 @@ LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 LAUNCHER_DEPS = $(LAUNCHER_OBJS:.o=.d)
 -include $(LAUNCHER_DEPS)
 launcher: $(LAUNCHER_OBJS)
-	$(E) "  LD       $@"
-	$(Q)$(CC) $(LAUNCHER_OBJS) -o $@
+	$(cmd_LD) $(LAUNCHER_OBJS) -o $@
 
-# XXX force BUILD_DIR as a prerequisite
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
-	$(E) "  CC       $<"
-	$(Q)$(CC) $(CFLAGS) -c $< -o $@
+	$(cmd_CC) $(CFLAGS) -c $< -o $@
 
-
-.PHONY: publish
-publish : bincmds rootfs
-
-# put CMDS into bin
-.PHONY: bincmds
-BINCMDS_DONE = $(BUILD_DIR)/.bincmds_done
-bincmds: cmds $(BINCMDS_DONE)
-$(BINCMDS_DONE) : $(CMDS) | $(BUILD_DIR)
-	@mkdir -p bin
-	@for cmd in $^; do \
-		echo "INSTALL -> $$cmd bin/$$cmd"; \
-		install -D $$cmd bin/; \
-	done
-	@touch $@
-
-# build rootfs
+# build the container rootfs
 .PHONY: rootfs
-OUR_CMDS = server client
+OUR_CMDS = $(ROOTFS_CMDS)
 AUX_CMDS = bash ls ip ping hostname
-STAGING_DIR = build_rootfs
+ROOTFS_DIR = rootfs
+ROOTFS_TAR = rootfs.tar.gz
 ROOTFS_DONE = $(BUILD_DIR)/.rootfs_done
-rootfs: bin/assets/rootfs.tgz
-
-# package rootfs into a tarball
-bin/assets/rootfs.tgz : $(ROOTFS_DONE)
-	@mkdir -p bin/assets
-	@tar -czf $@ $(STAGING_DIR)
-	@echo "TAR - $@"
+rootfs: $(ROOTFS_TAR)
 
 # build rootfs
 $(ROOTFS_DONE): $(OUR_CMDS) | $(BUILD_DIR)
-	@echo "Build rootfs"
-	@mkdir -p $(STAGING_DIR)  $(STAGING_DIR)/bin $(STAGING_DIR)/lib
-	@echo "+ binaries - $(OUR_CMDS)"
+	@echo "  BUILD $(ROOTFS_DIR)"
+	@mkdir -p $(ROOTFS_DIR)  $(ROOTFS_DIR)/bin $(ROOTFS_DIR)/lib
+	@echo "  + binaries - $(OUR_CMDS)"
 	@for cmd in $^; do \
-		install -D $$cmd $(STAGING_DIR)/bin; \
+		install -D $$cmd $(ROOTFS_DIR)/bin; \
 	done
-	@echo "+ helpers - $(AUX_CMDS)"
+	@echo "  + helpers - $(AUX_CMDS)"
 	@for cmd in $(AUX_CMDS); do \
 		CMD_PATH=$$(command -v $$cmd) || { echo "Error: $$cmd not found"; exit 1; }; \
-	    install -D $$CMD_PATH $(STAGING_DIR)/bin/; \
+	    install -D $$CMD_PATH $(ROOTFS_DIR)/bin/; \
 	done 
-	@echo "+ Shared libraires"
-	@ldd $(STAGING_DIR)/bin/* | grep "=> /" | awk '{print $$3}' | sort -u | \
-			xargs -I '{}' install -D '{}' $(STAGING_DIR)/lib/
-	@echo "+ Dynamic Linker"
-	@LOADER_PATH=$$(readelf -l $(STAGING_DIR)/bin/bash | grep "program interpreter" | awk '{print $$NF}' | tr -d '[]') ; \
-		install -D $$LOADER_PATH $(STAGING_DIR)/lib/$${LOADER_PATH}
+	@echo "  + Shared libraires"
+	@ldd $(ROOTFS_DIR)/bin/* | grep "=> /" | awk '{print $$3}' | sort -u | \
+			xargs -I '{}' install -D '{}' $(ROOTFS_DIR)/lib/
+	@echo "  + Dynamic Linker"
+	@LOADER_PATH=$$(readelf -l $(ROOTFS_DIR)/bin/bash | grep "program interpreter" | awk '{print $$NF}' | tr -d '[]') ; \
+		install -D $$LOADER_PATH $(ROOTFS_DIR)/lib/$${LOADER_PATH}
+	@echo "  + created $(ROOTFS_DIR)"
 	@touch $@
 
+# package rootfs
+$(ROOTFS_TAR) : $(ROOTFS_DONE)
+	$(cmd_TAR) -czf $@ $(ROOTFS_DIR)
+
+# install files
+.PHONY: install
+install: $(BIN_CMDS) $(ROOTFS_TAR)
+	@echo "  DONE  all files in $(DST_DIR)"
+
+$(BIN_CMDS): $(DST_DIR)/% : % | $(DST_DIR)
+	$(cmd_INST) -m 755 $< $@
+
+$(DST_DIR)/$(ROOTFS_TAR): $(ROOTFS_TAR) | $(DST_DIR)
+	$(cmd_INST) -m 644 $< $@
 
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR) $(STAGING_DIR) $(CMDS) bin
+	rm -rf $(BUILD_DIR) $(ROOTFS_DIR) $(ROOTFS_TAR) $(CMDS) bin
 
 .PHONY: test
 test: server
@@ -174,10 +199,3 @@ wipe-vms:
 	 virsh destroy $(TEST_VM)  || true
 	 virsh undefine $(TEST_VM) || true
 
-ifneq ($(V),1)
-  Q = @
-  E = @echo
-else
-  Q =
-  E = @true
-endif
