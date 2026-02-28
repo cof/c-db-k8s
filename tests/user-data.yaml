@@ -1,5 +1,17 @@
 #cloud-config
 hostname: launcher
 datasource_list: [ NoCloud ]
+
+# XXX alpine is ignore this
+ssh_pwauth: true
+write_files:
+  - path: /etc/ssh/sshd_config.d/00-force-passwords.conf
+    permissions: '0600'
+    content: |
+      PasswordAuthentication yes
+
+bootcmd:
+  - echo "root:alpine" | chpasswd
+
 runcmd:
   - echo "alpine:alpine" | chpasswd

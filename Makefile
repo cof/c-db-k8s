@@ -124,7 +124,7 @@ $(ROOTFS_TAR) : $(ROOTFS_DONE)
 
 # install files
 .PHONY: install
-install: $(BIN_CMDS) $(ROOTFS_TAR)
+install: $(BIN_CMDS) $(DST_DIR)/$(ROOTFS_TAR)
 	@echo "  DONE  all files in $(DST_DIR)"
 
 $(BIN_CMDS): $(DST_DIR)/% : % | $(DST_DIR)
@@ -148,45 +148,85 @@ test: server
 	kill $$SERVER_PID
 
 
-# nocloud alpine
-USER_DATA = tests/user-data.yaml
+# VM stuff
+
+# alpine linux
 OS_VARIANT= alpinelinux3.21
 OS_NAME=alpine
 REL_VER= 3.21
 PATCH_VER=.6
-IMAGE_VER = $(OS_NAME)-$(REL_VER)$(PATCH_VER)
-IMAGE_NAME = nocloud_$(IMAGE_VER)-x86_64-bios-cloudinit-r0.qcow2
-REL_DIR=v$(REL_VER)
-MIRROR_URL = https://dl-cdn.alpinelinux.org
-IMAGE_URL = $(MIRROR_URL)/$(REL_DIR)/releases/cloud/$(IMAGE_NAME)
-IMAGE_PATH = $(BUILD_DIR)/$(IMAGE_NAME)
-TEST_IMAGE = $(BUILD_DIR)/myalpine.qcow2
-TEST_VM = test-launcher
+REL_NAME = $(OS_NAME)-$(REL_VER)$(PATCH_VER)
+REL_FILE = nocloud_$(REL_NAME)-x86_64-bios-cloudinit-r0.qcow2
+REL_DIR = v$(REL_VER)/releases/cloud
+MIRROR = https://dl-cdn.alpinelinux.org
+REL_URL = $(MIRROR_URL)/$(REL_DIR)/$(REL_FILE)
 
-# download image
-$(IMAGE_PATH):
-	wget -nv --no-verbose --show-progress -O $(IMAGE_PATH) $(IMAGE_URL)
+# our vm
+VM_NAME = test-launcher
+VM_FILE = myalpine.qcow2
+VMDIR = vmdir
+CACHE_DIR ?= $(shell echo $${XDG_CACHE_HOME:-$$HOME/.cache}/my-vm-project)
+BASE_IMAGE = $(CACHE_DIR)/$(REL_FILE)
+RUN_IMAGE = $(VMDIR)/$(VM_FILE)
 
-# build image
-# XXX  virt-customize requires root read /boot/vmlinux.
-$(TEST_IMAGE) : $(IMAGE_PATH)
-	@echo "Setting up image file"
-	@cp $(IMAGE_PATH) $(TEST_IMAGE)
-	virt-customize -a $(TEST_IMAGE) \
-	--root-password password:test \
-	--install openssh \
-	--edit '/etc/ssh/sshd_config: s/\#PermitRootLogin.*/PermitRootLogin yes/' \
-	--run-command "rc-update add sshd"
-	@touch $(TEST_IMAGE)
+.PHONY: show-vmconfig
+show-vmconfig:
+	@echo "MIRROR=$(MIRROR)"
+	@echo "REL_URL=$(REL_URL)"
+	@echo "REL_FILE=$(REL_FILE)"
+	@echo "REL_VER=$(REL_VER)"
+	@echo "BASE_IMAGE=$(BASE_IMAGE)"
+	@echo "RUN_IMAGE=$(RUN_IMAGE)"
 
-# install image
-install-vms: $(IMAGE_PATH)
+.PHONY: list-vm
+list-vm:
+	@echo "REL_URL=$(REL_URL)"
+	@echo "REL_FILE=$(REL_FILE)"
+	@echo "BASE_IMAGE=$(BASE_IMAGE)"
+	@echo "RUN_IMAGE=$(RUN_IMAGE)"
+	virsh list --all
+	virsh domifaddr $(VM_NAME) || true
+
+$(CACHE_DIR):
+	mkdir -p $@
+
+$(VMDIR):
+	mkdir -p $@
+
+# download image 
+$(BASE_IMAGE) : | $(CACHE_DIR)
+	wget -nv --no-verbose --show-progress -O $@.tmp $(REL_URL)
+	mv $@.tmp $@
+	chmod 444 $@
+
+# build image-  XXX  virt-customize requires root read /boot/vmlinux ???
+#$(RUN_IMAGE) : $(BASE_IMAGE)
+#	@echo "Setting up image file"
+#	@cp $(IMAGE_PATH) $(TEST_IMAGE)
+#	virt-customize -a $(TEST_IMAGE) \
+#	--root-password password:test \
+#	--install openssh \
+#	--edit '/etc/ssh/sshd_config: s/\#PermitRootLogin.*/PermitRootLogin yes/' \
+#	--run-command "rc-update add sshd"
+#	@touch $(TEST_IMAGE)
+
+$(RUN_IMAGE): | $(BASE_IMAGE) $(VMDIR)
+	cp $(BASE_IMAGE) $@
+
+.PHONY:list-cache
+list-cache: $(CACHE_DIR)
+	ls -lh $(CACHE_DIR)
+
+# XXX alpline vms will use user-data.yaml to autoconfigure
+USER_DATA = tests/user-data.yaml
+.PHONY:install-vm
+install-vm: $(RUN_IMAGE)
 	virt-install \
-	--name $(TEST_VM) \
+	--name $(VM_NAME) \
 	--virt-type kvm \
 	--ram 512 \
 	--vcpus 1 \
-	--disk path=$(IMAGE_PATH),format=qcow2,bus=virtio \
+	--disk path=$(RUN_IMAGE),format=qcow2,bus=virtio \
 	--network network=default,model=virtio \
 	--cloud-init user-data=$(USER_DATA) \
 	--os-variant $(OS_VARIANT) \
@@ -195,7 +235,7 @@ install-vms: $(IMAGE_PATH)
 	--noautoconsole \
 	--import
 
-wipe-vms:
-	 virsh destroy $(TEST_VM)  || true
-	 virsh undefine $(TEST_VM) || true
+wipe-vm:
+	 virsh destroy $(VM_NAME)  || true
+	 virsh undefine $(VM_NAME) || true
 
