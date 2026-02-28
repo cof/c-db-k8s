@@ -165,9 +165,15 @@ REL_URL = $(MIRROR_URL)/$(REL_DIR)/$(REL_FILE)
 VM_NAME = test-launcher
 VM_FILE = myalpine.qcow2
 VMDIR = vmdir
-CACHE_DIR ?= $(shell echo $${XDG_CACHE_HOME:-$$HOME/.cache}/my-vm-project)
+
+ifeq ($(origin CACHE_DIR), undefined)
+  CACHE_DIR := $(shell echo $${XDG_CACHE_HOME:-$$HOME/.cache}/my-vm-project)
+endif
+
 BASE_IMAGE = $(CACHE_DIR)/$(REL_FILE)
 RUN_IMAGE = $(VMDIR)/$(VM_FILE)
+VM_MAC := 52:54:00:12:34:56
+VM_IP  := 192.168.122.243
 
 .PHONY: show-vmconfig
 show-vmconfig:
@@ -175,15 +181,12 @@ show-vmconfig:
 	@echo "REL_URL=$(REL_URL)"
 	@echo "REL_FILE=$(REL_FILE)"
 	@echo "REL_VER=$(REL_VER)"
+	@echo "CACHE_DIR=$(CACHE_DIR)"
 	@echo "BASE_IMAGE=$(BASE_IMAGE)"
 	@echo "RUN_IMAGE=$(RUN_IMAGE)"
 
 .PHONY: list-vm
 list-vm:
-	@echo "REL_URL=$(REL_URL)"
-	@echo "REL_FILE=$(REL_FILE)"
-	@echo "BASE_IMAGE=$(BASE_IMAGE)"
-	@echo "RUN_IMAGE=$(RUN_IMAGE)"
 	virsh list --all
 	virsh domifaddr $(VM_NAME) || true
 

@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h> 
 #include <string.h>
 #include <stdarg.h>
 #include <unistd.h>
@@ -62,6 +63,16 @@ void log_status(const char *fmt, ...)
     va_end(args);
     fprintf(stdout, "\n");
 }
+
+bool str_starts_with(const char *str, const char *prefix) {
+
+    while (*prefix) {
+        if (*prefix++ != *str++) return false;
+    }
+
+    return true;
+}
+
 
 static int run_cmd(const char *fmt, ...)
 {
@@ -298,54 +309,53 @@ static int set_proc(void)
 }
 
 // bring up child containers lo,eth0 and ip address
-int setup_network(const char *veth, const char *ip_addr)
+int create_network(const char *veth, const char *ip_addr)
 {
     RUN_CMD("ip link set %s name eth0", veth); 
-    RUN_CMD("ip link set eth0 up");
     RUN_CMD("ip link set lo up");
+    RUN_CMD("ip link set eth0 up");
 
     RUN_CMD("ip addr add %s dev eth0", ip_addr);
 
     return 0;
 }
 
-static int read_pipe(int fd)
+static ssize_t read_sync(int fd)
 {
     char buf;
+    ssize_t nr;
 
     // block until parent writes to us
-    int rc = read(fd, &buf, 1);
-    if (rc < 1)  {
-        LOG_ERR("read pipe %d failed", fd);
-        return -1;
-    }
+    do {
+        nr = read(fd, &buf, 1);
+    } while (nr == -1 && errno == EINTR);
 
-    return 0;
+    return nr;
 }
 
-static int write_pipe(int fd)
+static int write_sync(int fd)
 {
-    // block until parent writes to us
-    int rc = write(fd, "R", 1);
-    if (rc < 1)  {
-        LOG_ERR("write pipe %d failed", fd);
-        return -1;
-    }
+    ssize_t nw;
 
-    return 0;
+    do {
+        nw = write(fd, "!", 1);
+    } while (nw == -1 && errno == EINTR);
+
+    return nw;
 }
 
-static void close_pipe(int pipefd[2])
+static inline int close_fd(int *fd)
 {
-    if (pipefd[0] != -1) {
-        close(pipefd[0]);
-        pipefd[0] = -1;
+    int rc = 0;
+
+    if (*fd != -1) {
+        if (close(*fd) != 0) {
+            rc = -1;
+        }
+        *fd = -1;
     }
 
-    if (pipefd[1] != -1) {
-        close(pipefd[1]);
-        pipefd[1] = -1;
-    }
+    return rc;
 }
 
 static void shutdown_pid(int pid, int wait)
@@ -391,22 +401,141 @@ struct container_config {
     char *exec_path;  // process to lanuch
     char **exec_argv; // command line args
     int exec_argc;
-    char *veth;       // container link
-    char *ip_addr;    // ip addr to add to veth
-    int go_pipe[2];   // wait for parent
-    int ready_pipe[2]; // tell parent we are up
+    char veth[IFNAMSIZ];  // container eth0 link
+    char *ip_addr;      // ip addr to add to veth
+    // parent sync child
+    int go_read_fd;    // child reads
+    int go_write_fd;   // parent writes
+    // child sync with parent
+    int ready_read_fd; // parent reads
+    int ready_write_fd; // child writes
     void *stack;       // passed to clone
     size_t stack_size;
     pid_t child_pid;   // value returned by clone
-    // waitpid flags
     int exit_status;
+    unsigned int need_network : 1; // configure network
+    unsigned int run : 1; // clone child is active
     unsigned int netns : 1;
-    unsigned int run : 1;
+    // waitpid flags
     unsigned int exit : 1;
     unsigned int signalled : 1;
     unsigned int stopped : 1;
     unsigned int continued : 1;
 };
+
+
+static int child_close_go(struct container_config *cfg)
+{
+    int num_err = 0;
+
+    if (close_fd(&cfg->go_write_fd) != 0) {
+        LOG_ERR("child close %s go_write_fd failed", cfg->name);
+        num_err++;
+    }
+
+    if (close_fd(&cfg->ready_read_fd) != 0) {
+        LOG_ERR("child close %s ready_read_fd failed", cfg->name);
+        num_err++;
+    }
+
+    return num_err;;
+}
+
+static int child_close_ready(struct container_config *cfg)
+{
+    int num_err = 0;
+
+    if (close_fd(&cfg->ready_write_fd) != 0) {
+        LOG_ERR("child %s close ready_write_fd failed", cfg->name);
+        num_err++;
+    }
+
+    if (close_fd(&cfg->go_read_fd) != 0) {
+        LOG_ERR("child %s go_read_fd failed", cfg->name);
+        num_err++;
+    }
+
+    return num_err;;
+}
+
+static int child_go_sync(struct container_config *cfg)
+{
+    ssize_t nr;
+
+    nr = read_sync(cfg->go_read_fd);
+
+    if (nr == -1) {
+        LOG_ERR("child read_sync failed %s %d", cfg->name, cfg->go_read_fd);
+        return -1;
+    }
+
+    if (nr != 1) {
+        LOG_ERR("child %s go_read_fd got zero ", cfg->name);
+        return -1;
+    }
+
+    return 0;;
+}
+
+static int child_ready_sync(struct container_config *cfg)
+{
+    ssize_t nw;
+
+    nw = write_sync(cfg->ready_write_fd);
+
+    if (nw == -1) {
+        LOG_ERR("child write_sync failed %s %d", cfg->name, cfg->ready_write_fd);
+        return -1;
+    }
+
+    if (nw != 1) {
+        LOG_ERR("child %s ready_write_fd got zero ", cfg->name);
+        return -1;
+    }
+
+    return 0;;
+}
+
+int parent_close_go(struct container_config *cfg)
+{
+    int num_err = 0;
+    
+    if (close_fd(&cfg->go_read_fd) != 0) {
+        LOG_ERR("parent close %s go_reade_fd failed", cfg->name);
+        num_err++;
+    }
+
+    if (close_fd(&cfg->ready_write_fd) != 0) {
+        LOG_ERR("parent close %s reay_write_fd failed", cfg->name);
+        num_err++;
+    }
+
+    return num_err;
+}
+
+int create_pipes(struct container_config *cfg)
+{
+    int fds[2];
+
+    // create go sync pipe
+    if (pipe(fds) == -1) {
+        LOG_ERR("create go pipe failed");
+        return -1;
+    }
+
+    cfg->go_read_fd = fds[0];
+    cfg->go_write_fd = fds[1];
+
+    if (pipe(fds) == -1) {
+        LOG_ERR("create ready pipe failed");
+        return -1;
+    }
+
+    cfg->ready_read_fd = fds[0];
+    cfg->ready_write_fd = fds[1];
+
+    return 0;
+}
 
 // note child is running inside new task_struct
 static int child_start(void *arg)
@@ -414,26 +543,19 @@ static int child_start(void *arg)
     struct container_config *cfg = arg;
 
     // close pipe ends we don't use
-    close(cfg->go_pipe[1]);     
-    close(cfg->ready_pipe[0]);
-
-    if (set_identity(cfg->name) != 0) _exit(1);
+    if (child_close_go(cfg) != 0) _exit(1);
+    if (set_identity(cfg->name) != 0) _exit(2);
 
     // wait for parent to configure netns,veth, cgroup,...
-    if (read_pipe(cfg->go_pipe[0]) != 0) _exit(2);
+    if (child_go_sync(cfg) != 0) _exit(3);
 
-    if (cfg->netns_path && child_setns(cfg->netns_path) != 0) _exit(3);
-    if (set_rootfs(cfg->rootfs_path) !=0) _exit(3);
-    if (set_proc() != 0) _exit(4);
+    if (cfg->netns_path && child_setns(cfg->netns_path) != 0) _exit(4);
+    if (set_rootfs(cfg->rootfs_path) !=0) _exit(5);
+    if (set_proc() != 0) _exit(6);
 
-    if (setup_network(cfg->veth, cfg->ip_addr) !=0) _exit(5);
-
-    // tell parent network is up
-    if (write_pipe(cfg->ready_pipe[1]) !=0) _exit(6);
-
-    // close pipe ends
-    close(cfg->go_pipe[0]);     
-    close(cfg->ready_pipe[1]);
+    if (cfg->need_network && create_network(cfg->veth, cfg->ip_addr) != 0) _exit(7);
+    if (child_ready_sync(cfg) != 0) _exit(6);
+    if (child_close_ready(cfg) != 0) _exit(7);
 
     // finally exec the program
     execv(cfg->exec_path, cfg->exec_argv);
@@ -441,15 +563,10 @@ static int child_start(void *arg)
     _exit(6);
 }
 
+
 int container_start(struct container_config *cfg)
 {
-    // create sync pipes
-    if (pipe(cfg->go_pipe) == -1) {
-        LOG_ERR("create go pipe failed");
-        return -1;
-    }
-    if (pipe(cfg->ready_pipe) == -1) {
-        LOG_ERR("create ready pipe failed");
+    if (create_pipes(cfg) != 0) {
         return -1;
     }
 
@@ -478,8 +595,9 @@ int container_start(struct container_config *cfg)
     cfg->run = 1;
 
     // close our ends - child has a copy
-    close(cfg->go_pipe[0]); cfg->go_pipe[0] = -1;
-    close(cfg->ready_pipe[1]); cfg->ready_pipe[1] = -1;
+    if (!parent_close_go(cfg) != 0) {
+        return -1;
+    }
 
     // all done
     return 0;
@@ -493,8 +611,10 @@ void container_cleanup(struct container_config *cfg)
     }
 
     // release sync pipes
-    close_pipe(cfg->go_pipe);
-    close_pipe(cfg->ready_pipe);
+    close_fd(&cfg->go_read_fd);
+    close_fd(&cfg->go_write_fd);
+    close_fd(&cfg->ready_read_fd);
+    close_fd(&cfg->ready_write_fd);
 
     // release bind mount
     if (cfg->netns_path) {
@@ -523,6 +643,42 @@ void container_cleanup(struct container_config *cfg)
     if (cfg->rootfs_path) free(cfg->rootfs_path);
 
     // all done
+}
+
+int parent_go_sync(struct container_config *cfg)
+{
+    ssize_t nw;
+
+    nw = write_sync(cfg->go_write_fd);
+    if (nw != 1) {
+        LOG_ERR("parent write go_sync %s %d failed", cfg->name, cfg->go_write_fd);
+        close_fd(&cfg->go_write_fd);
+        return -1;
+    }
+
+    if (close_fd(&cfg->go_write_fd) != 0) {
+        LOG_ERR("parent close go_sync %s failed", cfg->name);
+    }
+
+    return 0;
+}
+
+int parent_ready_sync(struct container_config *cfg)
+{
+    ssize_t nr;
+
+    nr = read_sync(cfg->ready_read_fd);
+    if (nr != 1)  {
+        LOG_ERR("parent read ready_sync %s %d failed", cfg->name, cfg->ready_read_fd);
+        close_fd(&cfg->ready_read_fd);
+        return -1;
+    }
+
+    if (close_fd(&cfg->ready_read_fd) != 0) {
+        LOG_ERR("parnt close ready_sync %s failed", cfg->name);
+    }
+
+    return 0;
 }
 
 static char **parse_args(const char *args_str, int *argc_out) 
@@ -560,20 +716,24 @@ static int load_config(struct container_config *cfg,
 {
     memset(cfg, 0, sizeof(*cfg));
 
-    cfg->ready_pipe[0] = -1;
-    cfg->ready_pipe[1] = -1;
-    cfg->go_pipe[0] = -1;
-    cfg->go_pipe[1] = -1;
+    cfg->go_read_fd  = -1;
+    cfg->go_write_fd = -1;
+    cfg->ready_read_fd = -1;
+    cfg->ready_write_fd = -1;
 
-    if (!name || !exec_path || !ip_addr) {
-        LOG_ERR("config: need name,exec_path,ip_addr");
+    if (!name || !exec_path) {
+        LOG_ERR("config: need name,exec_path");
         return -1;
     }
 
     cfg->name = strdup(name);
     cfg->exec_path = strdup(exec_path);
     cfg->exec_argv = parse_args(exec_args, &cfg->exec_argc);
-    cfg->ip_addr = strdup(ip_addr);
+
+    if (ip_addr) {
+        cfg->ip_addr = strdup(ip_addr);
+        cfg->need_network = 1;
+    }
 
     return 0;
 }
@@ -586,6 +746,7 @@ struct launcher_state {
     int max_cfg;
     int num_cfg;
     int num_run;
+    char *rootfs;
     char *netns_suffix;
     char *cable_prefix;
 };
@@ -597,11 +758,16 @@ static struct container_config *add_config(
     const char *exec_args,
     const char *ip_addr)
 {
-    struct container_config *cfg = NULL;
+    struct container_config *cfg;
 
-    if (state->num_cfg < state->max_cfg) {
-        cfg = &state->configs[state->num_cfg++];
-        load_config(cfg, name, exec_path, exec_args, ip_addr);
+    if (state->num_cfg >= state->max_cfg) return NULL;
+
+    cfg = &state->configs[state->num_cfg++];
+
+    if (load_config(cfg, name, exec_path, exec_args, ip_addr) != 0) {
+        container_cleanup(cfg);
+        state->num_cfg--;
+        cfg = NULL;
     }
 
     return cfg;
@@ -619,6 +785,36 @@ void state_deinit(struct launcher_state *state)
     if (state->storage_dir) free(state->storage_dir);
     if (state->netns_suffix) free(state->netns_suffix);
     if (state->cable_prefix) free(state->cable_prefix);
+    if (state->rootfs) free(state->rootfs);
+}
+
+int add_rootfs(struct launcher_state *state, const char *rootfs)
+{
+	if (access(rootfs, R_OK) != 0) {
+        LOG_ERR("rootfs %s does not exist", rootfs);
+		return -1;
+	}
+
+	state->rootfs = strdup(rootfs);
+	if (!state->rootfs) {
+        LOG_ERR("add rootfs %s failed", rootfs);
+		return -1;
+	}
+
+	return 0;
+}
+
+int parse_cmd_line(struct launcher_state *state, int argc, char *argv[])
+{
+    for (int i = 0; i < argc; i++) {
+		char *option = argv[i];
+        if (str_starts_with(option, "rootfs=")) {
+			option += strlen("rootfs=");
+			RUN(add_rootfs(state, option));
+		}
+    }
+
+	return 0;
 }
 
 int init_state(struct launcher_state *state, int argc, char *argv[])
@@ -632,7 +828,7 @@ int init_state(struct launcher_state *state, int argc, char *argv[])
     state->netns_suffix = strdup("-ns");
     state->cable_prefix = strdup("veth-");
 
-    return 0;
+    return parse_cmd_line(state, argc, argv);
 }
 
 int create_netns(struct container_config *cfg, const char *netns_dir, const char *suffix)
@@ -713,14 +909,30 @@ int setup_infrastucture(struct launcher_state *state)
     return 0;
 }
 
-int gen_link_name(char *buf, int len, const char *prefix, char *name)
+
+static int set_cable_name(struct launcher_state *state, struct container_config *cfg)
 {
+    const char *prefix = state->cable_prefix;
     if (!prefix) prefix = "";
-    int rc = snprintf(buf, len, "%s%s", prefix, name);
-    if (rc < 0 || rc == 0 || rc >= len)  {
-        LOG_ERR("gen_link_name: snprintf %d failed", rc);
+
+    int rc = snprintf(cfg->veth, sizeof(cfg->veth), "%s%s", prefix, cfg->name);
+
+    if (rc < 0 || rc == 0 || rc >= sizeof(cfg->veth))  {
+        LOG_ERR("seT_cable_name: snprintf %d failed", rc);
         return -1;
     }
+
+    return 0;
+}
+
+int setup_network(struct container_config *cfg)
+{
+    RUN_CMD("ip netns exec %s ip link set %s name eth0", cfg->netns_name, cfg->veth);
+    RUN_CMD("ip netns exec %s ip link set lo up", cfg->netns_name);
+    RUN_CMD("ip netns exec %s ip link set eth0 up", cfg->netns_name);
+    RUN_CMD("ip netns exec %s ip addr add %s dev eth0", cfg->netns_name, cfg->ip_addr);
+
+    cfg->need_network = 0;
 
     return 0;
 }
@@ -729,17 +941,35 @@ int create_cable(struct launcher_state *state,
     struct container_config *x, 
     struct container_config *y)
 {
-    char vethx[IFNAMSIZ];
-    char vethy[IFNAMSIZ];
+    RUN(set_cable_name(state, x));
+    RUN(set_cable_name(state, y));
 
-    RUN(gen_link_name(vethx, sizeof(vethx), state->cable_prefix, x->name));
-    RUN(gen_link_name(vethy, sizeof(vethy), state->cable_prefix, y->name));
+    RUN_CMD("ip link add %s type veth peer name %s", x->veth, y->veth);
+    RUN_CMD("ip link set %s netns %s", x->veth, x->netns_name);
+    RUN_CMD("ip link set %s netns %s", y->veth, y->netns_name);
 
-    RUN_CMD("ip link add %s type veth peer name %s", vethx, vethy);
-    RUN_CMD("ip link set %s netns %s", vethx, x->netns_name);
-    RUN_CMD("ip link set %s netns %s", vethy, y->netns_name);
+    RUN(setup_network(x));
+    RUN(setup_network(y));
 
-    log_status("Created veth pair: %s <-> %s", vethx, vethy);
+    log_status("Created veth pair: %s <-> %s", x->veth, y->veth);
+
+    return 0;
+}
+
+int do_go_syncs(struct launcher_state *state)
+{
+    for (int i = 0; i < state->num_cfg; i++) {
+        RUN(parent_go_sync(&state->configs[i]));
+    }
+
+    return 0;
+}
+
+int do_ready_syncs(struct launcher_state *state)
+{
+    for (int i = 0; i < state->num_cfg; i++) {
+        RUN(parent_ready_sync(&state->configs[i]));
+    }
 
     return 0;
 }
@@ -807,14 +1037,18 @@ int main(int argc, char *argv[])
     struct launcher_state state;
     struct container_config *client, *server;
 
-    init_state(&state, argc, argv);
+    if (init_state(&state, argc, argv) != 0) goto cleanup;
     server = add_config(&state, "db", "/bin/server", NULL, "10.0.0.1");
     client = add_config(&state, "client", "/bin/client", NULL, "10.0.0.2");
     if (!client || !server) goto cleanup;
 
     if (setup_infrastucture(&state) != 0) goto cleanup;
-    if (create_cable(&state, client, server) != 0) goto cleanup;
     if (start_containers(&state) != 0) goto cleanup;
+
+    if (create_cable(&state, client, server) != 0) goto cleanup;
+    if (do_go_syncs(&state) != 0) goto cleanup;
+    if (do_ready_syncs(&state) != 0) goto cleanup;
+
     if (wait_containers(&state) != 0) goto cleanup;
 
 cleanup:   
