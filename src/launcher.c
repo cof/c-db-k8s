@@ -37,6 +37,7 @@
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/syscall.h> 
+#include <sys/sendfile.h>
 #include <fcntl.h>
 #include "util.h"
 
@@ -126,10 +127,36 @@ int create_dir(const char *path)
 
     if (rc == -1 && errno != EEXIST) {
         LOG_ERR("mkdir %s failed", path);
-        return errno;
+        return -1;
     }
 
-    return rc;
+    return 0;
+}
+
+int create_dirs(const char *path)  
+{
+    char tmp[PATH_MAX];
+    int nw = snprintf(tmp, sizeof(tmp), "%s", path);
+    if (nw < 0 || nw == 0 || nw >= sizeof(tmp)) {
+        LOG_ERR("mkdir %s failed", path);
+		return -1;
+	}
+
+    if (tmp[nw - 1] == '/') tmp[nw - 1] = 0; 
+
+    // now traverse the path string
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = 0; // Temporarily terminate string
+            if (create_dir(tmp) != 0) {
+                return -1;
+            }
+            *p = '/'; // Restore slash
+        }
+    }
+
+    // Create last dir on path
+    return create_dir(tmp);
 }
 
 static int mount_netns(const char *netns_path)
@@ -398,6 +425,7 @@ struct container_config {
     char *rootfs_path;     // For the bind mount and pivot_root()
     char *netns_path; // bind mounted network namespae
     char netns_name[IFNAMSIZ]; // network namespace name
+    char *cmd_path;  //  location of cmd
     char *exec_path;  // process to lanuch
     char **exec_argv; // command line args
     int exec_argc;
@@ -537,6 +565,85 @@ int create_pipes(struct container_config *cfg)
     return 0;
 }
 
+int copy_file(const char *src, const char *dst) 
+{
+    int src_fd = open(src, O_RDONLY);
+	if (src_fd < 0) {
+		LOG_ERR("copy_file open src %s failed", src);
+		return -1;
+	}
+
+    int dst_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+	if (dst_fd < 0) {
+		LOG_ERR("copy_file open dst %s failed", dst);
+		return -1;
+	}
+
+    struct stat stat_buf;
+    if (fstat(src_fd, &stat_buf) == -1) {
+		LOG_ERR("copy_file fstat src_fd %d failed", src_fd);
+    	close(src_fd);
+    	close(dst_fd);
+		return -1;
+	}
+
+	if (!S_ISREG(stat_buf.st_mode)) {
+		LOG_ERR("copy_file src %s not a file", src);
+    	close(src_fd);
+    	close(dst_fd);
+		return -1;
+	}	
+
+	// XXX file size can be 0
+	off_t offset = 0;
+	while (offset < stat_buf.st_size) {
+    	ssize_t sent = sendfile(dst_fd, src_fd, &offset, stat_buf.st_size - offset);
+    	if (sent < 0) {
+        	if (errno == EINTR) continue; // Interrupted, try again
+			LOG_ERR("copy_file send %s failed", src);
+        	return -1;
+    	}
+		if (sent == 0) {
+			LOG_ERR("copy_file send %s eof", src);
+			break;
+		}
+		// sendfile updates offset
+	}
+
+    close(src_fd);
+    close(dst_fd);
+
+	// check all sent
+    return offset == stat_buf.st_size ? 0 : -1;
+}
+
+int check_valid_dir(const char *path) 
+{
+    struct stat st;
+
+    // Check if the path exists
+    if (stat(path, &st) != 0) {
+		LOG_ERR("check_valid_dir %s failed", path);
+        return -1; 
+    }
+
+    // check file is a directory
+    if (!S_ISDIR(st.st_mode)) {
+		LOG_ERR("chec_valid_dir %s not a dir", path);
+        return 0;
+    }
+
+    // 3. Check for Read (R_OK) and Execute (X_OK) permissions
+    // Note: Directories need 'execute' permission to be "entered" or listed.
+    if (access(path, R_OK | X_OK) != 0) {
+		LOG_ERR("check_valid_dir %s not accesible", path);
+        return -1;
+    }
+
+    return 0;
+}
+
+
 // note child is running inside new task_struct
 static int child_start(void *arg)
 {
@@ -632,6 +739,7 @@ void container_cleanup(struct container_config *cfg)
 
     // release name,exec_path,...
     if (cfg->name) free(cfg->name);
+    if (cfg->cmd_path) free(cfg->cmd_path);
     if (cfg->exec_path) free(cfg->exec_path);
     if (cfg->exec_argc) {
         for (int i = 0; i < cfg->exec_argc; i++) {
@@ -710,6 +818,7 @@ static char **parse_args(const char *args_str, int *argc_out)
 
 static int load_config(struct container_config *cfg,
     const char *name, 
+    const char *cmd_path, 
     const char *exec_path, 
     const char *exec_args,
     const char *ip_addr)
@@ -721,12 +830,13 @@ static int load_config(struct container_config *cfg,
     cfg->ready_read_fd = -1;
     cfg->ready_write_fd = -1;
 
-    if (!name || !exec_path) {
+    if (!name || !!cmd_path || !exec_path) {
         LOG_ERR("config: need name,exec_path");
         return -1;
     }
 
     cfg->name = strdup(name);
+    cfg->cmd_path = strdup(exec_path);
     cfg->exec_path = strdup(exec_path);
     cfg->exec_argv = parse_args(exec_args, &cfg->exec_argc);
 
@@ -747,6 +857,7 @@ struct launcher_state {
     int num_cfg;
     int num_run;
     char *rootfs;
+	char *bindir;
     char *netns_suffix;
     char *cable_prefix;
 };
@@ -754,6 +865,7 @@ struct launcher_state {
 static struct container_config *add_config(
     struct launcher_state *state,
     const char *name, 
+	const char *cmd_path,
     const char *exec_path, 
     const char *exec_args,
     const char *ip_addr)
@@ -764,13 +876,60 @@ static struct container_config *add_config(
 
     cfg = &state->configs[state->num_cfg++];
 
-    if (load_config(cfg, name, exec_path, exec_args, ip_addr) != 0) {
+    if (load_config(cfg, name, cmd_path, exec_path, exec_args, ip_addr) != 0) {
         container_cleanup(cfg);
         state->num_cfg--;
         cfg = NULL;
     }
 
     return cfg;
+}
+
+int add_rootfs(struct launcher_state *state, const char *rootfs)
+{
+	if (check_valid_dir(rootfs) != 0) {
+		return -1;
+	}
+
+	state->rootfs = strdup(rootfs);
+	if (!state->rootfs) {
+        LOG_ERR("add rootfs %s failed", rootfs);
+		return -1;
+	}
+
+	return 0;
+}
+
+int add_bindir(struct launcher_state *state, const char *bindir)
+{
+	if (check_valid_dir(bindir) != 0) {
+		return -1;
+	}
+
+	state->bindir = strdup(bindir);
+	if (!state->bindir) {
+        LOG_ERR("add bindir %s failed", bindir);
+		return -1;
+	}
+
+	return 0;
+}
+
+int parse_cmd_line(struct launcher_state *state, int argc, char *argv[])
+{
+    for (int i = 0; i < argc; i++) {
+		char *option = argv[i];
+        if (str_starts_with(option, "rootfs=")) {
+			option += strlen("rootfs=");
+			RUN(add_rootfs(state, option));
+		}
+        if (str_starts_with(option, "bindir=")) {
+			option += strlen("rootfs=");
+			RUN(add_bindir(state, option));
+        }
+    }
+
+	return 0;
 }
 
 void state_deinit(struct launcher_state *state)
@@ -786,36 +945,10 @@ void state_deinit(struct launcher_state *state)
     if (state->netns_suffix) free(state->netns_suffix);
     if (state->cable_prefix) free(state->cable_prefix);
     if (state->rootfs) free(state->rootfs);
+    if (state->bindir) free(state->bindir);
+
 }
 
-int add_rootfs(struct launcher_state *state, const char *rootfs)
-{
-	if (access(rootfs, R_OK) != 0) {
-        LOG_ERR("rootfs %s does not exist", rootfs);
-		return -1;
-	}
-
-	state->rootfs = strdup(rootfs);
-	if (!state->rootfs) {
-        LOG_ERR("add rootfs %s failed", rootfs);
-		return -1;
-	}
-
-	return 0;
-}
-
-int parse_cmd_line(struct launcher_state *state, int argc, char *argv[])
-{
-    for (int i = 0; i < argc; i++) {
-		char *option = argv[i];
-        if (str_starts_with(option, "rootfs=")) {
-			option += strlen("rootfs=");
-			RUN(add_rootfs(state, option));
-		}
-    }
-
-	return 0;
-}
 
 int init_state(struct launcher_state *state, int argc, char *argv[])
 {
@@ -830,6 +963,7 @@ int init_state(struct launcher_state *state, int argc, char *argv[])
 
     return parse_cmd_line(state, argc, argv);
 }
+
 
 int create_netns(struct container_config *cfg, const char *netns_dir, const char *suffix)
 {
@@ -871,8 +1005,8 @@ static uint32_t generate_id(const char *name)
 
 int create_rootfs(struct container_config *cfg, const char *storeage_dir)
 {
-    uint32_t id = generate_id(cfg->name);
     char rootfs_path[PATH_MAX];
+    uint32_t id = generate_id(cfg->name);
 
     int rc = snprintf(rootfs_path, sizeof(rootfs_path), "%s/%08x/rootfs", storeage_dir,id);
     if (rc < 0 || rc == 0 || rc >= sizeof(rootfs_path)) {
@@ -891,6 +1025,99 @@ int create_rootfs(struct container_config *cfg, const char *storeage_dir)
     return 0;
 }
 
+int create_subdir(struct container_config *cfg, const char *subdir)
+{
+    char path[PATH_MAX];
+
+    int rc = snprintf(path, sizeof(path), "%s/%s", cfg->rootfs_path, subdir) ;
+    if (rc < 0 || rc == 0 || rc >= sizeof(path)) {
+        LOG_ERR("create_subdir: snprintf %d failed for %s", rc, cfg->name);
+        return -1;
+    }
+
+    RUN(create_dir(path));
+
+    return 0;
+}
+
+
+int mount_overlayfs(struct container_config *cfg)
+{
+    RUN(create_subdir(cfg, "lower"));
+    RUN(create_subdir(cfg, "upper"));
+    RUN(create_subdir(cfg, "work"));
+    RUN(create_subdir(cfg, "merged"));
+
+	int rc;
+	char *opts, *merged;
+
+	opts = NULL;
+	rc = asprintf(&opts,
+		"lowerdir=%s/lower,upperdir=%s/upper,workdir=%s/work", 
+		cfg->rootfs_path, cfg->rootfs_path, cfg->rootfs_path
+	);
+
+	if (rc == -1) {
+		LOG_ERR("mount overlayfs gen opts failed");
+		goto done;
+	}
+
+	merged = NULL;
+	rc = asprintf(&merged, "%s/merged", cfg->rootfs_path);
+	if (rc == -1) {
+		LOG_ERR("mount overlayfs gen merged failed");
+		goto done;
+	}
+
+	rc = mount("overlay", merged, "overlay", 0, opts);
+	if (rc == -1) {
+		LOG_ERR("mount overlayfs %s", merged);
+	}
+
+done:
+	if (opts) free(opts);
+	if (merged) free(merged);
+
+    return rc;
+}
+
+
+/*
+int mount_cmd(struct container_config *cfg, const char *rootfs_path)
+{
+	int rc;
+	char *dst_path = NULL;
+
+	rc = asprintf(&dst_path,"%s/%s", rootfs_path, cfg->exec_path)
+	if (rc == -1) {
+		LOG_ERR("mount cmd gendst %s failed", cfg->exec_path);
+		goto done;
+	}
+
+	rc = create_dirs(dst_path, 0755);
+	if (rc != 0) goto done;
+
+    int fd = open(dst_path, O_CREAT | O_WRONLY, 0755);
+    if (fd != -1) {
+		LOG_ERR("mount cmd touch %s failed", dst_path);
+		goto done;
+	}
+	close(fd); 
+
+    rc = mount(src, dst, NULL, MS_BIND, NULL);
+    rc =mount(NULL, dst, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL);
+
+done:
+	if (dst_path) free(dst_path);
+    
+    return 0;
+}
+*/
+
+int copy_files(struct container_config *cfg)
+{
+	return 0;
+}
 
 int setup_infrastucture(struct launcher_state *state)
 {
@@ -902,6 +1129,8 @@ int setup_infrastucture(struct launcher_state *state)
     for (int i = 0; i < state->num_cfg; i++) {
         struct container_config *cfg = &state->configs[i];
         RUN(create_rootfs(cfg, state->storage_dir));
+        RUN(mount_overlayfs(cfg));
+        RUN(copy_files(cfg));
         RUN(create_netns(cfg, state->netns_dir, state->netns_suffix));
     }
 
@@ -1038,8 +1267,8 @@ int main(int argc, char *argv[])
     struct container_config *client, *server;
 
     if (init_state(&state, argc, argv) != 0) goto cleanup;
-    server = add_config(&state, "db", "/bin/server", NULL, "10.0.0.1");
-    client = add_config(&state, "client", "/bin/client", NULL, "10.0.0.2");
+    server = add_config(&state, "db", "db/server" "/bin/server", NULL, NULL, "10.0.0.1");
+    client = add_config(&state, "client", "client/client", "/bin/client", "10.0.0.1", "10.0.0.2");
     if (!client || !server) goto cleanup;
 
     if (setup_infrastucture(&state) != 0) goto cleanup;

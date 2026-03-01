@@ -89,7 +89,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 
 # build the container rootfs
 .PHONY: rootfs
-OUR_CMDS = $(ROOTFS_CMDS)
+OUR_CMDS =
 AUX_CMDS = bash ls ip ping hostname
 ROOTFS_DIR = rootfs
 ROOTFS_TAR = rootfs.tar.gz
