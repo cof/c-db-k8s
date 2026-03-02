@@ -103,7 +103,7 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
         line->len = len;
         // have line or error
         if (len > MAX_LINE) {
-            LOG_ESTR("line too big - len %d > max %d", len, MAX_LINE);
+            log_error("line too big - len %d > max %d", len, MAX_LINE);
             len = ERR_READLINE;
         }
         return len;
@@ -111,7 +111,7 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
 
     // incomplete line
     if (buf->len > MAX_LINE) {
-        LOG_ESTR("line too big - len %d > max %d", buf->len, MAX_LINE);
+        log_error("line too big - len %d > max %d", buf->len, MAX_LINE);
         return ERR_READLINE;
     }
 
@@ -138,7 +138,7 @@ static int sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len, char *buf, 
     );
 
     if (rc != 0) {
-        LOG_ESTR("get name+port string - %s", gai_strerror(rc));
+        log_error("get name+port string - %s", gai_strerror(rc));
         return -1;
     }
 
@@ -162,7 +162,7 @@ int sockfd_get_addr(int sockfd, char *buf, int len)
 
     rc = getsockname(sockfd, (struct sockaddr *)&addr, &addr_len);
     if (rc == -1) {
-        LOG_ERRNO("get ip address");
+        log_errno("get ip address");
         return -1;
     }
 
@@ -181,7 +181,7 @@ static struct addrinfo *resolve_addr(const char *host, const char *port)
 
 	int rc = getaddrinfo(host, port, &hints, &res);
 	if (rc != 0) {
-        LOG_ESTR(gai_strerror(rc), "resolve address(host=%s port=%s)", host, port);
+        log_error(gai_strerror(rc), "resolve address(host=%s port=%s)", host, port);
         return NULL;
 	}
 
@@ -193,33 +193,33 @@ static int open_listener(struct addrinfo *res, const char *addr_str)
 {
     int fd = socket(res->ai_family, res->ai_socktype | SOCK_NONBLOCK, 0);
     if (fd == -1) {
-        LOG_ERRNO("create socket(%d, %d) for addr %s", res->ai_family, res->ai_socktype, addr_str);
+        log_errno("create socket(%d, %d) for addr %s", res->ai_family, res->ai_socktype, addr_str);
         goto err;
     }
 
     // turn off IPV6_ONLY - request dual stack
     int opt = 0;
     if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)) == -1)  {
-        LOG_ERRNO("disable IPV6_ONLY");
+        log_errno("disable IPV6_ONLY");
         goto err;
     }
 
     // turn on REUSE_ADDR
     opt = 1;
     if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
-        LOG_ERRNO("enable reuse_addr");
+        log_errno("enable reuse_addr");
         goto err;
     }
 
     // bind to address
     if (bind(fd, res->ai_addr, res->ai_addrlen) == -1) {
-        LOG_ERRNO("bind to (%s) failed", addr_str);
+        log_errno("bind to (%s) failed", addr_str);
         goto err;
     }
 
     // finally tell os to start listening
     if (listen(fd, SOMAXCONN) == -1) {
-        LOG_ERRNO("listen on %d,%s failed", fd, addr_str);
+        log_errno("listen on %d,%s failed", fd, addr_str);
         goto err;
     }
 
@@ -289,7 +289,7 @@ int sock_read(struct simple_sock *sock, struct rwbuf *buf)
             // read failed
            if (errno == EINTR) continue; // interrupt ?
            if (errno != EAGAIN) {
-               LOG_ERRNO("read simple_socket");
+               log_errno("read simple_socket");
                tr = ERR_READSOCK;
                sock->sys_err = 1;
            }
@@ -326,7 +326,7 @@ int sock_write(struct simple_sock *sock, struct rwbuf *buf)
             // write failed
             if (errno == EINTR) continue;
             if (errno != EAGAIN) {
-                LOG_ERRNO("write simple_socket");
+                log_errno("write simple_socket");
                 tw = ERR_WRITESOCK;
                 sock->sys_err = 1;
             }

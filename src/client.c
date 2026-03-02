@@ -24,42 +24,7 @@
 #include <netdb.h>
 
 #include "config.h"
-
-void log_info(const char *fmt, ...)
-{
-    va_list args;  
-
-    va_start(args, fmt);
-    vfprintf(stdout, fmt, args);
-    va_end(args);
-    fprintf(stdout, "\n");
-}
-
-void bail_err(const char *fmt, ...)
-{
-    va_list args;  
-
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-    fputs("\n", stderr);
-
-    exit(1);
-}
-
-void fatal_err(const char *file, int line, const char *fmt, ...)
-{
-    va_list args;  
-
-    va_start(args, fmt);
-    fprintf(stderr, "[%s:%d] ", file, line);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-
-    exit(2);
-}
-
-#define FATAL_ERR(fmt, ...) fatal_err(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
+#include "util.h"
 
 // big enough for "[" host "]" :" port + null
 #define MAX_HOSTPORT (4 + NI_MAXHOST + NI_MAXSERV)
@@ -95,11 +60,12 @@ static int mysockaddr_tostr(struct sockaddr *addr, socklen_t addr_len, char *buf
 int main(int argc, char *argv[])
 {
     // parse cmd line
-    if (argc < 2) bail_err("Missing hostname");
+    if (argc < 2) fatal_error("Missing hostname");
+
     char *hostname = strdup(argv[1]);
     char *port = strrchr(hostname, ':');
     if (port) *port++ = '\0';
-    if (strlen(hostname) == 0) bail_err("hostname cannot be blank");
+    if (strlen(hostname) == 0) fatal_error("hostname cannot be blank");
     if (!port || strlen(port) == 0) port = TCP_PORT_STR;
 
 	// resolve hostname+ port string to list of (ip+port)
@@ -108,7 +74,7 @@ int main(int argc, char *argv[])
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 	int rc = getaddrinfo(hostname, port, &hints, &res);
-    if (rc != 0) FATAL_ERR("getaddrinfo(%s,%s) : %s\n", hostname, port, gai_strerror(rc));
+    if (rc != 0) fatal_error("getaddrinfo(%s,%s) : %s\n", hostname, port, gai_strerror(rc));
 
     // try to connect 
     int sock_fd = -1;
@@ -119,17 +85,17 @@ int main(int argc, char *argv[])
         mysockaddr_tostr(ai->ai_addr, ai->ai_addrlen, name, sizeof(name));
         rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
         if (rc != -1) break;
-        fprintf(stderr, "connect(%s) failed", strerror(errno));
+        log_errno("connect(%s) failed");
         close(sock_fd);
         sock_fd = -1;
     }
 
-    if (sock_fd == -1) bail_err("No connection");
+    if (sock_fd == -1) fatal_error("No connection");
 
     // wrap the fd into FILE
     FILE *send = fdopen(sock_fd, "w");
     FILE *recv = fdopen(dup(sock_fd), "r");
-    if (!send || !recv) FATAL_ERR("Failed to create in/out");
+    if (!send || !recv) fatal_error("Failed to create in/out");
 
     // at this stage safe to proceed
     log_info("Connectivity test: OK");

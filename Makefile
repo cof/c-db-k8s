@@ -52,7 +52,7 @@ $(DST_DIR):
 # build our binaries
 .PHONY: cmds
 CMDS = server client launcher
-BIN_CMDS = $(addprefix $(DST_DIR)/, $(CMDS))
+BIN_CMDS = db/server client/client launcher
 ROOTFS_CMDS = server client
 CMDS_DONE = $(BUILD_DIR)/.cmds_done
 $(CMDS_DONE): $(CMDS) | $(BUILD_DIR)
@@ -61,12 +61,12 @@ $(CMDS_DONE): $(CMDS) | $(BUILD_DIR)
 cmds: $(CMDS_DONE)
 
 # server
-SERVER_SRCS = src/util.c src/sock.c src/db.c src/server.c
+SERVER_SRCS = src/sock.c src/db.c src/server.c
 SERVER_OBJS = $(SERVER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 SERVER_DEPS = $(SERVER_OBJS:.o=.d)
 -include $(SERVER_DEPS)
 server: $(SERVER_OBJS)
-	$(cmd_LD) $(SERVER_OBJS) -o $@
+	$(cmd_LD) $(LDFLAGS) $(SERVER_OBJS) -o $@
 
 # client
 CLIENT_SRCS = src/client.c
@@ -74,7 +74,7 @@ CLIENT_OBJS = $(CLIENT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 CLIENT_DEPS = $(CLIENT_OBJS:.o=.d)
 -include $(CLIENT_DEPS)
 client: $(CLIENT_OBJS)
-	$(cmd_LD) $(CLIENT_OBJS) -o $@
+	$(cmd_LD) $(LDFLAGS) $(CLIENT_OBJS) -o $@
 
 # launcher
 LAUNCHER_SRCS = src/launcher.c
@@ -82,7 +82,7 @@ LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 LAUNCHER_DEPS = $(LAUNCHER_OBJS:.o=.d)
 -include $(LAUNCHER_DEPS)
 launcher: $(LAUNCHER_OBJS)
-	$(cmd_LD) $(LAUNCHER_OBJS) -o $@
+	$(cmd_LD) $(LDFLAGS) $(LAUNCHER_OBJS) -o $@
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@
@@ -124,11 +124,12 @@ $(ROOTFS_TAR) : $(ROOTFS_DONE)
 
 # install files
 .PHONY: install
-install: $(BIN_CMDS) $(DST_DIR)/$(ROOTFS_TAR)
+install: $(BIN_CMDS:%=$(DST_DIR)/%)
 	@echo "  DONE  all files in $(DST_DIR)"
 
-$(BIN_CMDS): $(DST_DIR)/% : % | $(DST_DIR)
-	$(cmd_INST) -m 755 $< $@
+$(BIN_CMDS:%=$(DST_DIR)/%): $(DST_DIR)/% :
+	@mkdir -p $(dir $@)
+	$(cmd_INST) -m 755 $(notdir $*) $@
 
 $(DST_DIR)/$(ROOTFS_TAR): $(ROOTFS_TAR) | $(DST_DIR)
 	$(cmd_INST) -m 644 $< $@

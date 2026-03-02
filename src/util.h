@@ -2,6 +2,9 @@
 #define __UTIL_H__
 
 #include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdarg.h>
 
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
@@ -13,12 +16,65 @@
 #define XSTR(a) #a
 #define STR(a) XSTR(a)
 
-
 // logger
-void log_info(const char *fmt, ...);
-void log_estr(const char *file, int line, const char *estr, const char *fmt, ...);
-#define LOG_ESTR(fmt, ...)  log_estr(__FILE__, __LINE__, "", fmt, ##__VA_ARGS__)
-#define LOG_ERRNO(...)  log_estr(__FILE__, __LINE__, strerror(errno), __VA_ARGS__)
+
+static inline void log_info(const char *fmt, ...)
+{
+    va_list args;  
+
+    fprintf(stdout, "[+] ");
+
+    va_start(args, fmt);
+    vfprintf(stdout, fmt, args);
+    va_end(args);
+
+    fprintf(stdout, "\n");
+}
+
+static inline int _fatal_error(const char *file, int line, const char *func, const char *fmt, ...)
+{
+    va_list args;  
+
+    fprintf(stderr, "[FATAL] %s:%d (%s): ", file, line, func);
+
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+
+    fprintf(stderr, "\n");
+
+    exit(1);
+}
+
+static inline int _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
+{
+    va_list args;  
+
+    fprintf(stderr, "[ERROR] %s:%d (%s): ", file, line, func);
+
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+
+    if (ec != 0) {
+        fprintf(stderr, ": %s (errno: %d)", strerror(ec), ec);
+    }
+    else {
+        ec = -1;
+    }
+
+    fprintf(stderr, "\n");
+
+    return ec;
+}
+
+#define log_error(...)  _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__)
+#define log_errno(...)  _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__)
+#define log_errnon(...)  (_log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__), (void *) NULL) 
+#define fatal_error(...) _fatal_error(__FILE__, __LINE__, __func__,  __VA_ARGS__)
+#define log_errorn(...) (log_error(__VA_ARGS__), (void*)NULL)
+#define log_debug(fmt, ...) { fprintf(stderr, fmt, ##__VA_ARGS__); fprintf(stderr, "\n"); }
+
 
 // general errs
 #define ERR_READSOCK -1

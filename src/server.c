@@ -239,14 +239,14 @@ static void do_client_write(struct simple_client *client)
 
     if (client->write_buf.len) {
         // write pending
-        if (!client->sock.wait_write && poll_ctrl(client->parent, &client->sock, RDWR_EVENTS)) {
+        if (!client->sock.wait_write && poll_ctrl(client->parent, &client->sock, RDWR_EVENTS) == 0) {
             client->sock.wait_write = 1;
         }
     }
     else {
         // write complete
         client->write_buf.rptr = client->write_buf.data;
-        if (client->sock.wait_write && poll_ctrl(client->parent, &client->sock, RD_EVENTS)) {
+        if (client->sock.wait_write && poll_ctrl(client->parent, &client->sock, RD_EVENTS) == 0) {
             client->sock.wait_write = 0;
         }
     }
@@ -317,15 +317,15 @@ static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uin
     } while (rc == -1 && errno == EINTR);
 
     if (rc == -1) {
-        LOG_ERRNO("epoll_ctl failed (fd=%d, op=%d,events=%u", sock->fd, op, events);
         sock->sys_err = -1;
-        return 0;
+        return log_errno("epoll_ctl failed (fd=%d, op=%d,events=%u", sock->fd, op, events);
     }
 
     // registered
     sock->is_epoll = 1;
 
-    return 1;
+    // all done
+    return 0;
 }
 
 struct simple_client *server_accept(struct simple_server *server)
@@ -341,7 +341,7 @@ struct simple_client *server_accept(struct simple_server *server)
     struct simple_client *client = client_create(fd);
     if (!client) {
         // out of memory ?
-        LOG_ESTR("client_create failed!");
+        log_error("client_create failed!");
         close(fd);
         return NULL;
     }
@@ -351,7 +351,7 @@ struct simple_client *server_accept(struct simple_server *server)
 
     // register with epoll - XXX readable events only
     client->parent = server;
-    if (!poll_ctrl(server, &client->sock, RD_EVENTS)) { 
+    if (poll_ctrl(server, &client->sock, RD_EVENTS) != 0) { 
         // register failed ?
         client_destroy(client);
         return NULL;
@@ -384,7 +384,7 @@ static void do_server_err(struct simple_server *server)
     socklen_t errlen = sizeof(error);
 
     if (!getsockopt(server->sock.fd, SOL_SOCKET, SO_ERROR, &error, &errlen)) {
-        LOG_ERRNO("get socket error for listener %d", server->sock.fd);
+        log_errno("get socket error for listener %d", server->sock.fd);
     }
 
     server->sock.sys_err = 1;
@@ -445,12 +445,11 @@ int setup_listener(struct simple_server *server)
 
     server->epoll_fd = epoll_create1(0);
     if (server->epoll_fd == -1) {
-        LOG_ERRNO("epoll_create1 failed");
-        return 0;
+        return log_errno("epoll_create1 failed");
     }
 
     // register for incoming connections
-    if (!poll_ctrl(server, &server->sock, EPOLLIN)) {
+    if (poll_ctrl(server, &server->sock, EPOLLIN) != 0) {
         return 0;
     }
 

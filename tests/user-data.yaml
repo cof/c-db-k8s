@@ -2,6 +2,9 @@
 hostname: launcher
 datasource_list: [ NoCloud ]
 
+packages:
+  - sudo
+
 # XXX alpine is ignore this
 ssh_pwauth: true
 write_files:
