@@ -79,13 +79,14 @@ int main(int argc, char *argv[])
     // try to connect 
     int sock_fd = -1;
     char name[MAX_HOSTPORT];
+
     for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
         sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (sock_fd == -1) continue;
         mysockaddr_tostr(ai->ai_addr, ai->ai_addrlen, name, sizeof(name));
         rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
         if (rc != -1) break;
-        log_errno("connect(%s) failed");
+        log_errno("connect(%s) failed", name);
         close(sock_fd);
         sock_fd = -1;
     }

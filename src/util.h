@@ -59,13 +59,11 @@ static inline int _log_error(const char *file, int line, const char *func, int e
     if (ec != 0) {
         fprintf(stderr, ": %s (errno: %d)", strerror(ec), ec);
     }
-    else {
-        ec = -1;
-    }
 
     fprintf(stderr, "\n");
 
-    return ec;
+    // XXX always -1
+    return -1;
 }
 
 #define log_error(...)  _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__)

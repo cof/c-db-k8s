@@ -45,6 +45,8 @@
 #define RUNTIME_DIR "/run/asimple_launcher"
 #define STORAGE_DIR "/var/lib/asimple_launcher"
 #define NETNS_DIR "/var/run/netns"
+#define HOST_NETNS_PATH "/proc/self/ns/net"
+
 #define MAX_CONFIG 10
 
 static int verbose;
@@ -72,7 +74,6 @@ char *gen_path(const char *dir, const char *name)
 
     return path;
 }
-
 
 static int run_cmd(const char *fmt, ...)
 {
@@ -161,28 +162,55 @@ int create_path(const char *path, mode_t mode)
     return rc; 
 }
 
+
+// bind mount a new nets
 static int mount_netns(const char *netns_path)
 {
-    // creat path e.g touch "/var/run/netns/name"
-    int fd = open(netns_path, O_RDONLY | O_CREAT | O_EXCL, 0600);
-    if (fd == -1)
+    // create path - aka touch "/var/run/netns/name"
+    int netns_fd = open(netns_path, O_RDONLY | O_CREAT | O_EXCL, 0600);
+    if (netns_fd == -1) {
         return log_errno("open %s failed", netns_path);
-    close(fd);
+    }
+
+    if (close(netns_fd) != 0) {
+        // close failed -> rm file and return 
+        int _errno = errno;
+        unlink(netns_path);
+        errno = _errno; 
+        return log_errno("close %s failed", netns_path);
+    }
+
+    // make file a mount point
+    if (mount(netns_path, netns_path, "none", MS_BIND, NULL) < 0) {
+        log_errno("mount self-bind %s failed", netns_path);
+        unlink(netns_path);
+        return -1;
+    }
+    // make file private
+    if (mount("", netns_path, NULL, MS_PRIVATE, NULL) < 0) {
+        log_errno("mount private %s failed", netns_path);
+        unlink(netns_path);
+        return -1;
+    }
 
     // spawn a child for bind mount
     pid_t pid = fork();
-    if (pid < 0) 
-        return -log_errno("fork for bind mount failed");
+    if (pid < 0) {
+        return log_errno("fork for bind mount failed");
+    }
 
+    // inside child - bind mount the new file to a new netns
     if (pid == 0) {
-        // inside child - bind mount the file 
-        // i.e mount --bind /proc/self/ns/net /var/run/netnts/name
-        if (unshare(CLONE_NEWNET) < 0)
-            _exit(log_errno("unshare CLONE_NEWNET"));
-
-        if (mount("/proc/self/ns/net", netns_path, "none", MS_BIND, NULL) != 0)
-            _exit(log_errno("bind mount %s failed", netns_path));
-
+        // create new netns
+        if (unshare(CLONE_NEWNET) < 0)  {
+            log_errno("unshare create new-netns failed ");
+            _exit(1);
+        }
+        // pin it bind
+        if (mount(HOST_NETNS_PATH, netns_path, "none", MS_BIND, NULL) != 0) {
+            log_errno("mount bind %s failed", netns_path);
+            _exit(2);
+        }
         // done
         _exit(0);
     }
@@ -190,14 +218,25 @@ static int mount_netns(const char *netns_path)
     // parent 
     int status; 
     pid_t p = waitpid(pid, &status, 0);
-    if (p == -1)
-        return log_errno("mount_netns:waitpid(%d) failed", pid);
+    if (p == -1) {
+        unlink(netns_path);
+        return log_errno("waitpid failed");
+    }
 
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-        return log_error("mount_netns: child failed to bind mount");
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        unlink(netns_path);
+        return log_error("failed to bind mount %s", netns_path);
+    }
 
-    // all done
-    return 0;
+    // reopen netns 
+    netns_fd = open(netns_path, O_RDONLY | O_CLOEXEC);
+    if (netns_fd == -1) {
+        unlink(netns_path);
+        return log_errno("reopen %s failed", netns_path);
+    }
+
+    // finally all done
+    return netns_fd;
 }
 
 static int create_veth(const char *container, char *veth, int veth_len)
@@ -328,7 +367,7 @@ static int write_sync(int fd)
         nw = write(fd, "!", 1);
     } while (nw == -1 && errno == EINTR);
 
-    return nw;
+    return nw == 1 ? 1 : -1;
 }
 
 static inline int close_fd(int *fd)
@@ -362,8 +401,9 @@ static int child_setns(const char *netns_path)
 {
     int fd = open(netns_path, O_RDONLY);
 
-    if (fd == -1)
+    if (fd == -1) {
         return log_errno("open netns %s failed", netns_path);
+    }
 
     // switch task into network namespace
     if (setns(fd, CLONE_NEWNET) != 0)
@@ -391,6 +431,7 @@ struct container_config {
     char *work_path;   
     char netns_name[IFNAMSIZ]; // network namespace name
     char veth[IFNAMSIZ];  // container eth0 link
+    int netns_fd;
     // parent sync child
     int go_read_fd;    // child reads
     int go_write_fd;   // parent writes
@@ -400,7 +441,7 @@ struct container_config {
     void *stack;       // passed to clone
     size_t stack_size;
     pid_t child_pid;   // value returned by clone
-    int exit_status;
+    int status; // waitpid
     unsigned int use_subdir : 1; // use a rootfs subdir instead of name
     unsigned int need_network : 1; // configure network
     unsigned int run : 1; // clone child is active
@@ -410,71 +451,70 @@ struct container_config {
     // waitpid flags
     unsigned int exit : 1;
     unsigned int signalled : 1;
-    unsigned int stopped : 1;
-    unsigned int continued : 1;
 };
 
+struct launcher_state {
+    char *cur_dir; // cwd where laucher start
+    char *src_dir; // where host files live
+    char *netns_dir;  // netns mounts /var/run/netns
+    char *runtime_dir; 
+    char *storage_dir;
+    char *rootfs_dir; // where a rootfs lives
+    struct container_config configs[MAX_CONFIG];
+    int host_netns_fd;
+    int max_cfg;
+    int num_cfg;
+    int num_run;
+    char *netns_suffix;
+    char *cable_prefix;
+    mode_t dir_mode;
+    unsigned int use_name_id : 1;
+    unsigned int use_subdirs : 1; // rootfs
+    unsigned int use_overlay : 1; // lower,upper,work,merged
+    unsigned int use_cmd_mount : 1; // mount cmd files instead of copying 
+    unsigned int child_add_ip : 1;  // child sets up network
+};
 
-static int child_close_go(struct container_config *cfg)
+static int child_wait_sync(struct container_config *cfg)
 {
-    int num_err = 0;
-
+    // close the pipe ends we don't need
     if (close_fd(&cfg->go_write_fd) != 0) {
-        log_errno("child close %s go_write_fd failed", cfg->name);
-        num_err++;
+        return log_errno("close go_write for %s failed", cfg->name);
     }
-
     if (close_fd(&cfg->ready_read_fd) != 0) {
-        log_errno("child close %s ready_read_fd failed", cfg->name);
-        num_err++;
+        return log_errno("close ready_read for %s failed", cfg->name);
     }
 
-    return num_err;;
-}
-
-static int child_close_ready(struct container_config *cfg)
-{
-    int num_err = 0;
-
-    if (close_fd(&cfg->ready_write_fd) != 0) {
-        log_errno("child %s close ready_write_fd failed", cfg->name);
-        num_err++;
+    // read 1 byte from parent
+    ssize_t nr = read_sync(cfg->go_read_fd);
+    if (nr == -1) {
+        return log_errno("read-sync for %s failed", cfg->name);
     }
-
-    if (close_fd(&cfg->go_read_fd) != 0) {
-        log_errno("child %s go_read_fd failed", cfg->name);
-        num_err++;
+    if (nr != 1) {
+        return log_error("read-wait for %s got zero", cfg->name);
     }
-
-    return num_err;;
-}
-
-static int child_go_sync(struct container_config *cfg)
-{
-    ssize_t nr;
-
-    nr = read_sync(cfg->go_read_fd);
-
-    if (nr == -1)
-        return log_errno("read_sync %s from go_read_fd failed", cfg->name);
-
-    if (nr != 1)
-        return log_error("read_sync %s from go_read_fd got zero ", cfg->name);
 
     return 0;;
 }
 
-static int child_ready_sync(struct container_config *cfg)
+static int child_wake_sync(struct container_config *cfg)
 {
-    ssize_t nw;
+    ssize_t nw = write_sync(cfg->ready_write_fd);
 
-    nw = write_sync(cfg->ready_write_fd);
+    if (nw == -1) {
+        return log_errno("write-ready_fd for %s failed", cfg->name);
+    }
+    if (nw != 1) {
+        return log_error("write-ready_fd for %s got zero", cfg->name);
+    }
 
-    if (nw == -1)
-        return log_errno("write_sync %s to ready_write failed", cfg->name);
-
-    if (nw != 1)
-        return log_error("write_sync %s to ready_write got zero ", cfg->name);
+    // close pipe ends we no longer need
+    if (close_fd(&cfg->ready_write_fd) != 0) {
+        return log_errno("close ready_write_fd for %s failed", cfg->name);
+    }
+    if (close_fd(&cfg->go_read_fd) != 0) {
+        return log_errno("close go_read_fd for %s failed", cfg->name);
+    }
 
     return 0;;
 }
@@ -501,18 +541,21 @@ int create_pipes(struct container_config *cfg)
     int fds[2];
 
     // create go sync pipe
-    if (pipe(fds) == -1) 
+    if (pipe(fds) == -1)  {
         return log_errno("create go-pipe for %s failed", cfg->name);
+    }
 
     cfg->go_read_fd = fds[0];
     cfg->go_write_fd = fds[1];
 
-    if (pipe(fds) == -1) 
+    if (pipe(fds) == -1) {
         return log_errno("create ready_pipe for %s failed", cfg->name);
+    }
 
     cfg->ready_read_fd = fds[0];
     cfg->ready_write_fd = fds[1];
 
+    // all done
     return 0;
 }
 
@@ -597,36 +640,38 @@ static inline char *get_rootfs(struct container_config *cfg)
     return cfg->use_subdir ? cfg->rootfs_path : cfg->root_path;
 }
 
-// note child is running inside new task_struct
 static int container_start(void *arg)
 {
     struct container_config *cfg = arg;
 
-    // close pipe ends we don't use
-    if (child_close_go(cfg) != 0) _exit(1);
-    if (set_identity(cfg->name) != 0) _exit(2);
+    // close fds we dont use
+    if (set_identity(cfg->name) != 0) _exit(1);
+    if (child_wait_sync(cfg) != 0) _exit(2);
 
-    // wait for parent to configure netns,veth, cgroup,...
-    if (child_go_sync(cfg) != 0) _exit(3);
+    if (cfg->netns_mounted && child_setns(cfg->netns_path) != 0) _exit(3);
+    if (set_rootfs(get_rootfs(cfg)) !=0) _exit(4);
+    if (set_proc() != 0) _exit(5);
 
-    if (cfg->netns_mounted && child_setns(cfg->netns_path) != 0) _exit(4);
-    if (set_rootfs(get_rootfs(cfg)) !=0) _exit(5);
-    if (set_proc() != 0) _exit(6);
+    if (cfg->need_network && create_network(cfg->veth, cfg->ip_addr) != 0) _exit(6);
+    if (child_wake_sync(cfg) != 0) _exit(7);
 
-    if (cfg->need_network && create_network(cfg->veth, cfg->ip_addr) != 0) _exit(7);
-    if (child_ready_sync(cfg) != 0) _exit(6);
-    if (child_close_ready(cfg) != 0) _exit(7);
+    // XXX close remaing fds other than stdio,stdout,stderr
+    if (syscall(SYS_close_range, 3, ~0U, 0) == -1) {
+        log_errno("close_range failed");
+        _exit(8); 
+    }
 
-    // finally exec the program
+    // finally run the cmd
     execv(cfg->exec_path, cfg->exec_argv);
-    log_errno("execv %s failed", cfg->exec_path);
-    _exit(6);
+    log_errno("child %s execv '%s' failed", cfg->name, cfg->exec_path);
+    _exit(9);
 }
 
-int container_run(struct container_config *cfg)
+int container_run(struct launcher_state *state, struct container_config *cfg)
 {
-    if (create_pipes(cfg) != 0)
+    if (create_pipes(cfg) != 0) {
         return -1;
+    }
 
     // allocate a protected memory region for child stack
     // - never ever use malloc as child can corrupt it and parents heap
@@ -636,21 +681,46 @@ int container_run(struct container_config *cfg)
         PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0
     );
-    if (stack == MAP_FAILED)
+    if (stack == MAP_FAILED) {
         return log_errno("mmap stack %zu failed", cfg->stack_size);
+    }
     cfg->stack = stack; // XXX MAP_FAILED may not be 0
 
+    // setup clone flags
+    int clone_flags = SIGCHLD | CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS;
+    if (cfg->netns_mounted) {
+        //  switch to child netns
+        if (setns(cfg->netns_fd, CLONE_NEWNET) != 0) {
+            return log_errno("netns-set(%d,'%s') for %s failed", cfg->netns_fd, cfg->netns_path, cfg->name);
+        }
+    }
+    else if (cfg->need_network) {
+        clone_flags |= CLONE_NEWNET;
+    }
+
     // launch child
-    int clone_flags = SIGCHLD | CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET;
     cfg->child_pid = clone(container_start, cfg->stack + cfg->stack_size, clone_flags, cfg);
-    if (cfg->child_pid == -1)
-        return log_errno("clone child(%s,%s) failed", cfg->name, cfg->exec_path);
+    if (cfg->child_pid == -1) {
+        // failed ?
+        int _errno = errno;
+        // XXX retore the parnent netns
+        setns(state->host_netns_fd, CLONE_NEWNET);
+        errno = _errno;
+        return log_errno("clone-child('%s','%s') failed", cfg->name, cfg->exec_path);
+    }
 
     cfg->run = 1;
+    state->num_run++;
+
+    // XXX retore the parents netns
+    if (setns(state->host_netns_fd, CLONE_NEWNET) != 0) {
+        return log_errno("set-netns %s failed", HOST_NETNS_PATH);
+    }
 
     // close our ends - child has a copy
-    if (parent_close_go(cfg) != 0)
+    if (parent_close_go(cfg) != 0) {
         return -1;
+    }
 
     // release overlay mount
     if (cfg->overlay_mounted) {
@@ -672,43 +742,35 @@ void container_cleanup(struct container_config *cfg)
         cfg->run = 0;
     }
 
-    // release sync pipes
+    // release all fds
     close_fd(&cfg->go_read_fd);
     close_fd(&cfg->go_write_fd);
     close_fd(&cfg->ready_read_fd);
     close_fd(&cfg->ready_write_fd);
+    close_fd(&cfg->netns_fd);
 
     // release bind mount
     if (cfg->netns_mounted) {
-        if (umount2(cfg->netns_path, MNT_DETACH) < 0 && errno != EINVAL) {
-            log_errno("container_cleanup %s unmount netns %s failed", cfg->name, cfg->netns_path);
-        }
-        if (unlink(cfg->netns_path) < 0 && errno != ENOENT) {
-            log_errno("container_cleanup %s unlink netns %s failed", cfg->name, cfg->netns_path);
-        }
+        umount2(cfg->netns_path, MNT_DETACH);
+        unlink(cfg->netns_path);
         cfg->netns_mounted = 0;
     }
 
     // release overlay mount
     if (cfg->overlay_mounted) {
-        if (umount2(cfg->rootfs_path, MNT_DETACH) < 0 && errno != EINVAL) {
-            log_errno("container_cleanup %s unmount overlay %s failed", cfg->name, cfg->rootfs_path);
-        }
+        umount2(cfg->rootfs_path, MNT_DETACH);
         cfg->overlay_mounted = 0;
         if (cfg->cmd_mounted) {
-            // unmount rootfs clears all mounts
+            // XXX an rootfs unmout clears all mounts
             cfg->cmd_mounted = 0;
         }
     }
 
     // release cmd mount
     if (cfg->cmd_mounted) {
-        if (umount2(cfg->dst_path, MNT_DETACH) < 0 && errno != EINVAL) {
-            log_errno("container_cleanup %s unmount dst %s failed", cfg->name, cfg->dst_path);
-        }
+        umount2(cfg->dst_path, MNT_DETACH);
         cfg->cmd_mounted = 0;
     }
-
 
     // release stack memory
     if (cfg->stack) {
@@ -769,26 +831,6 @@ static char **parse_args(const char *exec_path, const char *args_str, int *argc_
     return argv;
 }
 
-struct launcher_state {
-    char *cur_dir; // cwd where laucher start
-    char *src_dir; // where host files live
-    char *netns_dir;  // netns mounts /var/run/netns
-    char *runtime_dir; 
-    char *storage_dir;
-    char *rootfs_dir; // where a rootfs lives
-    struct container_config configs[MAX_CONFIG];
-    int max_cfg;
-    int num_cfg;
-    int num_run;
-    char *netns_suffix;
-    char *cable_prefix;
-    mode_t dir_mode;
-    unsigned int use_name_id : 1;
-    unsigned int use_subdirs : 1; // rootfs
-    unsigned int use_overlay : 1; // lower,upper,work,merged
-    unsigned int use_cmd_mount : 1; // mount cmd files instead of copying 
-    unsigned int child_add_ip : 1;  // child sets up network
-};
 
 static struct container_config *add_config(
     struct launcher_state *state,
@@ -811,11 +853,13 @@ static struct container_config *add_config(
 
     cfg = &state->configs[state->num_cfg++];
 
+    // init - XXX all fds must be set to -1
     memset(cfg, 0, sizeof(*cfg));
     cfg->go_read_fd  = -1;
     cfg->go_write_fd = -1;
     cfg->ready_read_fd = -1;
     cfg->ready_write_fd = -1;
+    cfg->netns_fd = - 1;
 
     cfg->name = strdup(name);
     cfg->cmd_path = strdup(cmd_path);
@@ -831,21 +875,25 @@ static struct container_config *add_config(
 
 int create_netns(struct launcher_state *state, struct container_config *cfg)
 {
-    char *suffix = state->netns_suffix;
-    if (!suffix) suffix = "";
-
-    // gen name e.g "name-ns"
+    // generate name e.g "name-ns"
+    char *suffix = state->netns_suffix ?: "";
     int rc = snprintf(cfg->netns_name, sizeof(cfg->netns_name), "%s%s", cfg->name, suffix);
-    if (rc < 0 || rc == 0 || rc >= sizeof(cfg->netns_name))
-        return log_error("create_netns genname %s failed", cfg->name);
+    if (rc < 0 || rc == 0 || rc >= sizeof(cfg->netns_name)) {
+        return log_error("genname %s failed", cfg->name);
+    }
 
-    // gen path e,g "/var/run/netns/name-ns"
+    // generate path e,g "/var/run/netns/name-ns"
     cfg->netns_path = gen_path(state->netns_dir, cfg->netns_name);
-    if (!cfg->netns_path) 
-        return log_errno("create_netns genpath %s failed", cfg->netns_name);
+    if (!cfg->netns_path) {
+        return log_errno("genpath %s failed", cfg->netns_name);
+    }
 
-    rc = mount_netns(cfg->netns_path);
-    if (rc != 0) return rc;
+    // bind mount path
+    cfg->netns_fd = mount_netns(cfg->netns_path);
+    if (cfg->netns_fd == -1) {
+        return log_error("mount_netns %s failed", cfg->netns_name);
+    }
+
     cfg->netns_mounted = 1;
 
     log_info("Created network namespace: %s", cfg->netns_name);
@@ -859,8 +907,7 @@ static char *gen_id(char *buf, int len, const char *name)
 
     int rc = snprintf(buf, len, "%08x", id);
     if (rc < 0 || rc == 0 || rc >= len)  {
-        log_errno("gen_id failed for %s", name);
-        return NULL;
+        return log_errnon("gen_id failed for %s", name);
     }
 
     return buf;
@@ -1009,8 +1056,21 @@ int check_network(struct launcher_state *state, struct container_config *cfg)
     return 0;
 }
 
+int open_host_netns(struct launcher_state *state)
+{
+    // XXX fd must be for this process only (O_CLOEXEC)
+    state->host_netns_fd = open(HOST_NETNS_PATH, O_RDONLY | O_CLOEXEC);
+    if (state->host_netns_fd == -1) {
+        return log_errno("open host_netns failed");
+    }
+
+    return 0;
+}
+
 int setup_infrastucture(struct launcher_state *state)
 {
+    RUN(open_host_netns(state));
+
     // create dirs
     RUN(create_path(state->netns_dir, state->dir_mode));
     RUN(create_path(state->storage_dir, state->dir_mode));
@@ -1023,7 +1083,7 @@ int setup_infrastucture(struct launcher_state *state)
         RUN(mount_overlay(state, cfg));
         RUN(copy_files(state, cfg));
         RUN(check_network(state, cfg));
-        //RUN(create_netns(state, cfg));
+        RUN(create_netns(state, cfg));
     }
 
     // all done
@@ -1082,90 +1142,109 @@ int create_cable(struct launcher_state *state,
     return 0;
 }
 
-int check_wait_status(struct launcher_state *state, struct container_config *cfg, int status)
+static int inline child_reaped(int status)
 {
-    if (WIFEXITED(status)) { 
-        cfg->exit_status = WEXITSTATUS(status); 
-        cfg->run = 0;
-    }
-    else if (WIFSIGNALED(status)) {
-        cfg->signalled = 1; 
-        cfg->run = 0;
-    }
-    else if (WIFSTOPPED(status)) 
-        cfg->continued = 1;
-    else if (WIFCONTINUED(status))
-        cfg->continued = 1;
+    return WIFEXITED(status) | WIFSIGNALED(status) ? 1 : 0;
+}
 
-    if (!cfg->run) {
-        log_error("Child (pid=%d,name=%s) died early", cfg->child_pid, cfg->name);
-        close_fd(&cfg->go_write_fd);
-        state->num_run--;
+int check_reaped(struct launcher_state *state, struct container_config *cfg)
+{
+    char why[40];
+
+    if (!child_reaped(cfg->status)) return 0;
+
+    cfg->run = 0;
+    state->num_run--;
+
+    if (WIFEXITED(cfg->status)) {
+        int ec = WEXITSTATUS(cfg->status);
+        snprintf(why, sizeof(why), "exited %d", ec);
+    }
+    else if (WIFSIGNALED(cfg->status)) {
+        int sig = WTERMSIG(cfg->status);
+        snprintf(why, sizeof(why), "signal %d (%s)", sig, strsignal(sig));
+    }
+    else {
+        snprintf(why, sizeof(why), "status 0x%08x", cfg->status);
+    }
+
+    return log_error("Container '%s' died (pid=%d why=%s)", cfg->name, cfg->child_pid, why);
+}
+
+int check_wait(struct launcher_state *state, struct container_config *cfg)
+{
+    pid_t res = waitpid(cfg->child_pid, &cfg->status, WNOHANG);
+    if (res == -1) {
+        return log_errno("waipid for %s failed", cfg->name);
+    }
+    if (res == cfg->child_pid && check_reaped(state, cfg) != 0) {
         return -1;
     }
 
     return 0;
 }
 
-int parent_go_sync(struct launcher_state *state, struct container_config *cfg)
+int state_wake_sync(struct launcher_state *state, struct container_config *cfg)
 {
-    int status;
-    if (waitpid(cfg->child_pid, &status, WNOHANG) == cfg->child_pid) {
-        if (check_wait_status(state, cfg, status) != 0) return -1;
+    // check if chlld still running
+    if (check_wait(state, cfg) != 0) {
+        return -1;
     }
 
-    ssize_t nw= write_sync(cfg->go_write_fd);
-
+    // wake up child
+    ssize_t nw = write_sync(cfg->go_write_fd);
     if (nw != 1) {
-        log_errno("parent write go_sync %s %d failed", cfg->name, cfg->go_write_fd);
+        int _errno = errno;
         close_fd(&cfg->go_write_fd);
-        return -1;
+        errno = _errno;
+        return log_errno("write wake-sync for %s failed", cfg->name);
     }
 
+    // relese pipe
     if (close_fd(&cfg->go_write_fd) != 0) {
-        log_errno("parent close go_sync %s failed", cfg->name);
-        return -1;
+        return log_errno("close wait-sync for %s failed", cfg->name);
     }
 
     return 0;
 }
 
-int parent_ready_sync(struct launcher_state *state, struct container_config *cfg)
+int state_wait_sync(struct launcher_state *state, struct container_config *cfg)
 {
-    int status;
-    if (waitpid(cfg->child_pid, &status, WNOHANG) == cfg->child_pid) {
-        if (check_wait_status(state, cfg, status) != 0) return -1;
+    // check if chlld still running
+    if (check_wait(state, cfg) != 0) {
+        return -1;
     }
 
+    // wait for child
     ssize_t nr = read_sync(cfg->ready_read_fd);
-
-    if (nr != 1)  {
-        log_errno("parent read ready_sync %s %d failed", cfg->name, cfg->ready_read_fd);
+    if (nr == -1)  {
+        int _errno = errno;
         close_fd(&cfg->ready_read_fd);
-        return -1;
+        errno = _errno;
+        return log_errno("read wait-sync for %s failed", cfg->name);
     }
 
+    // relese pipe
     if (close_fd(&cfg->ready_read_fd) != 0) {
-        log_errno("parnt close ready_sync %s failed", cfg->name);
-        return -1;
+        return log_errno("close wait-sync %s failed", cfg->name);
     }
 
     return 0;
 }
 
-int do_go_syncs(struct launcher_state *state)
+int do_wake_syncs(struct launcher_state *state)
 {
     for (int i = 0; i < state->num_cfg; i++) {
-        RUN(parent_go_sync(state, &state->configs[i]));
+        RUN(state_wake_sync(state, &state->configs[i]));
     }
 
     return 0;
 }
 
-int do_ready_syncs(struct launcher_state *state)
+int do_wait_syncs(struct launcher_state *state)
 {
     for (int i = 0; i < state->num_cfg; i++) {
-        RUN(parent_ready_sync(state, &state->configs[i]));
+        RUN(state_wait_sync(state, &state->configs[i]));
     }
 
     return 0;
@@ -1174,8 +1253,7 @@ int do_ready_syncs(struct launcher_state *state)
 int start_containers(struct launcher_state *state)
 {
     for (int i = 0; i < state->num_cfg; i++) {
-        RUN(container_run(&state->configs[i]));
-        state->num_run++;
+        RUN(container_run(state, &state->configs[i]));
     }
 
     return 0;
@@ -1201,14 +1279,31 @@ int wait_containers(struct launcher_state *state)
 
     while (state->num_run > 0) {
         pid_t pid = waitpid(-1, &status, 0); 
-        if (pid == -1) {
-            if (errno == EINTR) continue;
-            if (errno == ECHILD) break;
-            return log_errno("wait_containers: waitpid failed");
-        }
         if (pid == 0) continue;
-        if ((cfg = find_child(state, pid)) == NULL) continue;
-        if (check_wait_status(state, cfg, status) != 0) return -1;
+        if (pid == -1) {
+            // waitpid failed
+            if (errno == EINTR) continue;
+            if (errno == ECHILD) {
+                // no more children - stop now
+                for (int i = 0; i < state->num_cfg; i++) {
+                    state->configs[i].run = 0;
+                }
+                state->num_run = 0;
+                break;
+            }
+            return log_errno("waitpid failed");
+        }
+        cfg = find_child(state, pid);
+        if (!cfg) {
+            // XXX - not ours ?
+            log_info("waitpid reaped unknown child pid %d", pid);
+            continue;
+        }
+        // check if running 
+        cfg->status = status;
+        if (check_reaped(state, cfg) != 0) {
+            return -1;
+        }
     }
 
     return 0;
@@ -1295,6 +1390,8 @@ void state_deinit(struct launcher_state *state)
     }
     state->num_cfg = 0;
 
+    close_fd(&state->host_netns_fd);
+
     if (state->cur_dir) free(state->cur_dir);
     if (state->src_dir) free(state->src_dir);
 
@@ -1310,8 +1407,11 @@ void state_deinit(struct launcher_state *state)
 
 int init_state(struct launcher_state *state, int argc, char *argv[])
 {
+    // init
     memset(state, 0, sizeof(*state));
+    state->host_netns_fd = -1;
 
+    // FIXME do we need this ?
     signal(SIGPIPE, SIG_IGN);
 
     state->max_cfg = MAX_CONFIG;
@@ -1323,8 +1423,9 @@ int init_state(struct launcher_state *state, int argc, char *argv[])
 
     state->cur_dir = gen_path(cwd, "mylauncher");
     free(cwd);
-    if (!state->cur_dir) 
+    if (!state->cur_dir) {
         return log_error("cur_dir");
+    }
 
     state->netns_dir = gen_path(state->cur_dir, "netns_dir");
     state->runtime_dir = gen_path(state->cur_dir, "run_dir");
@@ -1352,8 +1453,8 @@ int main(int argc, char *argv[])
     if (start_containers(&state) != 0) goto cleanup;
     if (create_cable(&state, client, server) != 0) goto cleanup;
 
-    if (do_go_syncs(&state) != 0) goto cleanup;
-    if (do_ready_syncs(&state) != 0) goto cleanup;
+    if (do_wake_syncs(&state) != 0) goto cleanup;
+    if (do_wait_syncs(&state) != 0) goto cleanup;
 
     if (wait_containers(&state) != 0) goto cleanup;
 
