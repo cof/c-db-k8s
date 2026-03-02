@@ -35,6 +35,12 @@ ifdef DEBUG
 endif
 LDFLAGS = -static
 
+ifeq ($(SECURITY),1)
+	CFLAGS += -DSECURITY
+	SECURITY_LIBS = -lcap -lseccomp
+endif
+
+
 # dirs
 BUILD_DIR = build
 SRC_DIR = src
@@ -77,12 +83,13 @@ client: $(CLIENT_OBJS)
 	$(cmd_LD) $(LDFLAGS) $(CLIENT_OBJS) -o $@
 
 # launcher
+LAUNCHER_LIBS = $(SECURITY_LIBS)
 LAUNCHER_SRCS = src/launcher.c
 LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 LAUNCHER_DEPS = $(LAUNCHER_OBJS:.o=.d)
 -include $(LAUNCHER_DEPS)
 launcher: $(LAUNCHER_OBJS)
-	$(cmd_LD) $(LDFLAGS) $(LAUNCHER_OBJS) -o $@
+	$(cmd_LD) $(LDFLAGS) $(LAUNCHER_OBJS) $(LAUNCHER_LIBS) -o $@
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@

@@ -39,6 +39,10 @@
 #include <sys/mount.h>
 #include <sys/syscall.h> 
 #include <sys/sendfile.h>
+#ifdef SECURITY
+#include <sys/prctl.h>
+#include <linux/capability.h>
+#endif
 #include <fcntl.h>
 #include "util.h"
 
@@ -489,6 +493,7 @@ struct container_config {
     int status; // waitpid
     unsigned int use_subdir : 1; // use a rootfs subdir instead of name
     unsigned int need_network : 1; // configure network
+    unsigned int need_priv : 1; // prctl|drop_capabilities|apply_seccomp
     unsigned int run : 1; // clone child is active
     unsigned int netns_mounted : 1; // netns active
     unsigned int overlay_mounted : 1; // overlay FS active
@@ -703,6 +708,28 @@ static inline char *get_rootfs(struct container_config *cfg)
     return cfg->use_subdir ? cfg->rootfs_path : cfg->root_path;
 }
 
+#ifdef SECURITY
+static int setup_priv(struct container_config *cfg)
+{
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1) {
+        return log_errno("prctl set-nonnew_privs failed for container %s", cfg->name);
+    }
+
+    if (drop_capabilities() != 0)  {
+        return log_errno("drop-apabilities failed for container %s", cfg->name);
+    }
+
+    if (apply_seccomp() != 0) {
+        return log_errno("apply-seccomp failed for container %s", cfg->name);
+    }
+
+    return 0;
+}
+#else
+static int setup_priv(struct container_config *cfg) { return 0; }
+
+#endif
+
 static int container_start(void *arg)
 {
     struct container_config *cfg = arg;
@@ -712,8 +739,9 @@ static int container_start(void *arg)
         log_info("Container (name=%s pid=%d) started", cfg->name, cfg->child_pid);
     }
 
-    if (set_identity(cfg->name) != 0) _exit(1);
-    if (child_wait_sync(cfg) != 0) _exit(2);
+    if (setup_priv(cfg) != 0) _exit(1);
+    if (set_identity(cfg->name) != 0) _exit(2);
+    if (child_wait_sync(cfg) != 0) _exit(3);
 
     if (set_rootfs(get_rootfs(cfg)) !=0) _exit(4);
     if (set_proc() != 0) _exit(5);
