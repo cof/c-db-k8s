@@ -138,10 +138,11 @@ static int run_cmd(const char *fmt, ...)
 
 int create_dir(const char *path, mode_t mode, bool can_exist)
 {
-    int rc = mkdir(path, 0755);
+    int rc = mkdir(path, mode);
 
-    if (rc == -1 && (!can_exist || errno != EEXIST))
+    if (rc == -1 && (!can_exist || errno != EEXIST)) {
         return log_errno("create_dir %s failed", path);
+    }
 
     return 0;
 }
@@ -181,32 +182,53 @@ int create_path(const char *path, mode_t mode)
 }
 
 
+static int touch_file(const char *path, int flags, mode_t mode)
+{
+    int fd = open(path, flags, mode);
+    if (fd == -1) {
+        return log_errno("open %s failed", path);
+    }
+
+    if (close(fd) != 0) {
+        // close failed -> rm file and return 
+        int _errno = errno;
+        unlink(path);
+        errno = _errno; 
+        return log_errno("close %s failed", path);
+    }
+
+    return 0;
+}
+
+static int mount_file(const char *path)
+{
+    // make file a mount point
+    if (mount(path, path, "none", MS_BIND, NULL) < 0) {
+        return log_errno("mount self-bind %s failed", path);
+    }
+
+    // make file private
+    if (mount("", path, NULL, MS_PRIVATE, NULL) < 0) {
+        int _errno = errno;
+        umount2(path, MNT_DETACH);
+        errno = _errno;
+        return log_errno("mount private %s failed", path);
+    }
+
+    return 0;
+}
+
 // bind mount a new nets
 static int mount_netns(const char *netns_path)
 {
-    // create path - aka touch "/var/run/netns/name"
-    int netns_fd = open(netns_path, O_RDONLY | O_CREAT | O_EXCL, 0600);
+    // create path 
+    int netns_fd = touch_file(netns_path, O_RDONLY | O_CREAT | O_EXCL, 0600);
     if (netns_fd == -1) {
         return log_errno("open %s failed", netns_path);
     }
 
-    if (close(netns_fd) != 0) {
-        // close failed -> rm file and return 
-        int _errno = errno;
-        unlink(netns_path);
-        errno = _errno; 
-        return log_errno("close %s failed", netns_path);
-    }
-
-    // make file a mount point
-    if (mount(netns_path, netns_path, "none", MS_BIND, NULL) < 0) {
-        log_errno("mount self-bind %s failed", netns_path);
-        unlink(netns_path);
-        return -1;
-    }
-    // make file private
-    if (mount("", netns_path, NULL, MS_PRIVATE, NULL) < 0) {
-        log_errno("mount private %s failed", netns_path);
+    // convert to mount point
+    if (mount_file(netns_path) != 0) {
         unlink(netns_path);
         return -1;
     }
@@ -214,6 +236,10 @@ static int mount_netns(const char *netns_path)
     // spawn a child for bind mount
     pid_t pid = fork();
     if (pid < 0) {
+        int _errno = errno;
+        umount2(netns_path, MNT_DETACH);
+        unlink(netns_path);
+        errno = _errno;
         return log_errno("fork for bind mount failed");
     }
 
@@ -237,19 +263,35 @@ static int mount_netns(const char *netns_path)
     int status; 
     pid_t p = waitpid(pid, &status, 0);
     if (p == -1) {
+        int _errno = errno;
+        umount2(netns_path, MNT_DETACH);
         unlink(netns_path);
+        errno = _errno;
         return log_errno("waitpid failed");
     }
 
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        int _errno = errno;
+        umount2(netns_path, MNT_DETACH);
         unlink(netns_path);
+        errno = _errno;
         return log_error("failed to bind mount %s", netns_path);
     }
 
     // reopen netns 
     netns_fd = open(netns_path, O_RDONLY | O_CLOEXEC);
     if (netns_fd == -1) {
+        int _errno = errno;
+        umount2(netns_path, MNT_DETACH);
         unlink(netns_path);
+        errno = _errno;
+        return log_errno("reopen %s failed", netns_path);
+    }
+
+    if (umount2(netns_path, MNT_DETACH) < 0) {
+        int _errno = errno;
+        unlink(netns_path);
+        errno = _errno;
         return log_errno("reopen %s failed", netns_path);
     }
 
@@ -344,11 +386,13 @@ static int set_rootfs(const char *rootfs)
 static int set_proc(void)
 {
     // new PID namespace - create new /proc
-    if (mkdir("/proc", 0755) != 0)
+    if (create_dir("/proc", 0755, 1) != 0) {
         return log_errno("mkdir /proc failed");
+    }
 
-    if (mount("proc", "/proc", "proc", 0, NULL) != 0)
+    if (mount("proc", "/proc", "proc", 0, NULL) != 0) {
         return log_errno("mount /proc faild");
+    }
 
     return 0; 
 }
@@ -415,23 +459,6 @@ static void shutdown_pid(int pid, int wait)
     }
 }
 
-static int child_setns(const char *netns_path)
-{
-    int fd = open(netns_path, O_RDONLY);
-
-    if (fd == -1) {
-        return log_errno("open netns %s failed", netns_path);
-    }
-
-    // switch task into network namespace
-    if (setns(fd, CLONE_NEWNET) != 0)
-        return log_errno("setns %s failed", netns_path);
-
-    close(fd);
-
-    return 0;
-}
-
 struct container_config {
     char *name;          // container name
     char *cmd_path;  //  location of cmd
@@ -448,7 +475,7 @@ struct container_config {
     char *upper_path;   
     char *work_path;   
     char netns_name[IFNAMSIZ]; // network namespace name
-    char veth[IFNAMSIZ];  // container eth0 link
+    char veth_name[IFNAMSIZ];  // container eth0 link
     int netns_fd;
     // parent sync child
     int go_read_fd;    // child reads
@@ -639,23 +666,31 @@ close_all:
     return rc;
 }
 
-int mount_file(const char *host_path, const char *rootfs_path)
+int mount_cmd_file(const char *host_path, const char *rootfs_path)
 {
     // create an empty file - touch rootfs_path
     int fd = open(rootfs_path, O_CREAT | O_WRONLY, 0755);
-    if (fd != -1)
+    if (fd != -1) {
 		return log_errno("mount_cmd touch %s failed", rootfs_path);
+    }
 	close(fd); 
 
     // create a writable bind-mount
-    if (mount(host_path, rootfs_path, NULL, MS_BIND, NULL) < 0)
+    if (mount(host_path, rootfs_path, NULL, MS_BIND, NULL) < 0) {
+        int _errno = errno;
+        unlink(rootfs_path);
+        errno = _errno; 
 		return log_errno("mount_cmd bind mount %s failed", rootfs_path);
+    }
 
     // update bind-mount to read-only
     if (mount(NULL, rootfs_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL) < 0) {
+        int _errno = errno;
 		log_errno("mount_cmd remount read-only %s failed", rootfs_path);
         umount2(rootfs_path, MNT_DETACH); 
-        return -1;
+        unlink(rootfs_path);
+        errno = _errno; 
+		return log_errno("mount_cmd bind mount %s failed", rootfs_path);
     }
 
     // all done
@@ -680,11 +715,10 @@ static int container_start(void *arg)
     if (set_identity(cfg->name) != 0) _exit(1);
     if (child_wait_sync(cfg) != 0) _exit(2);
 
-    if (cfg->netns_mounted && child_setns(cfg->netns_path) != 0) _exit(3);
     if (set_rootfs(get_rootfs(cfg)) !=0) _exit(4);
     if (set_proc() != 0) _exit(5);
 
-    if (cfg->need_network && create_network(cfg->veth, cfg->ip_addr) != 0) _exit(6);
+    if (cfg->need_network && create_network(cfg->veth_name, cfg->ip_addr) != 0) _exit(6);
     if (child_wake_sync(cfg) != 0) _exit(7);
 
     // XXX close remaing fds other than stdio,stdout,stderr
@@ -701,7 +735,7 @@ static int container_start(void *arg)
 
 int container_run(struct launcher_state *state, struct container_config *cfg)
 {
-    if (verbose) log_info("Starting: %s", cfg->name);
+    if (verbose) log_info("Launcher starting %s", cfg->name);
 
     if (create_pipes(cfg) != 0) {
         return -1;
@@ -785,8 +819,8 @@ void container_cleanup(struct container_config *cfg)
 
     // release bind mount
     if (cfg->netns_mounted) {
-        umount2(cfg->netns_path, MNT_DETACH);
-        unlink(cfg->netns_path);
+        if (umount2(cfg->netns_path, MNT_DETACH));
+        if (unlink(cfg->netns_path));
         cfg->netns_mounted = 0;
     }
 
@@ -927,7 +961,6 @@ int create_netns(struct launcher_state *state, struct container_config *cfg)
     if (cfg->netns_fd == -1) {
         return log_error("mount_netns %s failed", cfg->netns_name);
     }
-
     cfg->netns_mounted = 1;
 
     log_info("Created network namespace: %s", cfg->netns_name);
@@ -1064,7 +1097,7 @@ int copy_files(struct launcher_state *state, struct container_config *cfg)
 
     // finally copy or mount file 
     if (state->use_cmd_mount) {
-        rc = mount_file(cmd_path, dst_path);
+        rc = mount_cmd_file(cmd_path, dst_path);
         if (rc == 0) {
             cfg->cmd_mounted = 1;
             // need to store mount point
@@ -1137,8 +1170,8 @@ static int set_cable_name(struct launcher_state *state, struct container_config 
     const char *prefix = state->cable_prefix;
     if (!prefix) prefix = "";
 
-    int rc = snprintf(cfg->veth, sizeof(cfg->veth), "%s%s", prefix, cfg->name);
-    if (rc < 0 || rc == 0 || rc >= sizeof(cfg->veth))
+    int rc = snprintf(cfg->veth_name, sizeof(cfg->veth_name), "%s%s", prefix, cfg->name);
+    if (rc < 0 || rc == 0 || rc >= sizeof(cfg->veth_name))
         return log_error("seT_cable_name: snprintf %d failed", rc);
 
     return 0;
@@ -1150,7 +1183,7 @@ int setup_network(struct container_config *cfg)
         log_info("launcher setup-network (name=%s ipaddr=%s" , cfg->name, cfg->ip_addr);
     }
 
-    RUN_CMD("nsenter -t %d -n ip link set %s name eth0", cfg->child_pid, cfg->veth);
+    RUN_CMD("nsenter -t %d -n ip link set %s name eth0", cfg->child_pid, cfg->veth_name);
     RUN_CMD("nsenter -t %d -n ip addr add %s/24 dev eth0", cfg->child_pid, cfg->ip_addr);
     RUN_CMD("nsenter -t %d -n ip link set lo up", cfg->child_pid);
     RUN_CMD("nsenter -t %d -n ip link set eth0 up", cfg->child_pid);
@@ -1171,22 +1204,22 @@ int create_cable(struct launcher_state *state,
     RUN(set_cable_name(state, x));
     RUN(set_cable_name(state, y));
 
-    RUN_CMD("ip link add %s type veth peer name %s", x->veth, y->veth);
+    RUN_CMD("ip link add %s type veth peer name %s", x->veth_name, y->veth_name);
 
-    if (run_cmd("ip link set %s netns %d", x->veth, x->child_pid) != 0) {
-        run_cmd("ip link del %s ", x->veth);
+    if (run_cmd("ip link set %s netns %d", x->veth_name, x->child_pid) != 0) {
+        run_cmd("ip link del %s ", x->veth_name);
         return -1;
     }
 
-    if (run_cmd("ip link set %s netns %d", y->veth, y->child_pid) != 0) {
-        run_cmd("ip link del %s ", y->veth);
+    if (run_cmd("ip link set %s netns %d", y->veth_name, y->child_pid) != 0) {
+        run_cmd("ip link del %s ", y->veth_name);
         return -1;
     }
 
     RUN(setup_network(x));
     RUN(setup_network(y));
 
-    log_info("Created veth pair: %s <-> %s", x->veth, y->veth);
+    log_info("Created veth pair: %s <-> %s", x->veth_name, y->veth_name);
 
     return 0;
 }
@@ -1317,7 +1350,7 @@ int sync_containers(struct launcher_state *state)
 int start_containers(struct launcher_state *state)
 {
     if (verbose) {
-        log_info("Launcher start %d containers", state->num_cfg);
+        log_info("Launcher starting %d containers", state->num_cfg);
     }
 
     for (int i = 0; i < state->num_cfg; i++) {
@@ -1517,6 +1550,7 @@ int init_state(struct launcher_state *state, int argc, char *argv[])
 
     state->max_cfg = MAX_CONFIG;
     state->start_delay = START_DELAY;
+    state->start_order = START_ORDER;
 
     // setup default dirs
     char *cwd = getcwd(NULL, 0);

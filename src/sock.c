@@ -89,9 +89,10 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
 
     if (eol) {
         // found line
-        size_t len = eol - buf->rptr + 1;
+        size_t rlen = eol - buf->rptr + 1;
         char *str = buf->rptr;
         // remove from buffer
+        int len = rlen;
         buf->len -= len ;
         buf->rptr += len;
         // chop cr/lf - TODO remove this ?
@@ -106,7 +107,8 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
             log_error("line too big - len %d > max %d", len, MAX_LINE);
             len = ERR_READLINE;
         }
-        return len;
+        // return read length (includes \r\n)
+        return rlen;
     }
 
     // incomplete line

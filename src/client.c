@@ -113,6 +113,7 @@ int main(int argc, char *argv[])
             //  error or eof
             break;
         }
+
         // send line to server
         fputs(buf, send); 
         fflush(send);
