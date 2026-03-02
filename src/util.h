@@ -29,6 +29,7 @@ static inline void log_info(const char *fmt, ...)
     va_end(args);
 
     fprintf(stdout, "\n");
+    fflush(stdout);
 }
 
 static inline int _fatal_error(const char *file, int line, const char *func, const char *fmt, ...)
@@ -100,6 +101,16 @@ static inline struct str_slice slice_make(char *str, size_t len)
     return dst;
 }
 
+static inline struct str_slice slice_make_cstr(char *str)
+{
+    return slice_make(str, str ? strlen(str) : 0);
+}
+
+static inline int slice_cmp_cstr(struct str_slice str, const char *cstr, int len)
+{
+    return len == str.len && memcmp(str.ptr, cstr, len) == 0;
+}
+
 static inline struct str_slice slice_split(struct str_slice *src, int ch)
 {
     struct str_slice dst;
@@ -117,7 +128,6 @@ static inline struct str_slice slice_split(struct str_slice *src, int ch)
 
     return dst;
 }
-
 
 static inline void str2lower(char *str, size_t len)
 {

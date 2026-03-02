@@ -48,6 +48,8 @@
 #define HOST_NETNS_PATH "/proc/self/ns/net"
 
 #define MAX_CONFIG 10
+#define START_ORDER 1
+#define START_DELAY 2
 
 static int verbose;
 
@@ -75,33 +77,49 @@ char *gen_path(const char *dir, const char *name)
     return path;
 }
 
+static int inline child_reaped(int status)
+{
+    return WIFEXITED(status) | WIFSIGNALED(status) ? 1 : 0;
+}
+
 static int run_cmd(const char *fmt, ...)
 {
-    char cmd[4096];
     va_list args;
+    char *cmd;
     int rc;
 
     va_start(args, fmt);
-    rc = vsnprintf(cmd, sizeof(cmd), fmt, args);
+    rc = vasprintf(&cmd, fmt, args);
     va_end(args);
 
-    if (rc < 0) 
+    if (rc < 0) {
         return log_errno("vsnprintf failed");
+    }
 
-    if (verbose) log_debug("%s", cmd);
+    if (verbose) {
+        log_info("%s", cmd);
+    }
 
     rc = system(cmd);
-    if (rc == -1) return log_errno("system(%s) failed", cmd);
+    if (rc == -1) {
+        log_errno("system(%s) failed", cmd);
+    }
+    else if (!WIFEXITED(rc)) {
+        log_error("cmd (%s) interupted", cmd);
+        rc = -1;
+    }
+    else if (WEXITSTATUS(rc) != 0) {
+        log_error("cmd (%s) exited %d" , cmd, WEXITSTATUS(rc));
+        rc = -1;
+    }
+    else {
+        rc = 0;
+    }
 
-    if (!WIFEXITED(rc))
-        return log_error("cmd (%s) interupted", cmd);
-
-    int ec = WEXITSTATUS(rc);
-    if (ec != 0)
-        return log_error("cmd (%s) exit_code %d", cmd, ec);
+    free(cmd);
 
     // all done
-    return 0;
+    return rc; 
 }
 
 
@@ -468,6 +486,8 @@ struct launcher_state {
     char *netns_suffix;
     char *cable_prefix;
     mode_t dir_mode;
+    int start_delay;
+    unsigned int start_order : 1; // start container in order
     unsigned int use_name_id : 1;
     unsigned int use_subdirs : 1; // rootfs
     unsigned int use_overlay : 1; // lower,upper,work,merged
@@ -494,11 +514,19 @@ static int child_wait_sync(struct container_config *cfg)
         return log_error("read-wait for %s got zero", cfg->name);
     }
 
+    if (verbose) {
+        log_info("Container (name=%s pid=%d) recv-go", cfg->name, cfg->child_pid);
+    }
+
     return 0;;
 }
 
 static int child_wake_sync(struct container_config *cfg)
 {
+    if (verbose)  {
+        log_info("Container (name=%s pid=%d) send-ready", cfg->name, cfg->child_pid);
+    }
+
     ssize_t nw = write_sync(cfg->ready_write_fd);
 
     if (nw == -1) {
@@ -644,7 +672,11 @@ static int container_start(void *arg)
 {
     struct container_config *cfg = arg;
 
-    // close fds we dont use
+    cfg->child_pid = getpid();
+    if (verbose) {
+        log_info("Container (name=%s pid=%d) started", cfg->name, cfg->child_pid);
+    }
+
     if (set_identity(cfg->name) != 0) _exit(1);
     if (child_wait_sync(cfg) != 0) _exit(2);
 
@@ -669,6 +701,8 @@ static int container_start(void *arg)
 
 int container_run(struct launcher_state *state, struct container_config *cfg)
 {
+    if (verbose) log_info("Starting: %s", cfg->name);
+
     if (create_pipes(cfg) != 0) {
         return -1;
     }
@@ -990,12 +1024,15 @@ int mount_overlay(struct launcher_state *state, struct container_config *cfg)
     return rc;
 }
 
-
 // copy files from host into container filesystem
 int copy_files(struct launcher_state *state, struct container_config *cfg)
 {
-    int rc = 0;
+    if (verbose) {
+        log_info("Launcher copy-files (name=%s, cmd=%s)", cfg->name, cfg->cmd_path);
+    }
+
     char *cmd_path = NULL, *dst_path = NULL, *dst_dir = NULL;
+    int rc = 0;
 
     // check src path exists
     cmd_path = realpath(cfg->cmd_path, NULL);
@@ -1069,6 +1106,10 @@ int open_host_netns(struct launcher_state *state)
 
 int setup_infrastucture(struct launcher_state *state)
 {
+    if (verbose) {
+        log_info("Launcher setup_infrastucture");
+    }
+
     RUN(open_host_netns(state));
 
     // create dirs
@@ -1105,6 +1146,10 @@ static int set_cable_name(struct launcher_state *state, struct container_config 
 
 int setup_network(struct container_config *cfg)
 {
+    if (verbose) {
+        log_info("launcher setup-network (name=%s ipaddr=%s" , cfg->name, cfg->ip_addr);
+    }
+
     RUN_CMD("nsenter -t %d -n ip link set %s name eth0", cfg->child_pid, cfg->veth);
     RUN_CMD("nsenter -t %d -n ip addr add %s/24 dev eth0", cfg->child_pid, cfg->ip_addr);
     RUN_CMD("nsenter -t %d -n ip link set lo up", cfg->child_pid);
@@ -1119,6 +1164,10 @@ int create_cable(struct launcher_state *state,
     struct container_config *x, 
     struct container_config *y)
 {
+    if (verbose) {
+        log_info("Launcher create-cable (left=%s, right=%s)", x->name, y->name);
+    }
+
     RUN(set_cable_name(state, x));
     RUN(set_cable_name(state, y));
 
@@ -1142,10 +1191,6 @@ int create_cable(struct launcher_state *state,
     return 0;
 }
 
-static int inline child_reaped(int status)
-{
-    return WIFEXITED(status) | WIFSIGNALED(status) ? 1 : 0;
-}
 
 int check_reaped(struct launcher_state *state, struct container_config *cfg)
 {
@@ -1158,7 +1203,7 @@ int check_reaped(struct launcher_state *state, struct container_config *cfg)
 
     if (WIFEXITED(cfg->status)) {
         int ec = WEXITSTATUS(cfg->status);
-        snprintf(why, sizeof(why), "exited %d", ec);
+        snprintf(why, sizeof(why), "exit_code %d", ec);
     }
     else if (WIFSIGNALED(cfg->status)) {
         int sig = WTERMSIG(cfg->status);
@@ -1189,6 +1234,10 @@ int state_wake_sync(struct launcher_state *state, struct container_config *cfg)
     // check if chlld still running
     if (check_wait(state, cfg) != 0) {
         return -1;
+    }
+
+    if (verbose) {
+        log_info("Launcher (name=%s pid=%d) send-go", cfg->name, cfg->child_pid);
     }
 
     // wake up child
@@ -1229,22 +1278,37 @@ int state_wait_sync(struct launcher_state *state, struct container_config *cfg)
         return log_errno("close wait-sync %s failed", cfg->name);
     }
 
-    return 0;
-}
-
-int do_wake_syncs(struct launcher_state *state)
-{
-    for (int i = 0; i < state->num_cfg; i++) {
-        RUN(state_wake_sync(state, &state->configs[i]));
+    if (verbose) {
+        log_info("Launcher (name=%s pid=%d) recv-ready", cfg->name, cfg->child_pid);
     }
 
     return 0;
 }
 
-int do_wait_syncs(struct launcher_state *state)
+int sync_containers(struct launcher_state *state)
 {
-    for (int i = 0; i < state->num_cfg; i++) {
-        RUN(state_wait_sync(state, &state->configs[i]));
+    if (verbose) {
+        log_info("Launcher sync %d containers %s", 
+            state->num_cfg,
+            state->start_order ? "sequential" : "parallel");
+    }
+
+    if (state->start_order) {
+        // sequential sync
+        for (int i = 0; i < state->num_cfg; i++) {
+            RUN(state_wake_sync(state, &state->configs[i]));
+            RUN(state_wait_sync(state, &state->configs[i]));
+            sleep(state->start_delay);
+        }
+    }
+    else {
+        // parallel sync
+        for (int i = 0; i < state->num_cfg; i++) {
+            RUN(state_wake_sync(state, &state->configs[i]));
+        }
+        for (int i = 0; i < state->num_cfg; i++) {
+            RUN(state_wait_sync(state, &state->configs[i]));
+        }
     }
 
     return 0;
@@ -1252,12 +1316,17 @@ int do_wait_syncs(struct launcher_state *state)
 
 int start_containers(struct launcher_state *state)
 {
+    if (verbose) {
+        log_info("Launcher start %d containers", state->num_cfg);
+    }
+
     for (int i = 0; i < state->num_cfg; i++) {
         RUN(container_run(state, &state->configs[i]));
     }
 
     return 0;
 }
+
 
 static struct container_config *find_child(struct launcher_state *state, pid_t pid)
 {
@@ -1275,8 +1344,6 @@ int wait_containers(struct launcher_state *state)
     int status;
     struct container_config *cfg;
 
-    if (verbose) log_debug("%s", __func__);
-
     while (state->num_run > 0) {
         pid_t pid = waitpid(-1, &status, 0); 
         if (pid == 0) continue;
@@ -1291,7 +1358,7 @@ int wait_containers(struct launcher_state *state)
                 state->num_run = 0;
                 break;
             }
-            return log_errno("waitpid failed");
+            return log_errno("waitpid failed");;
         }
         cfg = find_child(state, pid);
         if (!cfg) {
@@ -1309,14 +1376,12 @@ int wait_containers(struct launcher_state *state)
     return 0;
 }
 
-char *validate_dir(const char *key, char *dir) 
+char *validate_dir(const char *key, struct str_slice dir) 
 {
-    if (!dir)
-        return log_errorn("%s is blank", key);
-
-    char *path = realpath(dir, NULL);
-    if (!path) 
+    char *path = realpath(dir.ptr, NULL);
+    if (!path) {
         return log_errnon("%s realpath %s failed");
+    }
 
     // Check if the path exists
     int rc = -1;
@@ -1348,39 +1413,75 @@ done:
     return path;
 }
 
+void print_usage(struct launcher_state *state, const char *cmd)
+{
+	const char *base = strrchr(cmd, '/');
+	const char *prog_name = (base) ? base + 1 : cmd;
+	int w= 15;
+
+    printf("Usage: %s [OPTIONS]\n\n", prog_name);
+    printf("Options:\n");
+
+	printf("  %-*s %s\n", w, "-help", "this help option");
+    printf("  %-*s %s\n", w, "-v",    "debug verbose mode");
+    printf("  %-*s %s\n", w, "rootfs=", "root file system");
+    printf("  %-*s %s\n", w, "srcdir=", "cmd file dir");
+    printf("  %-*s %s\n", w, "netnsdir=", "network namespace dir (default cwd)");
+    printf("  %-*s %s default=%d\n", w, "startorder=","start containes order", START_ORDER);
+    printf("  %-*s %s default=%d\n", w, "startdelay=","start delay order", START_DELAY);
+
+    printf("\nExample:\n");
+    printf("  %s startorder=1 startdelay=5\n", prog_name);
+}
+
 int parse_cmd_line(struct launcher_state *state, int argc, char *argv[])
 {
     int num_err = 0;
 
-    for (int i = 0; i < argc; i++) {
-		char *opt = argv[i];
-        char *val = strchr(opt, '=');
-        if (val) val++;
-        if (!strcmp(opt, "-v")) {
+    for (int i = 1; i < argc; i++) {
+        // get key ["=value"]
+		struct str_slice opt = slice_make_cstr(argv[i]);
+		struct str_slice val = slice_split(&opt, '=');
+
+        if (slice_cmp_cstr(opt, STR_LIT("-help"))) {
+            print_usage(state, argv[0]);
+            num_err++;
+        }
+        else if (slice_cmp_cstr(opt, STR_LIT("-v"))) {
             // log everthtng
             verbose = 1;
         }
-        else if (str_starts_with(opt, "rootfs=")) {
+        else if (slice_cmp_cstr(opt, STR_LIT("rootfs"))) {
             state->rootfs_dir = validate_dir("rootfs", val);
             if (!state->rootfs_dir) {
                 num_err++;
             }
 		}
-        else if (str_starts_with(opt, "srcdir=")) {
+        else if (slice_cmp_cstr(opt, STR_LIT("srcdir"))) {
             state->src_dir = validate_dir("srcdir", val);
             if (!state->src_dir) {
                 num_err++;
             }
         }
-        else if (str_starts_with(opt, "netnsdir=")) {
+        else if (slice_cmp_cstr(opt, STR_LIT("netnsdir"))) {
             state->netns_dir = validate_dir("netnsdir", val);
             if (!state->netns_dir) {
                 num_err++;
             }
         }
+        else if (slice_cmp_cstr(opt, STR_LIT("startorder"))) {
+            state->start_order = atoi(val.ptr) != 0;
+        }
+        else if (slice_cmp_cstr(opt, STR_LIT("startdelay"))) {
+            state->start_delay = atoi(val.ptr);
+            if (state->start_delay < 0) {
+                log_error("startdelay must greater than 0");
+                num_err++;
+            }
+        }
     }
 
-	return 0;
+	return num_err;
 }
 
 void state_deinit(struct launcher_state *state)
@@ -1415,11 +1516,13 @@ int init_state(struct launcher_state *state, int argc, char *argv[])
     signal(SIGPIPE, SIG_IGN);
 
     state->max_cfg = MAX_CONFIG;
+    state->start_delay = START_DELAY;
 
     // setup default dirs
     char *cwd = getcwd(NULL, 0);
-    if (!cwd) 
+    if (!cwd)  {
         return log_errno("get_cwd failed");
+    }
 
     state->cur_dir = gen_path(cwd, "mylauncher");
     free(cwd);
@@ -1452,10 +1555,7 @@ int main(int argc, char *argv[])
     if (setup_infrastucture(&state) != 0) goto cleanup;
     if (start_containers(&state) != 0) goto cleanup;
     if (create_cable(&state, client, server) != 0) goto cleanup;
-
-    if (do_wake_syncs(&state) != 0) goto cleanup;
-    if (do_wait_syncs(&state) != 0) goto cleanup;
-
+    if (sync_containers(&state) != 0) goto cleanup;
     if (wait_containers(&state) != 0) goto cleanup;
 
 cleanup:   
