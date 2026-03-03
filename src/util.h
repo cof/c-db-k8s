@@ -17,60 +17,15 @@
 #define STR(a) XSTR(a)
 
 // logger
-
-static inline void log_info(const char *fmt, ...)
-{
-    va_list args;  
-
-    fprintf(stdout, "[+] ");
-
-    va_start(args, fmt);
-    vfprintf(stdout, fmt, args);
-    va_end(args);
-
-    fprintf(stdout, "\n");
-    fflush(stdout);
-}
-
-static inline int _fatal_error(const char *file, int line, const char *func, const char *fmt, ...)
-{
-    va_list args;  
-
-    fprintf(stderr, "[FATAL] %s:%d (%s): ", file, line, func);
-
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-
-    fprintf(stderr, "\n");
-
-    exit(1);
-}
-
-static inline int _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
-{
-    va_list args;  
-
-    fprintf(stderr, "[ERROR] %s:%d (%s): ", file, line, func);
-
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-
-    if (ec != 0) {
-        fprintf(stderr, ": %s (errno: %d)", strerror(ec), ec);
-    }
-
-    fprintf(stderr, "\n");
-
-    // XXX always -1
-    return -1;
-}
+void log_info(const char *fmt, ...);
+int _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...);
+void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...);
 
 #define log_error(...)  _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__)
 #define log_errno(...)  _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__)
 #define log_errnon(...)  (_log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__), (void *) NULL) 
-#define fatal_error(...) _fatal_error(__FILE__, __LINE__, __func__,  __VA_ARGS__)
+#define fatal_error(...) _fatal_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__)
+#define fatal_errno(...) _fatal_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__)
 #define log_errorn(...) (log_error(__VA_ARGS__), (void*)NULL)
 #define log_debug(fmt, ...) { fprintf(stderr, fmt, ##__VA_ARGS__); fprintf(stderr, "\n"); }
 
