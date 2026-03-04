@@ -9,7 +9,7 @@
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
 #define STR_LIT(s) (s), (sizeof(s) - 1)
-#define containerof(ptr, type, member) ((type *)((char *)(ptr)-offsetof(type, member)))
+#define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 #define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
 
 // Stringification macros
@@ -156,9 +156,9 @@ struct list_elem {
 #define list_empty(list) ((list)->next == (list))
 #define list_inuse(elem) ((elem)->next != NULL)
 
-#define list_first_entry(list, ptr, field) list_entry((list)->next, __typeof__(ptr), field)
-#define list_next_entry(ptr, field) list_entry((ptr)->field.next, __typeof__(ptr), field)
-#define list_prev_entry(ptr, field) list_entry((ptr)->field.prev, __typeof__(ptr), field) 
+#define list_first_entry(ptr, type, field) list_entry((ptr)->next, type, field)
+#define list_next_entry(ptr, field) list_entry((ptr)->field.next, __typeof__(*ptr), field)
+#define list_prev_entry(ptr, field) list_entry((ptr)->field.prev, __typeof__(*ptr), field) 
 
 // iterate over a list (cannot be modifed)
 #define list_fornext(head, elem) \
@@ -186,7 +186,7 @@ struct list_elem {
 
 // iterate over list entries (can be modifed)
 #define list_fornext_entry_safe(entry, next, head, field) \
-    for ((entry) = list_first_entry(head, entry, field), \
+    for ((entry) = list_first_entry(head, __typeof__(*entry), field), \
         (next) = list_next_entry(entry, field); \
         &(entry)->field != (head); \
         (entry) = (next), (next) = list_next_entry(next, field))

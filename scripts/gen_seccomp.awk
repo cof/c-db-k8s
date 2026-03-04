@@ -7,6 +7,7 @@ BEGIN {
     seen["exit_group"] = 1
     seen["rt_sigreturn"] = 1
     seen["brk"] = 1
+    seen["getpid"] = 1
 }
 
 # 1. Capture and deduplicate from the log

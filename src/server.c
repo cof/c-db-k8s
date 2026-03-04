@@ -51,6 +51,7 @@ struct simple_client {
 };
 
 struct simple_server {
+    pid_t pid;
     struct simple_sock sock;
     struct list_elem clients;
     // config
@@ -206,12 +207,15 @@ static void client_destroy(struct simple_client *client)
 {
     if (client->sock.fd != -1) {
         close(client->sock.fd);
+        client->sock.fd = -1;
     }
 
     deinit_rwbuf(&client->read_buf);
     deinit_rwbuf(&client->write_buf);
 
-    list_remove(&client->node);
+    if (list_inuse(&client->node)) {
+        list_remove(&client->node);
+    }
 
     free(client);
 }
@@ -416,11 +420,60 @@ static void handle_server(struct simple_server *server, uint32_t events)
     do_server_check(server);
 }
 
-int do_poll(struct simple_server *server)
+// signal handling
+volatile sig_atomic_t keep_running = 1;
+volatile sig_atomic_t caught_signo = 0; 
+volatile sig_atomic_t sender_pid = 0; 
+volatile sig_atomic_t sender_uid = 0; 
+
+void handle_signal(int signo, siginfo_t *info, void *ucontext)
+{
+    caught_signo = signo;
+
+    sender_pid = 0;
+    sender_uid = 0;
+
+    if (info->si_code <= 0) {
+        sender_pid = info->si_pid;
+        sender_uid = info->si_uid;
+    }
+
+    keep_running = 0;
+}
+
+int setup_signals(struct simple_server *server)
+{
+    struct sigaction sa = { 0 };
+
+    sa.sa_sigaction = handle_signal;
+    sa.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        return log_errno("setup sigint");
+    }
+    if (sigaction(SIGTERM, &sa, NULL) == -1) {
+        return log_errno("setup sigterm");
+    }
+
+    // XXX prevent write(fd) trigger a signal
+    sa.sa_handler = SIG_IGN;
+    sa.sa_flags = 0;
+    if (sigaction(SIGPIPE, &sa, NULL) == -1) {
+        return log_errno("setup SIGPIPE");
+    }
+
+    return 0;
+}
+
+int server_poll(struct simple_server *server)
 {
     struct epoll_event events[MAX_EVENTS];
 
     int nfd = epoll_wait(server->epoll_fd, events, MAX_EVENTS, -1);
+
+    if (nfd < 0) {
+        if (errno == EINTR) return 0;
+        return log_errno("server PID:%d epoll_wait failed", server->pid);
+    }
 
     for (int i = 0; i < nfd; i++) {
         struct simple_sock *sock = events[i].data.ptr;
@@ -432,6 +485,16 @@ int do_poll(struct simple_server *server)
         }
     }
 
+    // all done
+    return 0;
+}
+
+int server_run(struct simple_server *server)
+{
+    while (keep_running) {
+        if (server_poll(server) != 0) return -1;
+    }
+
     return 0;
 }
 
@@ -441,7 +504,9 @@ int setup_listener(struct simple_server *server)
         server->host, server->port, 
         server->name, sizeof(server->name)
     );
-    if (server->sock.fd == -1) return 0;
+    if (server->sock.fd == -1) {
+        return -1;
+    }
 
     server->epoll_fd = epoll_create1(0);
     if (server->epoll_fd == -1) {
@@ -450,21 +515,21 @@ int setup_listener(struct simple_server *server)
 
     // register for incoming connections
     if (poll_ctrl(server, &server->sock, EPOLLIN) != 0) {
-        return 0;
+        return -1;
     }
 
     log_info("Database listening on %s", server->name);
 
     // all done
-    return 1;
+    return 0;
 }
 
 int setup_database(struct simple_server *state)
 {
-    return db_init() == 0;
+    return db_init();
 }
 
-int parse_cmdline(struct simple_server *server, int argc, char *argv[])
+int server_parse_argv(struct simple_server *server, int argc, char *argv[])
 {
     // listenr address:port 
     if (argc > 1 && argv[1]) {
@@ -476,41 +541,99 @@ int parse_cmdline(struct simple_server *server, int argc, char *argv[])
             if (host.ptr[host.len] == ']') host.len--;
         }
 		// store
-		if (host.len) server->host = strndup(host.ptr, host.len);
-		if (port.len) server->port = strndup(port.ptr, port.len);
+		if (host.len && (server->host = strndup(host.ptr, host.len)) == NULL) {
+            return log_errno("strdup-hostname");
+        }
+		if (port.len && (server->port = strndup(port.ptr, port.len)) == NULL) { 
+            return log_errno("strdup-portno");
+        }
 	}
-
-    return 1;
-}
-
-static int init_state(struct simple_server *state)
-{
-    memset(state, 0, sizeof(*state));
-    state->sock.is_server = 1;
-    list_init(&state->clients);
-
-	state->port = strdup(TCP_PORT_STR);
-    if (!state->port) return 0;
-
-    return 1;
-}
-
-int main(int argc, char *argv[])
-{
-    struct simple_server server;
-
-    // XXX prevent write(fd) trigger a signal
-    signal(SIGPIPE, SIG_IGN);
-
-    if (!init_state(&server)) return 1;
-    if (!parse_cmdline(&server, argc, argv)) return 2;
-    if (!setup_database(&server)) return 3;
-    if (!setup_listener(&server)) return 4;
-
-    while (1) {
-        do_poll(&server);
-    }    
 
     return 0;
 }
 
+void server_destroy(struct simple_server *server)
+{
+    struct simple_client *client, *next;
+
+    list_fornext_entry_safe(client, next, &server->clients, node) {
+        list_remove(&client->node);
+        client_destroy(client);
+    }
+
+    if (server->sock.fd != -1) {
+        close(server->sock.fd);
+        server->sock.fd = -1;
+    }
+
+    if (server->epoll_fd != -1) {
+        close(server->epoll_fd);
+        server->epoll_fd = -1;
+    }
+
+    free(server);
+}
+
+static int server_init(struct simple_server *state)
+{
+    memset(state, 0, sizeof(*state));
+    state->sock.fd = -1;
+    state->epoll_fd = -1;
+
+    state->sock.is_server = 1;
+    list_init(&state->clients);
+
+    state->pid = getpid();
+
+	state->port = strdup(TCP_PORT_STR);
+    if (!state->port) {
+        return log_errno("strdup", TCP_PORT_STR);
+    }
+
+    return 0;
+}
+
+struct simple_server *server_create(void)
+{
+    struct simple_server *server;
+
+    server = malloc(sizeof(*server));
+    if (!server) {
+        return log_errnon("Malloc failed for server state");
+    }
+
+    return server;
+}
+
+int main(int argc, char *argv[])
+{
+    struct simple_server *server = NULL;
+    int ec = EXIT_FAILURE;
+
+    if (!(server = server_create())) { ec = 1; goto done; }
+    if (server_init(server) != 0)    { ec = 3; goto done; }
+    if (setup_signals(server) != 0)  { ec = 2 ;goto done; }
+    if (server_parse_argv(server, argc, argv) != 0) { ec = 4;  goto done; }
+    if (setup_database(server) != 0) { ec = 5; goto done; }
+    if (setup_listener(server) != 0) { ec = 6; goto done; }
+
+    if (server_run(server) != 0) { ec = 7; goto done; }
+
+    if (caught_signo) {
+        log_info("[Server PID:%d] shutting down: got signal %d (%s) from UID:%d PID:%d ", 
+            server->pid, 
+            caught_signo, strsignal(caught_signo), 
+            sender_uid,
+            sender_pid);
+    }
+
+    // all done
+    ec = 0;
+
+done:
+    if (server) {
+        server_destroy(server);
+    }
+
+    return ec;
+}
