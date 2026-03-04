@@ -23,6 +23,8 @@
 #include <stdbool.h> 
 #include <string.h>
 #include <stdarg.h>
+#include <stddef.h>
+
 #include <unistd.h>
 #include <wordexp.h>
 #include <libgen.h>
@@ -31,23 +33,28 @@
 #include <limits.h>
 #include <time.h>
 #include <net/if.h>
+#include <fcntl.h>
+#include <grp.h>
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/utsname.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
-#include <sys/syscall.h> 
 #include <sys/sendfile.h>
-#include <fcntl.h>
+#include <sys/syscall.h> 
 
 #include <sys/prctl.h>
-#ifdef SECURITY
 #include <linux/capability.h>
-#endif
+#include <linux/filter.h>
+#include <linux/audit.h> 
+#include <linux/seccomp.h>
+
 
 #include "util.h"
 
+// config defaults
 #define RUN_DIR "/run/asimple_launcher"
 #define STORE_dir "/var/lib/asimple_launcher"
 #define NETNS_DIR "/var/run/netns"
@@ -55,33 +62,15 @@
 
 #define MAX_CONFIG 10
 #define START_ORDER 1
-#define START_DELAY 2
+#define START_DELAY 1
+
+// security
+#define DROP_SUDO  1
+#define DROP_CAPS  1
+#define DROP_PRIVS  1
+#define USE_SECCOMP 1
 
 static int verbose;
-
-bool str_starts_with(const char *str, const char *prefix) {
-
-    while (*prefix) {
-        if (*prefix++ != *str++) return false;
-    }
-
-    return true;
-}
-
-char *gen_path(const char *dir, const char *name)
-{
-    if (!dir || !name) return NULL;
-
-    char *path = NULL;
-    int rc = asprintf(&path, "%s/%s", dir, name);
-
-    if (rc == -1) {
-        // out of memory ?
-        return NULL;
-    }
-
-    return path;
-}
 
 static int inline child_reaped(int status)
 {
@@ -228,9 +217,8 @@ static int mount_file(const char *path)
 static int mount_netns(const char *netns_path)
 {
     // create path 
-    int netns_fd = touch_file(netns_path, O_RDONLY | O_CREAT | O_EXCL, 0600);
-    if (netns_fd == -1) {
-        return log_errno("open %s failed", netns_path);
+    if (touch_file(netns_path, O_RDONLY | O_CREAT | O_EXCL, 0600) != 0) {
+        return -1;
     }
 
     // convert to mount point
@@ -285,7 +273,7 @@ static int mount_netns(const char *netns_path)
     }
 
     // reopen netns 
-    netns_fd = open(netns_path, O_RDONLY | O_CLOEXEC);
+    int netns_fd = open(netns_path, O_RDONLY | O_CLOEXEC);
     if (netns_fd == -1) {
         int _errno = errno;
         umount2(netns_path, MNT_DETACH);
@@ -466,22 +454,25 @@ static void shutdown_pid(int pid, int wait)
 }
 
 struct myl_cnt {
-    char *name;          // container name
+    // user config
+    char *name;      // container name
     char *cmd_path;  //  location of cmd
     char *exec_path;  // process to lanuch
     char **exec_argv; // command line args
     int exec_argc;
     char *ip_addr;    // ip addr to add to veth
+    // paths
     char *root_path;     // location of container dir
     char *rootfs_path;   // For the bind mount and pivot_root()
     char *netns_path;    // bind mounted network namespae
-    char *dst_path;      // bind mounted dcmd path
+    char *dst_path;      // bind mounted cmd path
+    // networks
+    char netns_name[IFNAMSIZ]; // network namespace name
+    char veth_name[IFNAMSIZ];  // container eth0 link
     // used by overlay FS
     char *lower_path;   
     char *upper_path;   
     char *work_path;   
-    char netns_name[IFNAMSIZ]; // network namespace name
-    char veth_name[IFNAMSIZ];  // container eth0 link
     int netns_fd;
     // parent sync child
     int go_read_fd;    // child reads
@@ -489,17 +480,25 @@ struct myl_cnt {
     // child sync with parent
     int ready_read_fd; // parent reads
     int ready_write_fd; // child writes
-    void *stack;       // passed to clone
+    // stack - created by mmap
+    void *stack; 
     size_t stack_size;
-    pid_t child_pid;   // value returned by clone
+    pid_t child_pid;  
     int status; // waitpid
-    unsigned int use_subdir : 1; // use a rootfs subdir instead of name
-    unsigned int need_network : 1; // configure network
-    unsigned int need_priv : 1; // prctl|drop_capabilities|apply_seccomp
-    unsigned int run : 1; // clone child is active
-    unsigned int netns_mounted : 1; // netns active
+    // security 
+    uid_t uid;
+    uid_t gid;
+    // flags - bit fields
+    unsigned int use_subdir      : 1; // use a rootfs subdir instead of name
+    unsigned int need_network    : 1; // configure network
+    unsigned int run             : 1; // clone child is active
+    unsigned int netns_mounted   : 1; // netns active
     unsigned int overlay_mounted : 1; // overlay FS active
-    unsigned int cmd_mounted : 1; // cmd file was mounted
+    unsigned int cmd_mounted     : 1; // cmd file was mounted
+    unsigned int drop_sudo       : 1; // setuid|setgid
+    unsigned int drop_caps       : 1; // drop capabilities 
+    unsigned int drop_privs   : 1; // prctl PR_SET_NO_NEW_PRIVS
+    unsigned int use_seccomp  : 1; // seccomp filter
     // waitpid flags
     unsigned int exit : 1;
     unsigned int signalled : 1;
@@ -527,19 +526,21 @@ struct myl_lau {
     mode_t dir_mode;
     // security
     char *sudo_user;
-    int  sudo_uid;
-    int  sudo_gid;
-    int uid;
-    int gid;
+    int sudo_uid;
+    int sudo_gid;
     int euid;
-    // flags - bitfields
-    unsigned int start_order : 1; // start container in order
-    unsigned int sudo_active : 1; // launcher is run with sudo
-    unsigned int use_name_id : 1;
-    unsigned int use_subdirs : 1; // rootfs
-    unsigned int use_overlay : 1; // lower,upper,work,merged
-    unsigned int use_cmd_mount : 1; // mount cmd files instead of copying 
-    unsigned int child_add_ip : 1;  // child sets up network
+    // flags - bit fields
+    unsigned int start_order  : 1; // start container in order
+    unsigned int sudo_active  : 1; // launcher is run with sudo
+    unsigned int drop_sudo    : 1; // drop sudo on containers
+    unsigned int drop_caps    : 1; // drop capabilities
+    unsigned int drop_privs   : 1; // prctl PR_SET_NO_NEW_PRIVS
+    unsigned int use_seccomp  : 1; // use seccomp filters
+    unsigned int use_name_id  : 1;
+    unsigned int use_subdirs  : 1; // rootfs
+    unsigned int use_overlay  : 1; // lower,upper,work,merged
+    unsigned int mount_cmds   : 1; // mount cmd files instead of copying 
+    unsigned int child_add_ip : 1; // child sets up network
 };
 
 static int child_wait_sync(struct myl_cnt *cnt)
@@ -717,35 +718,150 @@ int mount_cmd_file(const char *host_path, const char *rootfs_path)
     return 0;
 }
 
-
 static inline char *get_rootfs(struct myl_cnt *cnt)
 {
     return cnt->use_subdir ? cnt->rootfs_path : cnt->root_path;
 }
 
-#ifdef SECURITY
-static int setup_priv(struct myl_cnt *cnt)
+
+int drop_bounding_set(void)
 {
-    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1) {
-        return log_errno("prctl set-nonnew_privs failed for container %s", cnt->name);
+    for (int i = 0; i <= 63; i++) { 
+        if (prctl(PR_CAPBSET_DROP, i, 0, 0, 0) == -1) {
+            if (errno == EINVAL) break; 
+			if (errno == EPERM) return -1;
+        }
     }
 
-    if (drop_capabilities() != 0)  {
-        return log_errno("drop-apabilities failed for container %s", cnt->name);
-    }
+	return 0;
+}
 
-    if (apply_seccomp() != 0) {
-        return log_errno("apply-seccomp failed for container %s", cnt->name);
-    }
+int clear_all_caps(void)
+{
+    struct __user_cap_header_struct header = { _LINUX_CAPABILITY_VERSION_3, 0 };
+    struct __user_cap_data_struct data[2] = { {0} };
+
+    return syscall(SYS_capset, &header, data);
+}
+
+// samples/seccomp/bpf-direct.c
+// strace -c server
+int apply_seccomp(struct myl_cnt *cnt)
+{
+    struct sock_filter filter[] = {
+
+        //  Arch check (Required for security to prevent 32-bit bypass)
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, arch))),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64 , 1, 0), 
+ 		BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),
+
+        //  Load syscall number
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, nr))),
+
+        // Whitelist - Allow only what is strictly necessary
+        // generated by gen_seccomp 
+
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_accept4, 34, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_arch_prctl, 33, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_bind, 32, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_brk, 31, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_close, 30, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_connect, 29, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_dup, 28, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_create1, 27, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_ctl, 26, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_wait, 25, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_execve, 24, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_exit_group, 23, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_fcntl, 22, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_futex, 21, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_getrandom, 20, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_ioctl, 19, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_listen, 18, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_lseek, 17, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_mprotect, 16, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_newfstatat, 15, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_openat, 14, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_prctl, 13, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_prlimit64, 12, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_read, 11, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_readlink, 10, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rseq, 9, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rt_sigaction, 8, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rt_sigreturn, 7, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_set_robust_list, 6, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_set_tid_address, 5, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_setsockopt, 4, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_socket, 3, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_uname, 2, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_write, 1, 0),
+
+        // result
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),// if not matched
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)  // if matched
+    };
+
+    struct sock_fprog prog = {
+        .len = (unsigned short)(sizeof(filter)/sizeof(filter[0])),
+        .filter = filter,
+    };
+
+	return prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog);
+}
+
+static int drop_sudo(struct myl_cnt *cnt)
+{
+	/* needs musl-gcc or dynanic libs
+	if (initgroups(cnt->user_name, cnt->gid) != 0) {
+		return log_errno("initgroups %s failed", cnt->user_name);
+	}
+	*/
+
+	if (setgid(cnt->gid) != 0) {
+		return log_errno("setgid %d failed", cnt->gid);
+	}
+
+	if (setuid(cnt->uid) != 0) {
+		return log_errno("setuid %d failed", cnt->uid);
+	}
 
     return 0;
 }
-#else
-static int setup_priv(struct myl_cnt *cnt) { return 0; }
 
-#endif
+static int setup_priv(struct myl_cnt *cnt)
+{
+	if (verbose) {
+		log_info("Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)", 
+			cnt->name, cnt->child_pid, cnt->uid, cnt->gid);
+	}
 
-static int myl_cnt_start(void *arg)
+    // drop all caps we can get
+	if (cnt->drop_caps && drop_bounding_set() != 0) {
+        return log_errno("drop-boundin_set failed for container %s", cnt->name);
+	}
+
+	if (cnt->drop_sudo && drop_sudo(cnt) != 0) {
+		return 0;
+	}
+
+    // drops all caps we have
+    if (cnt->drop_caps && clear_all_caps() != 0)  {
+        return log_errno("clear_all_caps failed for container %s", cnt->name);
+    }
+
+    if (cnt->drop_privs && prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1) {
+        return log_errno("prctl set-nonnew_privs failed for container %s", cnt->name);
+    }
+
+    if (cnt->use_seccomp && apply_seccomp(cnt) != 0) {
+        return log_errno("apply-seccomp failed for container %s", cnt->name);
+	}
+
+    return 0; 
+}
+
+// child process starts here
+static int lau_cnt_start(void *arg)
 {
     struct myl_cnt *cnt = arg;
 
@@ -754,21 +870,20 @@ static int myl_cnt_start(void *arg)
         log_info("Container (name=%s pid=%d) started", cnt->name, cnt->child_pid);
     }
 
-    if (setup_priv(cnt) != 0) _exit(1);
-    if (set_identity(cnt->name) != 0) _exit(2);
-    if (child_wait_sync(cnt) != 0) _exit(3);
-
-    if (set_rootfs(get_rootfs(cnt)) !=0) _exit(4);
-    if (set_proc() != 0) _exit(5);
-
-    if (cnt->need_network && create_network(cnt->veth_name, cnt->ip_addr) != 0) _exit(6);
-    if (child_wake_sync(cnt) != 0) _exit(7);
+    if (set_identity(cnt->name) != 0) _exit(1);
+    if (child_wait_sync(cnt) != 0) _exit(2);
+    if (set_rootfs(get_rootfs(cnt)) !=0) _exit(3);
+    if (set_proc() != 0) _exit(4);
+    if (cnt->need_network && create_network(cnt->veth_name, cnt->ip_addr) != 0) _exit(5);
+    if (child_wake_sync(cnt) != 0) _exit(6);
 
     // XXX close remaing fds other than stdio,stdout,stderr
     if (syscall(SYS_close_range, 3, ~0U, 0) == -1) {
         log_errno("close_range failed");
-        _exit(8); 
+        _exit(7); 
     }
+
+    if (setup_priv(cnt) != 0) _exit(8);
 
     // finally run the cmd
     execv(cnt->exec_path, cnt->exec_argv);
@@ -776,7 +891,7 @@ static int myl_cnt_start(void *arg)
     _exit(9);
 }
 
-int myl_cnt_run(struct myl_lau *lau, struct myl_cnt *cnt)
+int myl_lau_run(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     if (verbose) log_info("Launcher starting %s", cnt->name);
 
@@ -804,13 +919,16 @@ int myl_cnt_run(struct myl_lau *lau, struct myl_cnt *cnt)
         if (setns(cnt->netns_fd, CLONE_NEWNET) != 0) {
             return log_errno("netns-set(%d,'%s') for %s failed", cnt->netns_fd, cnt->netns_path, cnt->name);
         }
+        if (close_fd(&cnt->netns_fd) != 0) {
+            return log_errno("close netns_fd for %s failed", cnt->name);
+        }
     }
     else if (cnt->need_network) {
         clone_flags |= CLONE_NEWNET;
     }
 
     // launch child
-    cnt->child_pid = clone(myl_cnt_start, cnt->stack + cnt->stack_size, clone_flags, cnt);
+    cnt->child_pid = clone(lau_cnt_start, cnt->stack + cnt->stack_size, clone_flags, cnt);
     if (cnt->child_pid == -1) {
         // failed ?
         int _errno = errno;
@@ -914,74 +1032,42 @@ void myl_cnt_cleanup(struct myl_cnt *cnt)
 }
 
 
-static char **parse_args(const char *exec_path, const char *args_str, int *argc_out) 
+static char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc) 
 {
     wordexp_t p = { 0 };
 
-    if (args_str && wordexp(args_str, &p, WRDE_NOCMD) != 0) {
+    if (exec_args && wordexp(exec_args, &p, WRDE_NOCMD) != 0) {
         log_error("wordexp failed");
-        if (argc_out) *argc_out = 0;
+        if (argc) *argc = 0;
         return NULL;
     }
 
     char **argv = malloc((p.we_wordc + 2) * sizeof(char *));
     if (argv == NULL) {
-        log_error("malloc failed");
+        log_errno("malloc failed");
         return NULL;
     }
 
     argv[0] = strdup(exec_path);
-    for (int i = 0; i < p.we_wordc; i++) {
-        argv[i + 1] = strdup(p.we_wordv[i]);
+    if (!argv[0]) {
+        log_errno("strdup failed");
+        return NULL;
     }
+
+    for (int i = 0; i < p.we_wordc; i++) {
+        argv[i+1] = strdup(p.we_wordv[i]);
+        if (!argv[i+1]) {
+            log_errno("strdup failed");
+            return NULL;
+        }
+    }
+
     argv[p.we_wordc + 1] = NULL; 
-    if (argc_out) *argc_out = p.we_wordc + 1;
+    if (argc) *argc = p.we_wordc + 1;
 
     wordfree(&p); 
 
     return argv;
-}
-
-
-static struct myl_cnt *myl_lau_add(
-    struct myl_lau *lau,
-    const char *name, 
-	const char *cmd_path,
-    const char *exec_path, 
-    const char *exec_args,
-    const char *ip_addr)
-{
-    struct myl_cnt *cnt;
-
-    if (!name) return log_errorn("Missing container name");
-    if (!cmd_path) return log_errorn("Missing cmd_name");
-    if (!exec_path) return log_errorn("Missing exec_path");
-
-    if (lau->num_config >= lau->max_config) { 
-        log_error("Too many containers - num %d >= max %d", lau->num_config, lau->max_config);
-        return NULL;
-    }
-
-    cnt = &lau->configs[lau->num_config++];
-
-    // init - XXX all fds must be set to -1
-    memset(cnt, 0, sizeof(*cnt));
-    cnt->go_read_fd  = -1;
-    cnt->go_write_fd = -1;
-    cnt->ready_read_fd = -1;
-    cnt->ready_write_fd = -1;
-    cnt->netns_fd = - 1;
-
-    cnt->name = strdup(name);
-    cnt->cmd_path = strdup(cmd_path);
-    cnt->exec_path = strdup(exec_path);
-    cnt->exec_argv = parse_args(exec_path, exec_args, &cnt->exec_argc);
-
-    if (ip_addr) {
-        cnt->ip_addr = strdup(ip_addr);
-    }
-
-    return cnt;
 }
 
 int create_netns(struct myl_lau *lau, struct myl_cnt *cnt)
@@ -1023,9 +1109,6 @@ static char *gen_id(char *buf, int len, const char *name)
     return buf;
 }
 
-
-
-
 char *create_subdir(const char *dir, const char *subdir, mode_t mode)
 {
     char *path = gen_path(dir, subdir);
@@ -1062,10 +1145,14 @@ int create_root(struct myl_lau *lau, struct myl_cnt *cnt)
     char tmp[10];
     char *name;
 
-    name = lau->use_name_id ? gen_id(tmp, sizeof(tmp), cnt->name) : cnt->name;
+    name = lau->use_name_id
+        ? gen_id(tmp, sizeof(tmp), cnt->name) 
+        : cnt->name;
 
     cnt->root_path = gen_path(lau->store_dir, name);
-    if (!cnt->root_path) return log_errno("create_root genpath %s failed", name);
+    if (!cnt->root_path) {
+        return log_errno("create_root genpath %s failed", name);
+    }
 
     RUN(create_dir(cnt->root_path, lau->dir_mode, 1));
 
@@ -1139,7 +1226,7 @@ int copy_files(struct myl_lau *lau, struct myl_cnt *cnt)
     if (rc != 0) goto done;
 
     // finally copy or mount file 
-    if (lau->use_cmd_mount) {
+    if (lau->mount_cmds) {
         rc = mount_cmd_file(cmd_path, dst_path);
         if (rc == 0) {
             cnt->cmd_mounted = 1;
@@ -1397,14 +1484,14 @@ int start_containers(struct myl_lau *lau)
     }
 
     for (int i = 0; i < lau->num_config; i++) {
-        RUN(myl_cnt_run(lau, &lau->configs[i]));
+        RUN(myl_lau_run(lau, &lau->configs[i]));
     }
 
     return 0;
 }
 
 
-static struct myl_cnt *find_child(struct myl_lau *lau, pid_t pid)
+static struct myl_cnt *lau_find_child(struct myl_lau *lau, pid_t pid)
 {
     for (int i = 0; i < lau->num_config; i++) {
         if (lau->configs[i].child_pid == pid) {
@@ -1436,7 +1523,7 @@ int wait_containers(struct myl_lau *lau)
             }
             return log_errno("waitpid failed");;
         }
-        cnt = find_child(lau, pid);
+        cnt = lau_find_child(lau, pid);
         if (!cnt) {
             // XXX - not ours ?
             log_info("waitpid reaped unknown child pid %d", pid);
@@ -1506,20 +1593,67 @@ void print_usage(struct myl_lau *lau, const char *cmd)
     printf("  %-*s %s default=%d\n", w, "startorder=","start containes order", START_ORDER);
     printf("  %-*s %s default=%d\n", w, "startdelay=","start delay order", START_DELAY);
 
+    printf("  %-*s %s default=%d\n", w, "dropsudo=","drop sudo privilge", DROP_SUDO);
+    printf("  %-*s %s default=%d\n", w, "dropcaps=","drop capabilities ", DROP_CAPS);
+    printf("  %-*s %s default=%d\n", w, "dropprivs=","drop capabilities ", DROP_PRIVS);
+    printf("  %-*s %s default=%d\n", w, "useseccomp=", "use seccomp filters", USE_SECCOMP);
+
     printf("\nExample:\n");
     printf("  %s startorder=1 startdelay=5\n", prog_name);
 }
 
-/*
-int init_security(struct myl_lau *lau)
+static struct myl_cnt *lau_add(
+    struct myl_lau *lau,
+    const char *name, 
+	const char *cmd_path,
+    const char *exec_path, 
+    const char *exec_args,
+    const char *ip_addr)
 {
-     char *user = getenv("SUDO_USER");
-     char *user = getenv("SUDO_UID");
-     char *user = getenv("SUDO_GID");
-}
-*/
+    struct myl_cnt *cnt;
 
-int myl_parse_argv(struct myl_lau *lau, int argc, char *argv[])
+    if (!name) return log_errorn("Missing container name");
+    if (!cmd_path) return log_errorn("Missing cmd_name");
+    if (!exec_path) return log_errorn("Missing exec_path");
+
+    if (lau->num_config >= lau->max_config) { 
+        log_error("Too many containers - num %d >= max %d", lau->num_config, lau->max_config);
+        return NULL;
+    }
+
+    cnt = &lau->configs[lau->num_config++];
+
+    // init - XXX all fds must be set to -1
+    memset(cnt, 0, sizeof(*cnt));
+    cnt->go_read_fd  = -1;
+    cnt->go_write_fd = -1;
+    cnt->ready_read_fd = -1;
+    cnt->ready_write_fd = -1;
+    cnt->netns_fd = - 1;
+
+    cnt->name = strdup(name);
+    cnt->cmd_path = strdup(cmd_path);
+    cnt->exec_path = strdup(exec_path);
+    cnt->exec_argv = exec_args_parse(exec_path, exec_args, &cnt->exec_argc);
+
+    if (ip_addr) {
+        cnt->ip_addr = strdup(ip_addr);
+    }
+
+    // security
+    if (lau->sudo_user && lau->drop_sudo) {
+        cnt->drop_sudo = 1;
+        cnt->uid = lau->sudo_uid;
+        cnt->gid = lau->sudo_uid;
+    }
+    cnt->drop_caps = lau->drop_caps;
+    cnt->drop_privs = lau->drop_privs;
+    cnt->use_seccomp = lau->use_seccomp;
+
+    return cnt;
+}
+
+int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
 {
     int num_err = 0;
 
@@ -1564,13 +1698,75 @@ int myl_parse_argv(struct myl_lau *lau, int argc, char *argv[])
                 num_err++;
             }
         }
+        else if (slice_cmp_cstr(opt, STR_LIT("dropsudo"))) {
+            lau->drop_sudo = atoi(val.ptr) != 0;
+        }
+        else if (slice_cmp_cstr(opt, STR_LIT("dropcaps"))) {
+            lau->drop_caps = atoi(val.ptr) != 0;
+        }
+        else if (slice_cmp_cstr(opt, STR_LIT("dropprivs"))) {
+            lau->drop_privs = atoi(val.ptr) != 0;
+        }
+        else if (slice_cmp_cstr(opt, STR_LIT("useseccomp"))) {
+            lau->use_seccomp = atoi(val.ptr) != 0;
+        } 
+        else {
+            log_errno("Unsupported option %s", opt.ptr);
+            num_err++;
+        }
     }
 
 	return num_err;
 }
 
+int lau_init(struct myl_lau *lau)
+{
+    // set defaults
+    lau->max_config = MAX_CONFIG;
+    lau->start_delay = START_DELAY;
+    lau->start_order = START_ORDER;
 
-void myl_lau_destroy(struct myl_lau *lau)
+    // security
+    lau->drop_sudo = DROP_SUDO;
+    lau->drop_caps = DROP_CAPS;
+    lau->drop_privs = DROP_PRIVS;
+    lau->use_seccomp = USE_SECCOMP;
+
+    // setup default dirs
+    lau->cur_dir = getcwd(NULL, 0);
+    if (!lau->cur_dir)  {
+        return log_errno("get_cwd failed");
+    }
+
+    lau->base_dir = gen_path(lau->cur_dir, "mylauncher");
+    if (!lau->base_dir) {
+        return log_errno("gen_path mylaucher");
+    }
+
+    lau->netns_dir = gen_path(lau->base_dir, "netns_dir");
+    lau->run_dir = gen_path(lau->base_dir, "run_dir");
+    lau->store_dir = gen_path(lau->base_dir, "store_dir");
+    lau->netns_suffix = strdup("-ns");
+    lau->cable_prefix = strdup("veth-");
+    lau->dir_mode = STANDARD_MODE;
+
+    // get sudo
+    char *env;
+    if ((env = getenv("SUDO_USER")) != NULL) {
+       lau->sudo_user = strdup(env);
+    }
+    if ((env = getenv("SUDO_UID")) != NULL) {
+        lau->sudo_uid = atoi(env);
+    }
+    if ((env = getenv("SUDO_GID")) != NULL) {
+        lau->sudo_gid = atoi(env);
+    }
+    lau->euid = geteuid();
+
+    return 0;
+}
+
+void lau_destroy(struct myl_lau *lau)
 {
     for (int i = 0; i < lau->num_config; i++) {
         myl_cnt_cleanup(&lau->configs[i]);
@@ -1593,37 +1789,7 @@ void myl_lau_destroy(struct myl_lau *lau)
     free(lau);
 }
 
-int myl_lau_init(struct myl_lau *lau)
-{
-    // set defaults
-    lau->max_config = MAX_CONFIG;
-    lau->start_delay = START_DELAY;
-    lau->start_order = START_ORDER;
-
-    // setup default dirs
-    lau->cur_dir = getcwd(NULL, 0);
-    if (!lau->cur_dir)  {
-        return log_errno("get_cwd failed");
-    }
-
-    lau->base_dir = gen_path(lau->cur_dir, "mylauncher");
-    if (!lau->base_dir) {
-        return log_errno("gen_path mylaucher");
-    }
-
-    lau->netns_dir = gen_path(lau->base_dir, "netns_dir");
-    lau->run_dir = gen_path(lau->base_dir, "run_dir");
-    lau->store_dir = gen_path(lau->base_dir, "store_dir");
-
-    lau->netns_suffix = strdup("-ns");
-    lau->cable_prefix = strdup("veth-");
-
-    lau->dir_mode = STANDARD_MODE;
-
-    return 0;
-}
-
-struct myl_lau *myl_lau_create(void)
+struct myl_lau *lau_create(void)
 {
     struct myl_lau *lau;
 
@@ -1642,16 +1808,16 @@ struct myl_lau *myl_lau_create(void)
 int main(int argc, char *argv[])
 {
     // create state
-    struct myl_lau *lau = myl_lau_create();
+    struct myl_lau *lau = lau_create();
     if (!lau) fatal_error("Failed to create launher state");
-    if (myl_lau_init(lau) != 0) goto cleanup;
-    if (myl_parse_argv(lau, argc, argv) != 0) goto cleanup;
+    if (lau_init(lau) != 0) goto cleanup;
+    if (lau_parse_argv(lau, argc, argv) != 0) goto cleanup;
 
     signal(SIGPIPE, SIG_IGN);
 
     // add containers
-    struct myl_cnt *db  = myl_lau_add(lau, "db", "db/server", "/bin/server", NULL, "10.0.0.1");
-    struct myl_cnt *cli = myl_lau_add(lau, "client", "client/client", "/bin/client", "10.0.0.1", "10.0.0.2");
+    struct myl_cnt *db  = lau_add(lau, "db", "db/server", "/bin/server", NULL, "10.0.0.1");
+    struct myl_cnt *cli = lau_add(lau, "client", "client/client", "/bin/client", "10.0.0.1", "10.0.0.2");
     if (!db || !cli) goto cleanup;
 
     // run containers
@@ -1662,7 +1828,7 @@ int main(int argc, char *argv[])
     if (wait_containers(lau) != 0) goto cleanup;
 
 cleanup:   
-    myl_lau_destroy(lau);
+    lau_destroy(lau);
 
     // all done
     return 0;

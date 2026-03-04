@@ -119,6 +119,9 @@ static inline struct str_slice ltrim(struct str_slice str)
     return str;
 }
 
+
+char *gen_path(const char *dir, const char *name);
+
 //  djb2a hash algorhtim
 static inline uint64_t dbj2a_hash(const void *key, const int klen)
 {

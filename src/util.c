@@ -61,3 +61,18 @@ void _fatal_error(const char *file, int line, const char *func, int ec, const ch
 
     exit(1);
 }
+
+char *gen_path(const char *dir, const char *name)
+{
+    if (!dir || !name) return NULL;
+
+    char *path = NULL;
+    int rc = asprintf(&path, "%s/%s", dir, name);
+
+    if (rc == -1) {
+        // out of memory ?
+        return NULL;
+    }
+
+    return path;
+}

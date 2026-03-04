@@ -9,13 +9,12 @@ ifeq ($V,1)
 Q=
 endif
 
+
 ifeq ($(V),1)
-cmd_INST = $(INSTALL)
 cmd_TAR = $(TAR)
 cmd_CC  = $(CC)
 cmd_LD  = $(CC)
 else
-cmd_INST = $(Q)echo "  INST  $@";$(INSTALL)
 cmd_TAR  = $(Q)echo "  TAR   $@";$(TAR)
 cmd_CC   = $(Q)echo "  CC    $@";$(CC)
 cmd_LD   = $(Q)echo "  LD    $@";$(CC)
@@ -29,7 +28,7 @@ LD = gcc
 
 # compiler flags
 #CFLAGS = -Wall -Wextra -O2
-CFLAGS += -D_GNU_SOURCE -Wall -O2 -Isrc -MMD -MP
+CFLAGS += -D_GNU_SOURCE -Wall -Werror -O2 -Isrc -MMD -MP
 ifdef DEBUG 
 	CFLAGS += -O0 -g
 endif
@@ -37,22 +36,25 @@ LDFLAGS = -static
 
 ifeq ($(SECURITY),1)
 	CFLAGS += -DSECURITY
-	SECURITY_LIBS = -lcap -lseccomp
+	SECURITY_LIBS = -lseccomp
 endif
 
 
 # dirs
 BUILD_DIR = build
 SRC_DIR = src
-DST_DIR = bin
+BIN_DIR = bin
+SCRIPTS_DIR = scripts
 
 .PHONY: all
-all: $(BUILD_DIR) cmds rootfs install
+all: $(BUILD_DIR) cmds rootfs
 
+# object files
 $(BUILD_DIR):
 	@mkdir -p $@
 
-$(DST_DIR):
+# where cmds are installed
+$(BIN_DIR):
 	@mkdir -p $@
 
 # build our binaries
@@ -67,7 +69,7 @@ $(CMDS_DONE): $(CMDS) | $(BUILD_DIR)
 cmds: $(CMDS_DONE)
 
 # server
-SERVER_SRCS = src/sock.c src/db.c src/server.c
+SERVER_SRCS = src/util.c src/sock.c src/db.c src/server.c
 SERVER_OBJS = $(SERVER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 SERVER_DEPS = $(SERVER_OBJS:.o=.d)
 -include $(SERVER_DEPS)
@@ -75,7 +77,7 @@ server: $(SERVER_OBJS)
 	$(cmd_LD) $(LDFLAGS) $(SERVER_OBJS) -o $@
 
 # client
-CLIENT_SRCS = src/client.c
+CLIENT_SRCS = src/util.c src/client.c
 CLIENT_OBJS = $(CLIENT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 CLIENT_DEPS = $(CLIENT_OBJS:.o=.d)
 -include $(CLIENT_DEPS)
@@ -84,7 +86,7 @@ client: $(CLIENT_OBJS)
 
 # launcher
 LAUNCHER_LIBS = $(SECURITY_LIBS)
-LAUNCHER_SRCS = src/launcher.c
+LAUNCHER_SRCS = src/util.c src/launcher.c
 LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 LAUNCHER_DEPS = $(LAUNCHER_OBJS:.o=.d)
 -include $(LAUNCHER_DEPS)
@@ -94,16 +96,82 @@ launcher: $(LAUNCHER_OBJS)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@
 
+.PHONY: test
+TEST_PORT = 6379
+test: test-server
+	@echo "Starting tests"
+
+test-server: server
+	@echo "Testing server"; \
+	./server & SERVER_PID=$$!; \
+    timeout 3 bash -c 'until nc -z localhost $(TEST_PORT); do sleep 0.1; done'; \
+	echo "SET foo bar" | nc -w 1 -N localhost $(TEST_PORT)6379 | grep -q "OK" || echo "SET failed"; \
+	echo "GET foo" | nc -w 1 -N localhost $(TEST_PORT)6379 | grep -q "bar" || echo "GET failed"; \
+	echo "DEL foo" | nc -w 1 -N localhost $(TEST_PORT)6379 | grep -q "OK" || echo "DEL failed"; \
+	kill $$SERVER_PID
+
+TEST_REQ_FILE = tests/test_req.txt
+TEST_RSP_FILE = tests/test_rsp.txt
+BUILD_REQ_FILE = $(BUILD_DIR)/$(notdir $(TEST_REQ_FILE))
+BUILD_RSP_FILE = $(BUILD_DIR)/$(notdir $(TEST_RSP_FILE))
+
+test-client: client
+	@echo "Testing client"
+	rm -f $(BUILD_REQ_FILE) $(BUILD_RSP_FILE)
+	@echo "launching simple server"; \
+	awk -f ./simple_server.awk \
+		-v Port="$(TEST_PORT)" \
+		-v LogFile="$(BUILD_REQ_FILE)" \
+		-v RespFile="$(TEST_RSP_FILE)" \
+		& SERV_PID=$$!; \
+	echo "Server is $$SERV_PID"; \
+	sleep 1; \
+	echo "Sending data via client..." ; \
+	cat $(TEST_REQ_FILE) | timeout 2s ./client localhost $(TEST_PORT) > $(BUILD_RSP_FILE); \
+	sed -i -e 's/^> //' -e '/^\[+]/d' $(BUILD_RSP_FILE); \
+	kill -9 $$SERV_PID 2>/dev/null || true;
+	@diff -q $(TEST_REQ_FILE) $(BUILD_REQ_FILE) && echo "TEST PASSED" || (echo "TEST FAILED"; exit 1)
+	@diff -q $(TEST_RSP_FILE) $(BUILD_RSP_FILE) && echo "TEST PASSED" || (echo "TEST FAILED"; exit 1)
+	@echo "done"
+		
+
+# generate new security rules
+.PHONY: gen_seccomp
+CMD_FILE   = tests/test_req.txt
+GEN_SECCOMP = $(SCRIPTS_DIR)/gen_seccomp.awk
+STRACE_SRV = $(BUILD_DIR)/strace_srv.txt
+STRACE_CLI = $(BUILD_DIR)/strace_cli.txt
+STRACE_RAW = $(BUILD_DIR)/strace_raw.txt
+SECCOMP_H  = $(BUILD_DIR)/seccomp_rules.h
+gen_seccomp: client server
+	@echo "Generating seccomp rules..."
+	@strace -c -f -o $(STRACE_SRV) ./server localhost:$(TEST_PORT) & STRACE_PID=$$!; \
+	SERV_PID=$$(pgrep -P $$STRACE_PID); \
+	echo "Profiling Server (PID: $$SERV_PID) via Strace (PID: $$STRACE_PID)"; \
+	sleep 1; \
+	strace -c -f -o $(STRACE_CLI) ./client localhost:$(TEST_PORT) < $(CMD_FILE) 1>/dev/null || true; \
+	sleep 1; \
+	pgrep -ax server || true; \
+	kill $$SERV_PID  2>/dev/null || true; \
+	kill $STRACE_PID 2>/dev/null || true; \
+	pkill -x server || true
+	pgrep -ax server || true
+	@cat $(STRACE_SRV) $(STRACE_CLI) > $(STRACE_RAW);
+	@awk -f $(GEN_SECCOMP) $(STRACE_RAW) > $(SECCOMP_H)
+	@echo "SUCCESS: $(SECCOMP_H)"
+
+
+# 
+# roofs
+# ======
 # build the container rootfs
 .PHONY: rootfs
-OUR_CMDS =
+OUR_CMDS = client server
 AUX_CMDS = bash ls ip ping hostname
 ROOTFS_DIR = rootfs
-ROOTFS_TAR = rootfs.tar.gz
 ROOTFS_DONE = $(BUILD_DIR)/.rootfs_done
-rootfs: $(ROOTFS_TAR)
+rootfs: $(ROOTFS_DONE)
 
-# build rootfs
 $(ROOTFS_DONE): $(OUR_CMDS) | $(BUILD_DIR)
 	@echo "  BUILD $(ROOTFS_DIR)"
 	@mkdir -p $(ROOTFS_DIR)  $(ROOTFS_DIR)/bin $(ROOTFS_DIR)/lib
@@ -129,31 +197,23 @@ $(ROOTFS_DONE): $(OUR_CMDS) | $(BUILD_DIR)
 $(ROOTFS_TAR) : $(ROOTFS_DONE)
 	$(cmd_TAR) -czf $@ $(ROOTFS_DIR)
 
-# install files
+# seccomp filter
+
+# =======
+# install
+# =======
 .PHONY: install
-install: $(BIN_CMDS:%=$(DST_DIR)/%)
-	@echo "  DONE  all files in $(DST_DIR)"
+install : all
+	@mkdir -p $(BIN_DIR)
+	$(INSTALL) -D -m 755 server $(BIN_DIR)/db/server
+	$(INSTALL) -D -m 755 client $(BIN_DIR)/client/client
+	$(INSTALL) -D -m 755 launcher $(BIN_DIR)
 
-$(BIN_CMDS:%=$(DST_DIR)/%): $(DST_DIR)/% :
-	@mkdir -p $(dir $@)
-	$(cmd_INST) -m 755 $(notdir $*) $@
-
-$(DST_DIR)/$(ROOTFS_TAR): $(ROOTFS_TAR) | $(DST_DIR)
-	$(cmd_INST) -m 644 $< $@
 
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR) $(ROOTFS_DIR) $(ROOTFS_TAR) $(CMDS) bin
+	rm -rf $(BUILD_DIR) $(ROOTFS_DIR) $(CMDS) $(BIN_DIR)
 
-.PHONY: test
-test: server
-	@echo "Starting tests"; \
-	./server & SERVER_PID=$$!; \
-    timeout 3 bash -c 'until nc -z localhost 6379; do sleep 0.1; done'; \
-	echo "SET foo bar" | nc -w 1 -N localhost 6379 | grep -q "OK" || echo "SET failed"; \
-	echo "GET foo" | nc -w 1 -N localhost 6379 | grep -q "bar" || echo "GET failed"; \
-	echo "DEL foo" | nc -w 1 -N localhost 6379 | grep -q "OK" || echo "DEL failed"; \
-	kill $$SERVER_PID
 
 
 # VM stuff
@@ -195,7 +255,7 @@ show-vmconfig:
 
 .PHONY: list-vm
 list-vm:
-	virsh list --all
+	virsh dominfo $(VM_NAME) || true
 	virsh domifaddr $(VM_NAME) || true
 
 $(CACHE_DIR):

@@ -74,7 +74,9 @@ int main(int argc, char *argv[])
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 	int rc = getaddrinfo(hostname, port, &hints, &res);
-    if (rc != 0) fatal_error("getaddrinfo(%s,%s) : %s\n", hostname, port, gai_strerror(rc));
+    if (rc != 0) {
+        fatal_error("getaddrinfo(%s,%s) : %s\n", hostname, port, gai_strerror(rc));
+    }
 
     // try to connect 
     int sock_fd = -1;
@@ -90,7 +92,7 @@ int main(int argc, char *argv[])
         close(sock_fd);
         sock_fd = -1;
     }
-
+    freeaddrinfo(res);
     if (sock_fd == -1) fatal_error("No connection");
 
     // wrap the fd into FILE
