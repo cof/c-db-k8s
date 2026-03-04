@@ -70,6 +70,8 @@
 #define DROP_PRIVS  1
 #define USE_SECCOMP 1
 
+#define EXIT_OK 1
+
 static int verbose;
 
 static int inline child_reaped(int status)
@@ -1367,16 +1369,22 @@ int check_reaped(struct myl_lau *lau, struct myl_cnt *cnt)
     if (WIFEXITED(cnt->status)) {
         int ec = WEXITSTATUS(cnt->status);
         snprintf(why, sizeof(why), "exit_code %d", ec);
+        if (ec == 0) {
+            log_info("Container '%s' exit ok (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
+            return EXIT_OK;
+        }
+        return log_error("Container '%s' died (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
     }
     else if (WIFSIGNALED(cnt->status)) {
         int sig = WTERMSIG(cnt->status);
         snprintf(why, sizeof(why), "signal %d (%s)", sig, strsignal(sig));
+        return log_error("Container '%s' died (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
     }
     else {
         snprintf(why, sizeof(why), "status 0x%08x", cnt->status);
+        return log_error("Container '%s' died (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
     }
 
-    return log_error("Container '%s' died (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
 }
 
 int check_wait(struct myl_lau *lau, struct myl_cnt *cnt)
@@ -1504,8 +1512,7 @@ static struct myl_cnt *lau_find_child(struct myl_lau *lau, pid_t pid)
 
 int wait_containers(struct myl_lau *lau)
 {
-    int status;
-    struct myl_cnt *cnt;
+    int status = 0;
 
     while (lau->num_run > 0) {
         pid_t pid = waitpid(-1, &status, 0); 
@@ -1523,7 +1530,7 @@ int wait_containers(struct myl_lau *lau)
             }
             return log_errno("waitpid failed");;
         }
-        cnt = lau_find_child(lau, pid);
+        struct myl_cnt *cnt = lau_find_child(lau, pid);
         if (!cnt) {
             // XXX - not ours ?
             log_info("waitpid reaped unknown child pid %d", pid);
@@ -1531,12 +1538,13 @@ int wait_containers(struct myl_lau *lau)
         }
         // check if running 
         cnt->status = status;
-        if (check_reaped(lau, cnt) != 0) {
-            return -1;
+        status = check_reaped(lau, cnt);
+        if (status != 0) {
+            break;
         }
     }
 
-    return 0;
+    return status == EXIT_OK ? 0 : -1;
 }
 
 char *validate_dir(const char *key, struct str_slice dir) 
@@ -1807,29 +1815,33 @@ struct myl_lau *lau_create(void)
 
 int main(int argc, char *argv[])
 {
+    int ec = -1;
+
     // create state
     struct myl_lau *lau = lau_create();
     if (!lau) fatal_error("Failed to create launher state");
-    if (lau_init(lau) != 0) goto cleanup;
-    if (lau_parse_argv(lau, argc, argv) != 0) goto cleanup;
+    if (lau_init(lau) != 0) goto done;
+    if (lau_parse_argv(lau, argc, argv) != 0) goto done;
 
     signal(SIGPIPE, SIG_IGN);
 
     // add containers
     struct myl_cnt *db  = lau_add(lau, "db", "db/server", "/bin/server", NULL, "10.0.0.1");
     struct myl_cnt *cli = lau_add(lau, "client", "client/client", "/bin/client", "10.0.0.1", "10.0.0.2");
-    if (!db || !cli) goto cleanup;
+    if (!db || !cli) goto done;
 
     // run containers
-    if (setup_infrastucture(lau) != 0) goto cleanup;
-    if (start_containers(lau) != 0) goto cleanup;
-    if (create_cable(lau, cli, db) != 0) goto cleanup;
-    if (sync_containers(lau) != 0) goto cleanup;
-    if (wait_containers(lau) != 0) goto cleanup;
+    if (setup_infrastucture(lau) != 0) goto done;
+    if (start_containers(lau) != 0) goto done;
+    if (create_cable(lau, cli, db) != 0) goto done;
+    if (sync_containers(lau) != 0) goto done;
+    if (wait_containers(lau) != 0) goto done;
 
-cleanup:   
-    lau_destroy(lau);
+    // no errors
+    ec = 0;
 
-    // all done
-    return 0;
+done:   
+    if (lau) lau_destroy(lau);
+
+    return ec;
 }
