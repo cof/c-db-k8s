@@ -56,8 +56,8 @@ struct simple_server {
     struct list_elem clients;
     // config
     char *host;
-	char *port;
-	//  state
+    char *port;
+    //  state
     int epoll_fd; // epoll_create1
     char name[MAX_HOSTPORT];
 };
@@ -534,20 +534,20 @@ int server_parse_argv(struct simple_server *server, int argc, char *argv[])
     // listenr address:port 
     if (argc > 1 && argv[1]) {
         // parse
-		struct str_slice host = slice_make(argv[1], strlen(argv[1]));
+        struct str_slice host = slice_make(argv[1], strlen(argv[1]));
         struct str_slice port = slice_split(&host, ':');
         if (host.len && host.ptr[0] == '[') {
             host.ptr++; host.len--;
             if (host.ptr[host.len] == ']') host.len--;
         }
-		// store
-		if (host.len && (server->host = strndup(host.ptr, host.len)) == NULL) {
+        // store
+        if (host.len && (server->host = strndup(host.ptr, host.len)) == NULL) {
             return log_errno("strdup-hostname");
         }
-		if (port.len && (server->port = strndup(port.ptr, port.len)) == NULL) { 
+        if (port.len && (server->port = strndup(port.ptr, port.len)) == NULL) { 
             return log_errno("strdup-portno");
         }
-	}
+    }
 
     return 0;
 }
@@ -585,7 +585,7 @@ static int server_init(struct simple_server *state)
 
     state->pid = getpid();
 
-	state->port = strdup(TCP_PORT_STR);
+    state->port = strdup(TCP_PORT_STR);
     if (!state->port) {
         return log_errno("strdup", TCP_PORT_STR);
     }

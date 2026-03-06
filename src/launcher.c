@@ -659,41 +659,41 @@ int copy_file(const char *src, const char *dst)
     int rc = -1;
 
     int src_fd = open(src, O_RDONLY);
-	if (src_fd < 0)
-		return log_errno("copy_file open src %s failed", src);
+    if (src_fd < 0)
+        return log_errno("copy_file open src %s failed", src);
 
     int dst_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0755);
-	if (dst_fd < 0) {
-    	close(src_fd);
-		return log_errno("copy_file open dst %s failed", dst);
+    if (dst_fd < 0) {
+        close(src_fd);
+        return log_errno("copy_file open dst %s failed", dst);
     }
 
     struct stat stat_buf;
     if (fstat(src_fd, &stat_buf) == -1) {
-		log_errno("copy_file fstat src_fd %d failed", src_fd);
+        log_errno("copy_file fstat src_fd %d failed", src_fd);
         goto close_all;
-	}
+    }
 
-	if (!S_ISREG(stat_buf.st_mode)) {
-		log_errno("copy_file src %s not a file", src);
+    if (!S_ISREG(stat_buf.st_mode)) {
+        log_errno("copy_file src %s not a file", src);
         goto close_all;
-	}	
+    }   
 
-	// XXX file size can be 0
-	off_t offset = 0;
-	while (offset < stat_buf.st_size) {
-    	ssize_t sent = sendfile(dst_fd, src_fd, &offset, stat_buf.st_size - offset);
-    	if (sent < 0) {
-        	if (errno == EINTR) continue; // Interrupted, try again
-			log_errno("copy_file send %s failed", src);
+    // XXX file size can be 0
+    off_t offset = 0;
+    while (offset < stat_buf.st_size) {
+        ssize_t sent = sendfile(dst_fd, src_fd, &offset, stat_buf.st_size - offset);
+        if (sent < 0) {
+            if (errno == EINTR) continue; // Interrupted, try again
+            log_errno("copy_file send %s failed", src);
             goto close_all;
-    	}
-		if (sent == 0) {
-			log_error("copy_file send %s eof", src);
+        }
+        if (sent == 0) {
+            log_error("copy_file send %s eof", src);
             goto close_all;
-		}
-		// sendfile updates offset
-	}
+        }
+        // sendfile updates offset
+    }
 
     // check all sent
     rc = offset == stat_buf.st_size ? 0 : -1;
@@ -702,7 +702,7 @@ close_all:
     close(src_fd);
     close(dst_fd);
 
-	// check all sent
+    // check all sent
     return rc;
 }
 
@@ -711,26 +711,26 @@ int mount_cmd_file(const char *host_path, const char *rootfs_path)
     // create an empty file - touch rootfs_path
     int fd = open(rootfs_path, O_CREAT | O_WRONLY, 0755);
     if (fd != -1) {
-		return log_errno("mount_cmd touch %s failed", rootfs_path);
+        return log_errno("mount_cmd touch %s failed", rootfs_path);
     }
-	close(fd); 
+    close(fd); 
 
     // create a writable bind-mount
     if (mount(host_path, rootfs_path, NULL, MS_BIND, NULL) < 0) {
         int _errno = errno;
         unlink(rootfs_path);
         errno = _errno; 
-		return log_errno("mount_cmd bind mount %s failed", rootfs_path);
+        return log_errno("mount_cmd bind mount %s failed", rootfs_path);
     }
 
     // update bind-mount to read-only
     if (mount(NULL, rootfs_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL) < 0) {
         int _errno = errno;
-		log_errno("mount_cmd remount read-only %s failed", rootfs_path);
+        log_errno("mount_cmd remount read-only %s failed", rootfs_path);
         umount2(rootfs_path, MNT_DETACH); 
         unlink(rootfs_path);
         errno = _errno; 
-		return log_errno("mount_cmd bind mount %s failed", rootfs_path);
+        return log_errno("mount_cmd bind mount %s failed", rootfs_path);
     }
 
     // all done
@@ -748,11 +748,11 @@ int drop_bounding_set(void)
     for (int i = 0; i <= 63; i++) { 
         if (prctl(PR_CAPBSET_DROP, i, 0, 0, 0) == -1) {
             if (errno == EINVAL) break; 
-			if (errno == EPERM) return -1;
+            if (errno == EPERM) return -1;
         }
     }
 
-	return 0;
+    return 0;
 }
 
 int clear_all_caps(void)
@@ -772,7 +772,7 @@ int apply_seccomp(struct myl_cnt *cnt)
         //  Arch check (Required for security to prevent 32-bit bypass)
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, arch))),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64 , 1, 0), 
- 		BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),
 
         //  Load syscall number
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, nr))),
@@ -825,43 +825,43 @@ int apply_seccomp(struct myl_cnt *cnt)
         .filter = filter,
     };
 
-	return prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog);
+    return prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog);
 }
 
 static int drop_sudo(struct myl_cnt *cnt)
 {
-	/* needs musl-gcc or dynanic libs
-	if (initgroups(cnt->user_name, cnt->gid) != 0) {
-		return log_errno("initgroups %s failed", cnt->user_name);
-	}
-	*/
+    /* needs musl-gcc or dynanic libs
+    if (initgroups(cnt->user_name, cnt->gid) != 0) {
+        return log_errno("initgroups %s failed", cnt->user_name);
+    }
+    */
 
-	if (setgid(cnt->gid) != 0) {
-		return log_errno("setgid %d failed", cnt->gid);
-	}
+    if (setgid(cnt->gid) != 0) {
+        return log_errno("setgid %d failed", cnt->gid);
+    }
 
-	if (setuid(cnt->uid) != 0) {
-		return log_errno("setuid %d failed", cnt->uid);
-	}
+    if (setuid(cnt->uid) != 0) {
+        return log_errno("setuid %d failed", cnt->uid);
+    }
 
     return 0;
 }
 
 static int setup_priv(struct myl_cnt *cnt)
 {
-	if (verbose) {
-		log_info("Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)", 
-			cnt->name, cnt->child_pid, cnt->uid, cnt->gid);
-	}
+    if (verbose) {
+        log_info("Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)", 
+            cnt->name, cnt->child_pid, cnt->uid, cnt->gid);
+    }
 
     // drop all caps we can get
-	if (cnt->drop_caps && drop_bounding_set() != 0) {
+    if (cnt->drop_caps && drop_bounding_set() != 0) {
         return log_errno("drop-boundin_set failed for container %s", cnt->name);
-	}
+    }
 
-	if (cnt->drop_sudo && drop_sudo(cnt) != 0) {
-		return 0;
-	}
+    if (cnt->drop_sudo && drop_sudo(cnt) != 0) {
+        return 0;
+    }
 
     // drops all caps we have
     if (cnt->drop_caps && clear_all_caps() != 0)  {
@@ -874,7 +874,7 @@ static int setup_priv(struct myl_cnt *cnt)
 
     if (cnt->use_seccomp && apply_seccomp(cnt) != 0) {
         return log_errno("apply-seccomp failed for container %s", cnt->name);
-	}
+    }
 
     return 0; 
 }
@@ -1181,27 +1181,27 @@ int create_root(struct myl_lau *lau, struct myl_cnt *cnt)
 int mount_overlay(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     int rc;
-	char *opts = NULL;
+    char *opts = NULL;
 
     if (!lau->use_overlay) return 0;
 
-	rc = asprintf(&opts, 
+    rc = asprintf(&opts, 
         "lowerdir=%s,upperdir=%s,workdir=%s", 
-		cnt->lower_path, cnt->upper_path, cnt->work_path
-	);
+        cnt->lower_path, cnt->upper_path, cnt->work_path
+    );
 
-	if (rc == -1) {
-		log_errno("mount overlayfs genopts failed");
+    if (rc == -1) {
+        log_errno("mount overlayfs genopts failed");
         return -1;
-	}
+    }
 
-	rc = mount("overlay", cnt->rootfs_path, "overlay", 0, opts);
-	if (rc == -1) {
-		log_errno("mount overlayfs %s failed", cnt->rootfs_path);
-	}
+    rc = mount("overlay", cnt->rootfs_path, "overlay", 0, opts);
+    if (rc == -1) {
+        log_errno("mount overlayfs %s failed", cnt->rootfs_path);
+    }
     cnt->overlay_mounted = 1;
 
-	free(opts);
+    free(opts);
 
     return rc;
 }
@@ -1263,7 +1263,7 @@ done:
     if (dst_dir) free(dst_dir);
     if (dst_path) free(dst_path);
 
-	return rc;
+    return rc;
 }
 
 int check_network(struct myl_lau *lau, struct myl_cnt *cnt)
@@ -1566,14 +1566,14 @@ done:
 
 void print_usage(struct myl_lau *lau, const char *cmd)
 {
-	const char *base = strrchr(cmd, '/');
-	const char *prog_name = (base) ? base + 1 : cmd;
-	int w= 15;
+    const char *base = strrchr(cmd, '/');
+    const char *prog_name = (base) ? base + 1 : cmd;
+    int w= 15;
 
     printf("Usage: %s [OPTIONS]\n\n", prog_name);
     printf("Options:\n");
 
-	printf("  %-*s %s\n", w, "-help", "this help option");
+    printf("  %-*s %s\n", w, "-help", "this help option");
     printf("  %-*s %s\n", w, "-v",    "debug verbose mode");
     printf("  %-*s %s\n", w, "rootfs=", "root file system");
     printf("  %-*s %s\n", w, "srcdir=", "cmd file dir");
@@ -1593,7 +1593,7 @@ void print_usage(struct myl_lau *lau, const char *cmd)
 static struct myl_cnt *lau_add(
     struct myl_lau *lau,
     const char *name, 
-	const char *cmd_path,
+    const char *cmd_path,
     const char *exec_path, 
     const char *exec_args,
     const char *ip_addr)
@@ -1729,8 +1729,8 @@ int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
 
     for (int i = 1; i < argc; i++) {
         // get key ["=value"]
-		struct str_slice opt = slice_make_cstr(argv[i]);
-		struct str_slice val = slice_split(&opt, '=');
+        struct str_slice opt = slice_make_cstr(argv[i]);
+        struct str_slice val = slice_split(&opt, '=');
 
         if (slice_cmp_cstr(opt, STR_LIT("-help"))) {
             print_usage(lau, argv[0]);
@@ -1745,7 +1745,7 @@ int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
             if (!lau->rootfs_dir) {
                 num_err++;
             }
-		}
+        }
         else if (slice_cmp_cstr(opt, STR_LIT("srcdir"))) {
             lau->src_dir = validate_dir("srcdir", val);
             if (!lau->src_dir) {
@@ -1786,7 +1786,7 @@ int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
         }
     }
 
-	return num_err;
+    return num_err;
 }
 
 

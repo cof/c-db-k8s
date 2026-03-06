@@ -68,12 +68,12 @@ int main(int argc, char *argv[])
     if (strlen(hostname) == 0) fatal_error("hostname cannot be blank");
     if (!port || strlen(port) == 0) port = TCP_PORT_STR;
 
-	// resolve hostname+ port string to list of (ip+port)
-	struct addrinfo hints, *res;
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	int rc = getaddrinfo(hostname, port, &hints, &res);
+    // resolve hostname+ port string to list of (ip+port)
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    int rc = getaddrinfo(hostname, port, &hints, &res);
     if (rc != 0) {
         fatal_error("getaddrinfo(%s,%s) : %s\n", hostname, port, gai_strerror(rc));
     }

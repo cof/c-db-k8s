@@ -173,19 +173,19 @@ int sockfd_get_addr(int sockfd, char *buf, int len)
 
 static struct addrinfo *resolve_addr(const char *host, const char *port)
 {
-	struct addrinfo hints = { 0 }, *res = NULL;
+    struct addrinfo hints = { 0 }, *res = NULL;
 
-	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_INET6; // want dual stack
-	hints.ai_socktype = SOCK_STREAM; 
-	hints.ai_protocol = IPPROTO_TCP;
-	hints.ai_flags = AI_PASSIVE | AI_NUMERICSERV | AI_V4MAPPED | AI_ALL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET6; // want dual stack
+    hints.ai_socktype = SOCK_STREAM; 
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = AI_PASSIVE | AI_NUMERICSERV | AI_V4MAPPED | AI_ALL;
 
-	int rc = getaddrinfo(host, port, &hints, &res);
-	if (rc != 0) {
+    int rc = getaddrinfo(host, port, &hints, &res);
+    if (rc != 0) {
         log_error(gai_strerror(rc), "resolve address(host=%s port=%s)", host, port);
         return NULL;
-	}
+    }
 
     return res;
 }
