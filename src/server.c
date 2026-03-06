@@ -40,7 +40,6 @@
 #include "sock.h"
 #include "db.h"
 
-
 struct simple_client {
     struct simple_sock sock;
     struct list_elem node;
@@ -64,13 +63,15 @@ struct simple_server {
 
 
 static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uint32_t events);
-static void client_destroy(struct simple_client *client);
-
+static void client_destroy(struct simple_client *client, int can_log);
+static void client_close(struct simple_client *client, int force);
 
 static int send_str(struct simple_client *client, struct str_slice str)
 {
     char *dst = make_space(&client->write_buf, str.len + 2);
-    if (!dst) return ERR_BUFSIZE;
+    if (!dst) {
+        return log_error("make space for %d bytes failed");
+    }
 
     memcpy(dst, str.ptr, str.len);
     dst += str.len;
@@ -89,11 +90,11 @@ static int send_rsp(struct simple_client *client, struct str_slice rsp)
 
 static int cmd_set(struct simple_client *client, struct str_slice args)
 {
-    char *pos = memchr(args.ptr, ' ', args.len);
-    int key_len = pos ? pos - args.ptr : args.len;
+    struct str_slice key = slice_copy(args);
+    struct str_slice val = slice_split(&key, ' ');  
 
-    struct str_slice key = slice_make(args.ptr, key_len);
-    struct str_slice val = ltrim(slice_make(pos, args.len - key_len));
+    slice_trim(&val);
+
     struct str_slice res;
 
     if (!key.len || ! val.len)
@@ -136,7 +137,9 @@ static int cmd_quit(struct simple_client *client, struct str_slice args)
 
     send_rsp(client, res);
 
-    return ERR_QUIT;
+    client_close(client, 0);
+
+    return 0;
 }
 
 static int cmd_unsupp(struct simple_client *client, struct str_slice args)
@@ -147,7 +150,7 @@ static int cmd_unsupp(struct simple_client *client, struct str_slice args)
 }
 
 static struct {
-    const char *cmd;
+    const char *name;
     size_t len;
     int (*func)(struct simple_client *client, struct str_slice args);
 } cmds[] = {
@@ -157,10 +160,10 @@ static struct {
     { STR_LIT("QUIT"), cmd_quit },
 };
 
-static int find_cmd(const char *cmd, int len)
+static int find_cmd(struct str_slice cmd)
 {
     for (int i = 0; i < ARR_LEN(cmds); i++) {
-        if (cmds[i].len == len && !memcmp(cmd, cmds[i].cmd, len)) {
+        if (slice_cmp_cstr(cmd, cmds[i].name, cmds[i].len)) {
             return i;
         }
     }
@@ -170,22 +173,50 @@ static int find_cmd(const char *cmd, int len)
 
 int process_cmd(struct simple_client *client, struct str_slice cmd)
 {
-    char *args = memchr(cmd.ptr, ' ', cmd.len);
-    int cmd_len = args ? args - cmd.ptr : cmd.len;
-    struct str_slice cmd_args = ltrim(slice_make(args, cmd.len - cmd_len));
+    struct str_slice name = slice_copy(cmd);
+    struct str_slice args = slice_split(&name, ' ');
 
-    str2upper(cmd.ptr, cmd_len);
-    int cmd_idx = find_cmd(cmd.ptr, cmd_len);
+    slice_toupper(&name);
+    slice_trim(&args);
+
+    int cmd_idx = find_cmd(name);
     int rc;
 
     if (cmd_idx != -1) {
-        rc = cmds[cmd_idx].func(client, cmd_args);
+        rc = cmds[cmd_idx].func(client, args);
     }
     else {
-        rc = cmd_unsupp(client, cmd_args); 
+        rc = cmd_unsupp(client, args); 
     }
 
     return rc;
+}
+
+static void client_close(struct simple_client *client, int force)
+{
+    client->sock.send_close = 1;
+
+    if (force) {
+        client->sock.force_close = 1;
+    }
+}
+
+static void client_destroy(struct simple_client *client, int can_log)
+{
+    if (can_log) {
+        log_info("Client local-close %s", client->name);
+    }
+
+    sock_close(&client->sock, can_log);
+
+    deinit_rwbuf(&client->read_buf);
+    deinit_rwbuf(&client->write_buf);
+
+    if (list_inuse(&client->node)) {
+        list_remove(&client->node);
+    }
+
+    free(client);
 }
 
 struct simple_client *client_create(int fd)
@@ -203,40 +234,16 @@ struct simple_client *client_create(int fd)
     return client;
 }
 
-static void client_destroy(struct simple_client *client)
-{
-    if (client->sock.fd != -1) {
-        close(client->sock.fd);
-        client->sock.fd = -1;
-    }
 
-    deinit_rwbuf(&client->read_buf);
-    deinit_rwbuf(&client->write_buf);
-
-    if (list_inuse(&client->node)) {
-        list_remove(&client->node);
-    }
-
-    free(client);
-}
-
-static void client_close(struct simple_client *client, int force)
-{
-    client->sock.send_close = 1;
-
-    if (force || client->write_buf.len) {
-        // discard the write buffer
-        client->write_buf.len = 0;
-    }
-}
 
 #define RDWR_EVENTS (EPOLLOUT | EPOLLIN | EPOLLRDHUP)
 #define RD_EVENTS (EPOLLIN | EPOLLRDHUP)
 
 static void do_client_write(struct simple_client *client)
 {
-    int nw = sock_write(&client->sock, &client->write_buf);
-    if (nw < 0) {
+    int rc = sock_write(&client->sock, &client->write_buf);
+
+    if (rc < 0) {
         // write failed -> bail
         return;
     }
@@ -258,34 +265,41 @@ static void do_client_write(struct simple_client *client)
 
 void do_client_read(struct simple_client *client)
 {
-    struct str_slice line;
-    int rc;
+    int rc = sock_read(&client->sock, &client->read_buf);
 
-    rc = sock_read(&client->sock, &client->read_buf);
     if (rc < 0) {
-        // read failed -> bail
+        // read failed
+        if (rc == SOCK_CLOSED) {
+            // client closed its end
+            log_info("Client remote-closed %s", client->name);
+            client_close(client, 0);
+        }
         return;
     }
 
     // loop until no more lines or error
+    struct str_slice line;
     while ((rc = read_line(&client->read_buf, &line)) > 0) {
         rc = process_cmd(client, line);
         if (rc != 0) break;
     }
 
     if (rc < 0) {
-        // error ? mark conn for close
-       client_close(client, rc != ERR_QUIT);
+        // error - mark conn for close
+       client_close(client, 1);
     }
 }
 
-static void do_client_check(struct simple_client *client)
+static int client_must_close(struct simple_client *client)
 {
-    if (client->sock.sys_err || (client->sock.send_close && !client->write_buf.len)) {
-        // safe to close
-        log_info("Client closing %s", client->name);
-        client_destroy(client);
+    if (client->sock.sys_err) return 1;
+
+    if (client->sock.send_close) {
+        if (client->sock.force_close) return 1;
+        if (client->write_buf.len == 0) return 1;
     }
+
+    return 0;
 }
 
 static void handle_client(struct simple_client *client, uint32_t events)
@@ -302,8 +316,9 @@ static void handle_client(struct simple_client *client, uint32_t events)
         do_client_write(client);
     }
 
-    // handle close or error
-    do_client_check(client);
+    if (client_must_close(client)) {
+        client_destroy(client, 1);
+    }
 }
 
 static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uint32_t events) 
@@ -357,7 +372,7 @@ struct simple_client *server_accept(struct simple_server *server)
     client->parent = server;
     if (poll_ctrl(server, &client->sock, RD_EVENTS) != 0) { 
         // register failed ?
-        client_destroy(client);
+        client_destroy(client, 1);
         return NULL;
     }
 
@@ -535,7 +550,7 @@ int server_parse_argv(struct simple_server *server, int argc, char *argv[])
     if (argc > 1 && argv[1]) {
         // parse
         struct str_slice host = slice_make(argv[1], strlen(argv[1]));
-        struct str_slice port = slice_split(&host, ':');
+        struct str_slice port = slice_rsplit(&host, ':');
         if (host.len && host.ptr[0] == '[') {
             host.ptr++; host.len--;
             if (host.ptr[host.len] == ']') host.len--;
@@ -558,7 +573,7 @@ void server_destroy(struct simple_server *server)
 
     list_fornext_entry_safe(client, next, &server->clients, node) {
         list_remove(&client->node);
-        client_destroy(client);
+        client_destroy(client, 0);
     }
 
     if (server->sock.fd != -1) {
@@ -620,7 +635,7 @@ int main(int argc, char *argv[])
     if (server_run(server) != 0) { ec = 7; goto done; }
 
     if (caught_signo) {
-        log_info("[Server PID:%d] shutting down: got signal %d (%s) from UID:%d PID:%d ", 
+        log_info("Server PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
             server->pid, 
             caught_signo, strsignal(caught_signo), 
             sender_uid,

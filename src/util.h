@@ -30,16 +30,6 @@ void _fatal_error(const char *file, int line, const char *func, int ec, const ch
 #define log_debug(fmt, ...) { fprintf(stderr, fmt, ##__VA_ARGS__); fprintf(stderr, "\n"); }
 
 
-// general errs
-#define ERR_READSOCK -1
-#define ERR_WRITESOCK -2
-#define ERR_CLOSESOCK -3
-#define ERR_READLINE -4
-#define ERR_BUFSIZE -5
-#define ERR_SOCKNAME -6
-#define ERR_QUIT -7
-#define ERR_POLL -8
-
 // string handling code
 struct str_slice {
     char *ptr;
@@ -61,16 +51,39 @@ static inline struct str_slice slice_make_cstr(char *str)
     return slice_make(str, str ? strlen(str) : 0);
 }
 
+static inline struct str_slice slice_copy(struct str_slice val)
+{
+    return val;
+}
+
 static inline int slice_cmp_cstr(struct str_slice str, const char *cstr, int len)
 {
     return len == str.len && memcmp(str.ptr, cstr, len) == 0;
+}
+
+static inline struct str_slice slice_rsplit(struct str_slice *src, int ch)
+{
+    struct str_slice dst;
+   
+    dst.ptr = memrchr(src->ptr, ch, src->len);
+
+    if (dst.ptr) {
+        dst.len = src->len - (dst.ptr - src->ptr + 1);
+        src->len -= dst.len + 1;
+        dst.ptr++;
+    }
+    else {
+        dst.len = 0;
+    }
+
+    return dst;
 }
 
 static inline struct str_slice slice_split(struct str_slice *src, int ch)
 {
     struct str_slice dst;
    
-    dst.ptr = memrchr(src->ptr, ch, src->len);
+    dst.ptr = memchr(src->ptr, ch, src->len);
 
     if (dst.ptr) {
         dst.len = src->len - (dst.ptr - src->ptr + 1);
@@ -109,12 +122,40 @@ static inline int iswhite(int ch)
     return ch == ' ' || ch == '\t' || ch == '\v' || ch == '\r' || ch == '\t' ? 1 : 0;
 }
 
-static inline struct str_slice ltrim(struct str_slice str)
+static inline struct str_slice *slice_ltrim(struct str_slice *str)
 {
-    while (str.len && iswhite(*str.ptr)) {
-        str.ptr++;
-        str.len--;
+    while (str->len && iswhite(*str->ptr)) {
+        str->ptr++;
+        str->len--;
     }
+
+    return str;
+}
+
+static inline struct str_slice *slice_rtrim(struct str_slice *str)
+{
+    while (str->len && iswhite(str->ptr[str->len - 1])) {
+        str->len--;
+    }
+
+    return str;
+}
+
+static inline struct str_slice *slice_trim(struct str_slice *str)
+{
+    return slice_ltrim(slice_rtrim(str));
+}
+
+static inline struct str_slice *slice_toupper(struct str_slice *str)
+{
+    str2upper(str->ptr, str->len);
+
+    return str;
+}
+
+static inline struct str_slice *slice_tolower(struct str_slice *str)
+{
+    str2lower(str->ptr, str->len);
 
     return str;
 }

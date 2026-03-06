@@ -88,33 +88,34 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
     char *eol = memchr(buf->rptr, '\n', buf->len);
 
     if (eol) {
-        // found line
+        // found terminator
         size_t rlen = eol - buf->rptr + 1;
         char *str = buf->rptr;
         // remove from buffer
         int len = rlen;
         buf->len -= len ;
         buf->rptr += len;
+
         // chop cr/lf - TODO remove this ?
         if (len && str[len - 1] == '\n') len--;
         if (len && str[len - 1] == '\r') len--;
         str[len] = '\0';
+
         // store line
         line->ptr = str;
         line->len = len;
-        // have line or error
+
         if (len > MAX_LINE) {
-            log_error("line too big - len %d > max %d", len, MAX_LINE);
-            len = ERR_READLINE;
+            return log_error("line too big - len=%d > max=%d", len, MAX_LINE);
         }
-        // return read length (includes \r\n)
+
+        // line length + CRLF
         return rlen;
     }
 
     // incomplete line
     if (buf->len > MAX_LINE) {
-        log_error("line too big - len %d > max %d", buf->len, MAX_LINE);
-        return ERR_READLINE;
+        return log_error("line too big - len=%d > max=%d", buf->len, MAX_LINE);
     }
 
     if (buf->rptr > buf->data) {
@@ -276,12 +277,15 @@ int sock_accept(struct simple_sock *sock, char *addr_str, int addr_str_len)
 
 int sock_read(struct simple_sock *sock, struct rwbuf *buf)
 {
-    int tr = 0;
+    if (sock->sys_err) {
+        return SOCK_ERROR;
+    }
+    
+    int rc = SOCK_OK;
+    int ec = SOCK_OK;
     char *rptr = buf->rptr + buf->len;
     size_t rem = buf->data + buf->cap - rptr;
 
-    if (sock->sys_err) return ERR_READSOCK;
-    
     while (rem) {
         
         // read as much as we can
@@ -289,58 +293,91 @@ int sock_read(struct simple_sock *sock, struct rwbuf *buf)
 
         if (nr == -1)  {
             // read failed
-           if (errno == EINTR) continue; // interrupt ?
-           if (errno != EAGAIN) {
-               log_errno("read simple_socket");
-               tr = ERR_READSOCK;
+            ec = SOCK_ERROR;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // buffer empty
+                ec = SOCK_AGAIN;
+            }
+            else if (errno != EINTR) {
+               log_errno("sock_read fd=%d len=%zu", sock->fd, rem);
                sock->sys_err = 1;
-           }
-           break;
-        }
-        if (nr == 0) {
-            // closed
-            sock->recv_close = 1;
-            if (tr == 0) tr = ERR_CLOSESOCK;
+            }
+            // stop read
             break;
         }
 
-        tr += nr;
+        if (nr == 0) {
+            // peer closed
+            sock->recv_close = 1;
+            ec = SOCK_CLOSED;
+            // stop read
+            break;
+        }
 
+        // read data
+        rc = SOCK_DATA;
         rptr += nr;
         rem -= nr;
         buf->len += nr;
     }
 
-    // nread | error
-    return tr;
+    // data or error
+    return rc == SOCK_DATA ? rc : ec;
 }
 
 int sock_write(struct simple_sock *sock, struct rwbuf *buf)
 {
-    int tw = 0;
+    if (sock->sys_err) {
+        return SOCK_ERROR;
+    }
 
-    if (sock->sys_err) return ERR_WRITESOCK;
+    int rc = SOCK_OK;
+    int ec = SOCK_OK;
 
     while (buf->len) {
 
         size_t nw = write(sock->fd, buf->rptr, buf->len);
+
         if (nw == -1) {
             // write failed
-            if (errno == EINTR) continue;
-            if (errno != EAGAIN) {
-                log_errno("write simple_socket");
-                tw = ERR_WRITESOCK;
-                sock->sys_err = 1;
+            ec = SOCK_ERROR;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // buffer full
+                ec = SOCK_AGAIN;
             }
+            else if (errno != EINTR) {
+               log_errno("sock_write fd=%d len=%zu", sock->fd,  buf->len);
+               sock->sys_err = 1;
+            }
+            // stop write
             break;
         }
 
-        // record what was written
-        tw += nw;
+        if (nw == 0)  {
+            // should not happen
+            break;
+        }
+
+        // wrote data
+        rc = SOCK_DATA;
         buf->rptr += nw;
         buf->len -= nw;
-        break;
     }
 
-    return tw;
+    // data or error
+    return rc == SOCK_DATA ? rc : ec;
+}
+
+int sock_close(struct simple_sock *sock, int can_log)
+{
+    if (sock->fd != -1) {
+        int ec = close(sock->fd);
+        if (ec && can_log) {
+            log_error("close fd=%d failed", sock->fd);
+        }
+        sock->fd = -1;
+        if (ec) return -1;
+    }
+
+    return 0;
 }

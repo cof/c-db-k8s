@@ -160,7 +160,7 @@ struct str_slice db_get(struct str_slice key)
 {
     struct nlist *np = hash_find(key.ptr, key.len);
     return np
-        ? slice_make(np->data + np->key_len, np->key_len) 
+        ? slice_make(np->data + np->key_len, np->val_len) 
         : slice_make(NULL, 0);
 }
 

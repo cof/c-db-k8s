@@ -2,14 +2,12 @@
 #define __SOCK_H__
 
 // socket errors
-#define ERR_READSOCK -1
-#define ERR_WRITESOCK -2
-#define ERR_CLOSESOCK -3
-#define ERR_READLINE -4
-#define ERR_BUFSIZE -5
-#define ERR_SOCKNAME -6
-#define ERR_QUIT -7
-#define ERR_POLL -8
+#define SOCK_OK      0 // read return 0 - nothing to do
+#define SOCK_DATA    1 // read or write worked
+#define SOCK_AGAIN  -2 // read would block (EAGAIN|EWOULDBLOCK)
+#define SOCK_ERROR  -2 // read|write|close error
+#define SOCK_CLOSED -3 // read returned 0
+
 
 #define MAX_EVENTS 10
 
@@ -35,6 +33,7 @@ struct simple_sock {
     // flags  - using bit fields
     unsigned int is_server  : 1; // 1 = simple_server, 0= simple_client
     unsigned int is_epoll   : 1; // 1 = registered
+    unsigned int force_close : 1; // ignore write buffer
     unsigned int send_close : 1; // we call close
     unsigned int recv_close : 1; // got read 0
     unsigned int wait_write : 1; // waitiinf for writeable event
@@ -45,6 +44,8 @@ int create_listener(const char *host, const char *port, char *addr_str, int addr
 int sock_accept(struct simple_sock *sock, char *addr_str, int addr_str_len);
 int sock_read(struct simple_sock *sock, struct rwbuf *buf);
 int sock_write(struct simple_sock *sock, struct rwbuf *buf);
+int sock_close(struct simple_sock *sock, int can_log);
+
 
 
 
