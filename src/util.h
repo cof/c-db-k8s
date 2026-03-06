@@ -17,9 +17,14 @@
 #define STR(a) XSTR(a)
 
 // logger
-void log_info(const char *fmt, ...);
-int _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...);
-void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...);
+void log_info(const char *fmt, ...)
+    __attribute__((format(printf, 1, 2)));
+
+int _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...) 
+    __attribute__((format(printf, 5, 6)));
+
+void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
+    __attribute__((format(printf, 5, 6)));
 
 #define log_error(...)  _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__)
 #define log_errno(...)  _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__)

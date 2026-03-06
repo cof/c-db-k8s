@@ -70,7 +70,7 @@ static int send_str(struct simple_client *client, struct str_slice str)
 {
     char *dst = make_space(&client->write_buf, str.len + 2);
     if (!dst) {
-        return log_error("make space for %d bytes failed");
+        return log_error("make space for %zu bytes failed", str.len + 2);
     }
 
     memcpy(dst, str.ptr, str.len);
@@ -602,7 +602,7 @@ static int server_init(struct simple_server *state)
 
     state->port = strdup(TCP_PORT_STR);
     if (!state->port) {
-        return log_errno("strdup", TCP_PORT_STR);
+        return log_errno("strdup %s", TCP_PORT_STR);
     }
 
     return 0;

@@ -89,7 +89,7 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
 
     if (eol) {
         // found terminator
-        size_t rlen = eol - buf->rptr + 1;
+        int rlen = eol - buf->rptr + 1;
         char *str = buf->rptr;
         // remove from buffer
         int len = rlen;
@@ -106,7 +106,7 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
         line->len = len;
 
         if (len > MAX_LINE) {
-            return log_error("line too big - len=%d > max=%d", len, MAX_LINE);
+            return log_error("line too big - len %d > max %d", len, MAX_LINE);
         }
 
         // line length + CRLF
@@ -115,7 +115,7 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
 
     // incomplete line
     if (buf->len > MAX_LINE) {
-        return log_error("line too big - len=%d > max=%d", buf->len, MAX_LINE);
+        return log_error("line too big - len %zu > max %d", buf->len, MAX_LINE);
     }
 
     if (buf->rptr > buf->data) {

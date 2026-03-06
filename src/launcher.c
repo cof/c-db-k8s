@@ -1531,7 +1531,7 @@ char *validate_dir(const char *key, struct str_slice dir)
 {
     char *path = realpath(dir.ptr, NULL);
     if (!path) {
-        return log_errnon("%s realpath %s failed");
+        return log_errnon("%s realpath %s failed", key, dir.ptr);
     }
 
     // Check if the path exists
@@ -1539,19 +1539,19 @@ char *validate_dir(const char *key, struct str_slice dir)
 
     struct stat st;
     if (stat(path, &st) != 0) {
-       log_error("%s path %s does not exist", key, dir);
+       log_error("%s path %s does not exist", key, path);
        goto done;
     }
 
     // check file is a directory
     if (!S_ISDIR(st.st_mode)) {
-        log_error("%s path %s is not a dir", key, dir);
+        log_error("%s path %s is not a dir", key, path);
         goto done;
     }
 
     // check dir is accesible
     if (access(path, R_OK | X_OK) != 0) {
-        log_error("%s path %s is not accesible", key, dir);
+        log_error("%s path %s is not accesible", key, path);
         goto done;
     }
 
