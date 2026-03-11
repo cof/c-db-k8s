@@ -243,7 +243,7 @@ install : all
 
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR) $(ROOTFS_DIR) $(CMDS) $(BIN_DIR)
+	rm -rf $(BUILD_DIR) $(ROOTFS_DIR) $(CMDS) $(BIN_DIR) tags
 
 
 
