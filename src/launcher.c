@@ -1,5 +1,5 @@
 /* 
- * launcher -a simple container launcher
+ * launcher -a runtime container launcher
  * 
  *  CLONE_NEWUTS - private Hostname and NIS
  *  CLONE_PID    - private PID namespace

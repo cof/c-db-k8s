@@ -1,5 +1,5 @@
 /*
- * server - a TCP server than support simple commands to acesss a key/value store
+ S* server - a TCP server than supports telnet api to acesss a key/value store
  *
  * Usage: server [hosthame[:port]]
  *
