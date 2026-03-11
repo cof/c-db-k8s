@@ -60,12 +60,16 @@ static int mysockaddr_tostr(struct sockaddr *addr, socklen_t addr_len, char *buf
 int main(int argc, char *argv[])
 {
     // parse cmd line
-    if (argc < 2) fatal_error("Missing hostname");
+    if (argc < 2) {
+        fatal_error("Missing hostname");
+    }
 
     char *hostname = strdup(argv[1]);
     char *port = strrchr(hostname, ':');
     if (port) *port++ = '\0';
-    if (strlen(hostname) == 0) fatal_error("hostname cannot be blank");
+    if (strlen(hostname) == 0) {
+        fatal_error("hostname cannot be blank");
+    }
     if (!port || strlen(port) == 0) port = TCP_PORT_STR;
 
     // resolve hostname+ port string to list of (ip+port)
@@ -93,12 +97,15 @@ int main(int argc, char *argv[])
         sock_fd = -1;
     }
     freeaddrinfo(res);
-    if (sock_fd == -1) fatal_error("No connection");
+    if (sock_fd == -1) {
+        fatal_error("No connection");
+    }
 
     // wrap the fd into FILE
-    FILE *send = fdopen(sock_fd, "w");
-    FILE *recv = fdopen(dup(sock_fd), "r");
-    if (!send || !recv) fatal_error("Failed to create in/out");
+    FILE *server = fdopen(sock_fd, "r+");
+    if (!server) {
+        fatal_error("Failed to create in/out");
+    }
 
     // at this stage safe to proceed
     log_info("Connectivity test: OK");
@@ -117,21 +124,32 @@ int main(int argc, char *argv[])
         }
 
         // send line to server
-        fputs(buf, send); 
-        fflush(send);
+        fputs(buf, server); 
+        fflush(server);
 
         // recv response from server
-        if (fgets(buf, sizeof(buf), recv) == NULL)  {
+        if (fgets(buf, sizeof(buf), server) == NULL)  {
             // error or close
             log_info("Connection closed by foreign host.");
             break;
         }
         fprintf(stdout, "%s", buf);
         fflush(stdout);
+
+        // check for server eof
+        char ch;
+        int rc = recv(fileno(server), &ch, 1, MSG_PEEK | MSG_DONTWAIT);
+        if (rc == 0) {
+            log_info("Connection closed by foreign host.");
+            break;
+        }
+        if (rc < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+            log_errno("connecton(%s) failed", name);
+            fatal_error("Lost connection");
+        }
     }
 
-    fclose(recv);
-    fclose(send);
+    fclose(server);
 
     return 0;
 }
