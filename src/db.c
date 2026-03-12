@@ -17,7 +17,10 @@ struct db_rec {
     char data[];
 };
 
+
+
 static struct db_rec *hash_table[HASHSIZE];
+
 
 static int hash(const void *key, int klen)
 {
@@ -31,14 +34,14 @@ static void hash_init(void)
 
 static void hash_deinit(void)
 {
-    struct db_rec *np;
+    struct db_rec *rec;
     int i;
 
     for (i=0; i < HASHSIZE; i++) {
         while (hash_table[i]) {
-            np = hash_table[i];
-            hash_table[i] = np->next;
-            free(np);
+            rec = hash_table[i];
+            hash_table[i] = rec->next;
+            free(rec);
         }
     }
 }
@@ -145,7 +148,7 @@ static struct db_rec *hash_find(const void *key, int klen)
     return hash_search(hash(key, klen), key, klen);
 }
 
-int db_init(void)
+int db_init(const char *file_name)
 {
     hash_init();
 

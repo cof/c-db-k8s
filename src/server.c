@@ -53,9 +53,10 @@ struct simple_server {
     pid_t pid;
     struct simple_sock sock;
     struct list_elem clients;
-    // config
+    // user config
     char *host;
     char *port;
+    char *db_filename;
     //  state
     int epoll_fd; // epoll_create1
     char name[MAX_HOSTPORT];
@@ -542,7 +543,7 @@ int setup_listener(struct simple_server *server)
 
 int setup_database(struct simple_server *state)
 {
-    return db_init();
+    return db_init(state->db_filename);
 }
 
 int server_parse_argv(struct simple_server *server, int argc, char *argv[])
@@ -550,25 +551,34 @@ int server_parse_argv(struct simple_server *server, int argc, char *argv[])
     // listenr address:port 
     if (argc > 1 && argv[1]) {
         // parse
-        struct str_slice host = slice_make(argv[1], strlen(argv[1]));
+        struct str_slice host = slice_make_cstr(argv[1]);
         struct str_slice port = slice_rsplit(&host, ':');
         if (host.len && host.ptr[0] == '[') {
             host.ptr++; host.len--;
             if (host.ptr[host.len] == ']') host.len--;
         }
         // store
-        if (host.len && (server->host = strndup(host.ptr, host.len)) == NULL) {
+        if (host.len && (server->host = slice_strdup(host)) == NULL) {
             return log_errno("strdup-hostname");
         }
-        if (port.len && (server->port = strndup(port.ptr, port.len)) == NULL) { 
+        if (port.len && (server->port = slice_strdup(port)) == NULL) { 
             return log_errno("strdup-portno");
+        }
+    }
+
+    // database filename
+    if (argc > 1 && argv[2]) {
+        struct str_slice file_name = slice_make_cstr(argv[2]);
+        slice_trim(&file_name);
+        if (file_name.len && (server->db_filename = slice_strdup(file_name)) == NULL) {
+            return log_errno("strdup db-filename");
         }
     }
 
     return 0;
 }
 
-void server_destroy(struct simple_server *server)
+void server_free(struct simple_server *server)
 {
     struct simple_client *client, *next;
 
@@ -587,7 +597,18 @@ void server_destroy(struct simple_server *server)
         server->epoll_fd = -1;
     }
 
+    if (server->db_filename) {
+        free(server->db_filename);
+    }
+
     free(server);
+}
+
+void server_destroy(struct simple_server *server)
+{
+    db_deinit();
+
+    server_free(server);
 }
 
 static int server_init(struct simple_server *state)

@@ -3,7 +3,7 @@
 
 #define DB_FAIL -1
 
-int db_init(void);
+int db_init(const char *file_name);
 void db_deinit(void);
 
 int db_set(struct str_slice key, struct str_slice val);
