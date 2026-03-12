@@ -12,6 +12,8 @@
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
 #define STR_LIT(s) (s), (sizeof(s) - 1)
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
+#define make_ptr(ptr, offset)  ((void *)  ( ((char *) ptr) + offset))
+#define make_cptr(ptr, offset) ((char *) (ptr + offset))
 #define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
 
 // Stringification macros

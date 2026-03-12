@@ -59,6 +59,7 @@ struct simple_server {
     char *host;
     char *port;
     char *db_filename;
+    size_t db_filesize;
     //  state
     int epoll_fd; // epoll_create1
     char name[MAX_HOSTPORT];

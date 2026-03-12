@@ -1,6 +1,8 @@
 #ifndef __LOG_H__
 #define __LOG_H__
 
+#include <errno.h>
+
 // logger
 void log_msg(const char *msg);
 void _log_info(const char *what, const char *fmt, ...)
