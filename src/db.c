@@ -10,14 +10,14 @@
 #define HASHSIZE 15013
 
 // note key and val are stored directly in db entry
-struct nlist {
-    struct nlist *next;
+struct db_rec {
+    struct db_rec *next;
     size_t key_len;
     size_t val_len;
     char data[];
 };
 
-static struct nlist *hash_table[HASHSIZE];
+static struct db_rec *hash_table[HASHSIZE];
 
 static int hash(const void *key, int klen)
 {
@@ -31,7 +31,7 @@ static void hash_init(void)
 
 static void hash_deinit(void)
 {
-    struct nlist *np;
+    struct db_rec *np;
     int i;
 
     for (i=0; i < HASHSIZE; i++) {
@@ -45,69 +45,75 @@ static void hash_deinit(void)
 
 
 // note key and val are stored directly in entry
-static struct nlist *create_entry(const void *key, int klen, const void *val, int vlen)
+static struct db_rec *create_entry(const void *key, int klen, const void *val, int vlen)
 {
-    struct nlist *np = malloc(sizeof(*np) + klen + vlen);;
-    if (!np) return NULL;
+    struct db_rec *rec;
 
-    np->next = NULL;
-    np->key_len = klen;
-    np->val_len = vlen;
-    memcpy(np->data, key, klen);
-    memcpy(np->data + klen, val, vlen);
+    rec = malloc(sizeof(*rec) + klen + vlen);;
+    if (!rec) return NULL;
 
-    return np;
+    rec->next = NULL;
+    rec->key_len = klen;
+    rec->val_len = vlen;
+    memcpy(rec->data, key, klen);
+    memcpy(rec->data + klen, val, vlen);
+
+    return rec;
 }
 
-static void free_entry(struct nlist *np)
+static void free_entry(struct db_rec *rec)
 {
-    free(np);
+    free(rec);
 }
 
-static struct nlist *hash_search(int idx, const char *key, int key_len)
+static struct db_rec *hash_search(int idx, const char *key, int key_len)
 {
-    struct nlist *np;
+    struct db_rec *rec;
 
-    for (np = hash_table[idx]; np; np = np->next) {
-        if (key_len == np->key_len && !memcmp(np->data, key, key_len)) {
-            return np;
+    for (rec = hash_table[idx]; rec; rec = rec->next) {
+        if (key_len == rec->key_len && !memcmp(rec->data, key, key_len)) {
+            return rec;
         }
     }
 
     return NULL;
 }
 
-static struct nlist *hash_put(const void *key, int klen, const void *val, int vlen)
+static struct db_rec *hash_put(const void *key, int klen, const void *val, int vlen)
 {
     int idx = hash(key, klen);
 
     // fist check if entry already exists
-    struct nlist **pp = &hash_table[idx];
+    struct db_rec **pp = &hash_table[idx];
     while (*pp) {
-        struct nlist *np = *pp;
-        if (klen == np->key_len && !memcmp(np->data, key, klen)) {
+        struct db_rec *crec = *pp;
+        if (klen == crec->key_len && !memcmp(crec->data, key, klen)) {
             // replace existing entry
-            struct nlist *rp = create_entry(key, klen, val, vlen);
-            if (!rp) return NULL;
+            struct db_rec *nrec = create_entry(key, klen, val, vlen);
+            if (!nrec)  {
+                return NULL;
+            }
             // chain
-            rp->next = np->next;
-            *pp = rp;
+            nrec->next = crec->next;
+            *pp = nrec;
             // all done
-            free_entry(np);
-            return rp;
+            free_entry(crec);
+            return nrec;
         }
-        pp = &np->next;
+        pp = &crec->next;
     }
 
     // new entry
-    struct nlist *np = create_entry(key, klen, val, vlen);
-    if (!np) return NULL;
+    struct db_rec *nrec = create_entry(key, klen, val, vlen);
+    if (!nrec) {
+        return NULL;
+    }
 
     // chain
-    np->next = hash_table[idx];
-    hash_table[idx] = np;
+    nrec->next = hash_table[idx];
+    hash_table[idx] = nrec;
 
-    return np;
+    return nrec;
 }
 
 static int hash_del(const void *key, int klen)
@@ -115,9 +121,9 @@ static int hash_del(const void *key, int klen)
     int idx = hash(key, klen);
 
     // fist check if entry already exists
-    struct nlist **pp = &hash_table[idx];
+    struct db_rec **pp = &hash_table[idx];
     while (*pp) {
-        struct nlist *np = *pp;
+        struct db_rec *np = *pp;
         if (klen == np->key_len && !memcmp(np->data, key, klen)) {
             // unchain
             *pp = np->next; 
@@ -134,7 +140,7 @@ static int hash_del(const void *key, int klen)
     return -1;
 }
 
-static struct nlist *hash_find(const void *key, int klen)
+static struct db_rec *hash_find(const void *key, int klen)
 {
     return hash_search(hash(key, klen), key, klen);
 }
@@ -153,19 +159,27 @@ void db_deinit()
 
 int db_set(struct str_slice key, struct str_slice val)
 {
-    return hash_put(key.ptr, key.len, val.ptr, val.len) ? 1 : 0;
+    struct db_rec *rec;
+
+    rec = hash_put(key.ptr, key.len, val.ptr, val.len);
+    
+    return rec ? 0 : DB_FAIL;
 }
 
 struct str_slice db_get(struct str_slice key)
 {
-    struct nlist *np = hash_find(key.ptr, key.len);
-    return np
-        ? slice_make(np->data + np->key_len, np->val_len) 
-        : slice_make(NULL, 0);
+    struct db_rec *rec;
+
+    rec = hash_find(key.ptr, key.len);
+    if (!rec) return slice_make(NULL, 0);
+
+    return slice_make(rec->data + rec->key_len, rec->val_len);
 }
 
 int db_del(struct str_slice key)
 {
-    return hash_del(key.ptr, key.len) == 0;
+    int rc = hash_del(key.ptr, key.len);
+
+    return rc;
 }
 

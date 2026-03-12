@@ -99,7 +99,7 @@ static int cmd_set(struct simple_client *client, struct str_slice args)
 
     if (!key.len || ! val.len)
         res = slice_make(STR_LIT("FAIL"));
-    else if (!db_set(key, val)) 
+    else if (db_set(key, val)) 
         res = slice_make(STR_LIT("FAIL"));
     else
         res = slice_make(STR_LIT("OK"));
@@ -111,8 +111,9 @@ static int cmd_get(struct simple_client *client, struct str_slice key)
 {
     struct str_slice res = db_get(key);
 
-    if (!res.ptr)
+    if (!res.ptr) {
         res = slice_make(STR_LIT("FAIL"));
+    }
 
     return send_rsp(client, res);
 }
@@ -123,7 +124,7 @@ static int cmd_del(struct simple_client *client, struct str_slice key)
 
     if (!key.len)
         res = slice_make(STR_LIT("FAIL"));
-    else if (!db_del(key))
+    else if (db_del(key))
         res = slice_make(STR_LIT("FAIL"));
     else 
         res = slice_make(STR_LIT("OK"));

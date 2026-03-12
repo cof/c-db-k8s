@@ -1,6 +1,8 @@
 #ifndef __DB_H__
 #define __DB_H__
 
+#define DB_FAIL -1
+
 int db_init(void);
 void db_deinit(void);
 
