@@ -52,6 +52,7 @@
 #include <linux/seccomp.h>
 
 #include "util.h"
+#include "log.h"
 
 // config defaults
 #define RUN_DIR "/run/asimple_launcher"
@@ -181,7 +182,7 @@ static int run_cmd(const char *fmt, ...)
     va_end(args);
 
     if (rc < 0) {
-        return log_errno("vsnprintf failed");
+        return log_errno_rf("vsnprintf failed");
     }
 
     if (verbose) {
@@ -229,7 +230,7 @@ int create_dir(const char *path, mode_t mode, bool can_exist)
     int rc = mkdir(path, mode);
 
     if (rc == -1 && (!can_exist || errno != EEXIST)) {
-        return log_errno("create_dir %s failed", path);
+        return log_errno_rf("create_dir %s failed", path);
     }
 
     return 0;
@@ -261,7 +262,7 @@ int create_path(const char *path, mode_t mode)
 {
     char *tmp = strdup(path);
     if (!tmp)
-        return log_errno("create_path strdup %s failed", path);
+        return log_errno_rf("create_path strdup %s failed", path);
 
     int rc = create_path_nocopy(tmp, mode);
     free(tmp);
@@ -273,7 +274,7 @@ static int mount_file(const char *path)
 {
     // make file a mount point
     if (mount(path, path, "none", MS_BIND, NULL) < 0) {
-        return log_errno("mount self-bind %s failed", path);
+        return log_errno_rf("mount self-bind %s failed", path);
     }
 
     // make file private
@@ -281,7 +282,7 @@ static int mount_file(const char *path)
         int _errno = errno;
         umount2(path, MNT_DETACH);
         errno = _errno;
-        return log_errno("mount private %s failed", path);
+        return log_errno_rf("mount private %s failed", path);
     }
 
     return 0;
@@ -294,22 +295,22 @@ static int create_netns_file(const char *netns_path)
     if (fd == -1) {
         // error ?
         if (errno != EEXIST) {
-            return log_errno("open %s failed", netns_path);
+            return log_errno_rf("open %s failed", netns_path);
         }
         // file alredy exists - possible crash ?
         if (umount2(netns_path, MNT_DETACH) == -1) {
             if (errno != EINVAL && errno != ENOENT) {
-                return log_errno("unmount2  %s failed", netns_path);
+                return log_errno_rf("unmount2  %s failed", netns_path);
             }
         }
         // remove file
         if (unlink(netns_path) == -1) {
-            return log_errno("unlink stale  %s failed", netns_path);
+            return log_errno_rf("unlink stale  %s failed", netns_path);
         }
         // try again
         fd = open(netns_path, O_RDONLY | O_CREAT | O_EXCL, 0600);
         if (fd == -1) {
-            return log_errno("open %s failed", netns_path);
+            return log_errno_rf("open %s failed", netns_path);
         }
     }
 
@@ -318,7 +319,7 @@ static int create_netns_file(const char *netns_path)
         int _errno = errno;
         unlink(netns_path);
         errno = _errno; 
-        return log_errno("close %s failed", netns_path);
+        return log_errno_rf("close %s failed", netns_path);
     }
 
     return 0;
@@ -345,7 +346,7 @@ static int mount_netns(const char *netns_path)
         umount2(netns_path, MNT_DETACH);
         unlink(netns_path);
         errno = _errno;
-        return log_errno("fork for bind mount failed");
+        return log_errno_rf("fork for bind mount failed");
     }
 
     // inside child - bind mount the new file to a new netns
@@ -372,7 +373,7 @@ static int mount_netns(const char *netns_path)
         umount2(netns_path, MNT_DETACH);
         unlink(netns_path);
         errno = _errno;
-        return log_errno("waitpid failed");
+        return log_errno_rf("waitpid failed");
     }
 
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
@@ -380,7 +381,7 @@ static int mount_netns(const char *netns_path)
         umount2(netns_path, MNT_DETACH);
         unlink(netns_path);
         errno = _errno;
-        return log_error("failed to bind mount %s", netns_path);
+        return log_error_rf("failed to bind mount %s", netns_path);
     }
 
     // reopen netns 
@@ -390,14 +391,14 @@ static int mount_netns(const char *netns_path)
         umount2(netns_path, MNT_DETACH);
         unlink(netns_path);
         errno = _errno;
-        return log_errno("reopen %s failed", netns_path);
+        return log_errno_rf("reopen %s failed", netns_path);
     }
 
     if (umount2(netns_path, MNT_DETACH) < 0) {
         int _errno = errno;
         unlink(netns_path);
         errno = _errno;
-        return log_errno("reopen %s failed", netns_path);
+        return log_errno_rf("reopen %s failed", netns_path);
     }
 
     // finally all done
@@ -411,10 +412,10 @@ static int create_veth(const char *container, char *veth, int veth_len)
     do {
         rc = snprintf(veth, veth_len, "vth%08x%d", id, salt);
         if (rc < 0)
-            return log_errno("snprintf: veth name failed");
+            return log_errno_rf("snprintf: veth name failed");
 
         if (rc == 0 || rc >= veth_len)
-            return log_error("snprintf: incorrct len %d", rc);
+            return log_error_rf("snprintf: incorrct len %d", rc);
 
         rc = run_cmd("ip link add %s type veth peer name %st 2>/dev/null", veth, veth);
         if (rc == 0) return 0;
@@ -443,7 +444,7 @@ static int set_identity(const char *name)
     int rc = sethostname(name, strlen(name));
 
     if (rc == -1)
-        return log_errno("sethostname %s failed", name);
+        return log_errno_rf("sethostname %s failed", name);
 
     return 0;
 }
@@ -459,30 +460,30 @@ static int set_rootfs(const char *rootfs)
 {
     // - make mount space private 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0)
-        return log_errno("private mount failed");
+        return log_errno_rf("private mount failed");
 
     // - create new mount point
     if (mount(rootfs, rootfs, NULL, MS_BIND | MS_REC, NULL) != 0)
-        return log_errno("bind mount roofs %s failed", rootfs);
+        return log_errno_rf("bind mount roofs %s failed", rootfs);
 
     // - change dir to new mount point
     if (chdir(rootfs) != 0)
-        return log_errno("chdir rootfs %s", rootfs);
+        return log_errno_rf("chdir rootfs %s", rootfs);
 
     // pivot_root to new mount point (stack old_root)
     if (syscall(SYS_pivot_root, ".", ".") == -1)
-        return log_errno("pivot_root failed");
+        return log_errno_rf("pivot_root failed");
 
     // - change root dir to new mount  task_struct (root ptr)
     if (chroot(".") != 0)
-        return log_errno("chroot failed");
+        return log_errno_rf("chroot failed");
 
     // - change curret dir to new root - task_struct (cwd ptr)
     if (chdir("/") != 0)
-        return log_errno("chdir to / failed");
+        return log_errno_rf("chdir to / failed");
 
     if (umount2("/", MNT_DETACH) != 0)
-        return log_errno("unmount2 / failed");
+        return log_errno_rf("unmount2 / failed");
 
     // all done
     return 0;
@@ -492,11 +493,11 @@ static int set_proc(void)
 {
     // new PID namespace - create new /proc
     if (create_dir("/proc", 0755, 1) != 0) {
-        return log_errno("mkdir /proc failed");
+        return log_errno_rf("mkdir /proc failed");
     }
 
     if (mount("proc", "/proc", "proc", 0, NULL) != 0) {
-        return log_errno("mount /proc faild");
+        return log_errno_rf("mount /proc faild");
     }
 
     return 0; 
@@ -569,19 +570,19 @@ static int child_wait_sync(struct myl_cnt *cnt)
 {
     // close the pipe ends we don't need
     if (close_fd(&cnt->go_write_fd) != 0) {
-        return log_errno("close go_write for %s failed", cnt->name);
+        return log_errno_rf("close go_write for %s failed", cnt->name);
     }
     if (close_fd(&cnt->ready_read_fd) != 0) {
-        return log_errno("close ready_read for %s failed", cnt->name);
+        return log_errno_rf("close ready_read for %s failed", cnt->name);
     }
 
     // read 1 byte from parent
     ssize_t nr = read_sync(cnt->go_read_fd);
     if (nr == -1) {
-        return log_errno("read-sync for %s failed", cnt->name);
+        return log_errno_rf("read-sync for %s failed", cnt->name);
     }
     if (nr != 1) {
-        return log_error("read-wait for %s got zero", cnt->name);
+        return log_error_rf("read-wait for %s got zero", cnt->name);
     }
 
     if (verbose) {
@@ -600,18 +601,18 @@ static int child_wake_sync(struct myl_cnt *cnt)
     ssize_t nw = write_sync(cnt->ready_write_fd);
 
     if (nw == -1) {
-        return log_errno("write-ready_fd for %s failed", cnt->name);
+        return log_errno_rf("write-ready_fd for %s failed", cnt->name);
     }
     if (nw != 1) {
-        return log_error("write-ready_fd for %s got zero", cnt->name);
+        return log_error_rf("write-ready_fd for %s got zero", cnt->name);
     }
 
     // close pipe ends we no longer need
     if (close_fd(&cnt->ready_write_fd) != 0) {
-        return log_errno("close ready_write_fd for %s failed", cnt->name);
+        return log_errno_rf("close ready_write_fd for %s failed", cnt->name);
     }
     if (close_fd(&cnt->go_read_fd) != 0) {
-        return log_errno("close go_read_fd for %s failed", cnt->name);
+        return log_errno_rf("close go_read_fd for %s failed", cnt->name);
     }
 
     return 0;;
@@ -640,14 +641,14 @@ int create_pipes(struct myl_cnt *cnt)
 
     // create go sync pipe
     if (pipe(fds) == -1)  {
-        return log_errno("create go-pipe for %s failed", cnt->name);
+        return log_errno_rf("create go-pipe for %s failed", cnt->name);
     }
 
     cnt->go_read_fd = fds[0];
     cnt->go_write_fd = fds[1];
 
     if (pipe(fds) == -1) {
-        return log_errno("create ready_pipe for %s failed", cnt->name);
+        return log_errno_rf("create ready_pipe for %s failed", cnt->name);
     }
 
     cnt->ready_read_fd = fds[0];
@@ -663,22 +664,22 @@ int copy_file(const char *src, const char *dst)
 
     int src_fd = open(src, O_RDONLY);
     if (src_fd < 0)
-        return log_errno("copy_file open src %s failed", src);
+        return log_errno_rf("copy_file open src %s failed", src);
 
     int dst_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0755);
     if (dst_fd < 0) {
         close(src_fd);
-        return log_errno("copy_file open dst %s failed", dst);
+        return log_errno_rf("copy_file open dst %s failed", dst);
     }
 
     struct stat stat_buf;
     if (fstat(src_fd, &stat_buf) == -1) {
-        log_errno("copy_file fstat src_fd %d failed", src_fd);
+        log_errno_rf("copy_file fstat src_fd %d failed", src_fd);
         goto close_all;
     }
 
     if (!S_ISREG(stat_buf.st_mode)) {
-        log_errno("copy_file src %s not a file", src);
+        log_errno_rf("copy_file src %s not a file", src);
         goto close_all;
     }   
 
@@ -688,11 +689,11 @@ int copy_file(const char *src, const char *dst)
         ssize_t sent = sendfile(dst_fd, src_fd, &offset, stat_buf.st_size - offset);
         if (sent < 0) {
             if (errno == EINTR) continue; // Interrupted, try again
-            log_errno("copy_file send %s failed", src);
+            log_errno_rf("copy_file send %s failed", src);
             goto close_all;
         }
         if (sent == 0) {
-            log_error("copy_file send %s eof", src);
+            log_error_rf("copy_file send %s eof", src);
             goto close_all;
         }
         // sendfile updates offset
@@ -714,7 +715,7 @@ int mount_cmd_file(const char *host_path, const char *rootfs_path)
     // create an empty file - touch rootfs_path
     int fd = open(rootfs_path, O_CREAT | O_WRONLY, 0755);
     if (fd != -1) {
-        return log_errno("mount_cmd touch %s failed", rootfs_path);
+        return log_errno_rf("mount_cmd touch %s failed", rootfs_path);
     }
     close(fd); 
 
@@ -723,17 +724,17 @@ int mount_cmd_file(const char *host_path, const char *rootfs_path)
         int _errno = errno;
         unlink(rootfs_path);
         errno = _errno; 
-        return log_errno("mount_cmd bind mount %s failed", rootfs_path);
+        return log_errno_rf("mount_cmd bind mount %s failed", rootfs_path);
     }
 
     // update bind-mount to read-only
     if (mount(NULL, rootfs_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL) < 0) {
         int _errno = errno;
-        log_errno("mount_cmd remount read-only %s failed", rootfs_path);
+        log_errno_rf("mount_cmd remount read-only %s failed", rootfs_path);
         umount2(rootfs_path, MNT_DETACH); 
         unlink(rootfs_path);
         errno = _errno; 
-        return log_errno("mount_cmd bind mount %s failed", rootfs_path);
+        return log_errno_rf("mount_cmd bind mount %s failed", rootfs_path);
     }
 
     // all done
@@ -782,13 +783,12 @@ int apply_seccomp(struct myl_cnt *cnt)
 
         // Whitelist - Allow only what is strictly necessary
         // generated by gen_seccomp 
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_accept4, 35, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_arch_prctl, 34, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_bind, 33, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_brk, 32, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_close, 31, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_connect, 30, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_dup, 29, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_accept4, 34, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_arch_prctl, 33, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_bind, 32, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_brk, 31, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_close, 30, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_connect, 29, 0),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_create1, 28, 0),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_ctl, 27, 0),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_wait, 26, 0),
@@ -804,10 +804,10 @@ int apply_seccomp(struct myl_cnt *cnt)
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_mprotect, 16, 0),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_newfstatat, 15, 0),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_openat, 14, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_prctl, 13, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_prlimit64, 12, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_read, 11, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_readlink, 10, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_prlimit64, 13, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_read, 12, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_readlink, 11, 0),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_recvfrom, 10, 0),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rseq, 9, 0),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rt_sigaction, 8, 0),
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rt_sigreturn, 7, 0),
@@ -840,11 +840,11 @@ static int drop_sudo(struct myl_cnt *cnt)
     */
 
     if (setgid(cnt->gid) != 0) {
-        return log_errno("setgid %d failed", cnt->gid);
+        return log_errno_rf("setgid %d failed", cnt->gid);
     }
 
     if (setuid(cnt->uid) != 0) {
-        return log_errno("setuid %d failed", cnt->uid);
+        return log_errno_rf("setuid %d failed", cnt->uid);
     }
 
     return 0;
@@ -859,7 +859,7 @@ static int setup_priv(struct myl_cnt *cnt)
 
     // drop all caps we can get
     if (cnt->drop_caps && drop_bounding_set() != 0) {
-        return log_errno("drop-boundin_set failed for container %s", cnt->name);
+        return log_errno_rf("drop-boundin_set failed for container %s", cnt->name);
     }
 
     if (cnt->drop_sudo && drop_sudo(cnt) != 0) {
@@ -868,15 +868,15 @@ static int setup_priv(struct myl_cnt *cnt)
 
     // drops all caps we have
     if (cnt->drop_caps && clear_all_caps() != 0)  {
-        return log_errno("clear_all_caps failed for container %s", cnt->name);
+        return log_errno_rf("clear_all_caps failed for container %s", cnt->name);
     }
 
     if (cnt->drop_privs && prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1) {
-        return log_errno("prctl set-nonnew_privs failed for container %s", cnt->name);
+        return log_errno_rf("prctl set-nonnew_privs failed for container %s", cnt->name);
     }
 
     if (cnt->use_seccomp && apply_seccomp(cnt) != 0) {
-        return log_errno("apply-seccomp failed for container %s", cnt->name);
+        return log_errno_rf("apply-seccomp failed for container %s", cnt->name);
     }
 
     return 0; 
@@ -930,7 +930,7 @@ int myl_lau_run(struct myl_lau *lau, struct myl_cnt *cnt)
         MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0
     );
     if (stack == MAP_FAILED) {
-        return log_errno("mmap stack %zu failed", cnt->stack_size);
+        return log_errno_rf("mmap stack %zu failed", cnt->stack_size);
     }
     cnt->stack = stack; // XXX MAP_FAILED may not be 0
 
@@ -939,10 +939,10 @@ int myl_lau_run(struct myl_lau *lau, struct myl_cnt *cnt)
     if (cnt->netns_mounted) {
         //  switch to child netns
         if (setns(cnt->netns_fd, CLONE_NEWNET) != 0) {
-            return log_errno("netns-set(%d,'%s') for %s failed", cnt->netns_fd, cnt->netns_path, cnt->name);
+            return log_errno_rf("netns-set(%d,'%s') for %s failed", cnt->netns_fd, cnt->netns_path, cnt->name);
         }
         if (close_fd(&cnt->netns_fd) != 0) {
-            return log_errno("close netns_fd for %s failed", cnt->name);
+            return log_errno_rf("close netns_fd for %s failed", cnt->name);
         }
     }
     else if (cnt->need_network) {
@@ -957,7 +957,7 @@ int myl_lau_run(struct myl_lau *lau, struct myl_cnt *cnt)
         // XXX retore the parnent netns
         setns(lau->host_netns_fd, CLONE_NEWNET);
         errno = _errno;
-        return log_errno("clone-child('%s','%s') failed", cnt->name, cnt->exec_path);
+        return log_errno_rf("clone-child('%s','%s') failed", cnt->name, cnt->exec_path);
     }
 
     cnt->run = 1;
@@ -965,7 +965,7 @@ int myl_lau_run(struct myl_lau *lau, struct myl_cnt *cnt)
 
     // XXX retore the parents netns
     if (setns(lau->host_netns_fd, CLONE_NEWNET) != 0) {
-        return log_errno("set-netns %s failed", HOST_NETNS_PATH);
+        return log_errno_rf("set-netns %s failed", HOST_NETNS_PATH);
     }
 
     // close our ends - child has a copy
@@ -1098,19 +1098,19 @@ int create_netns(struct myl_lau *lau, struct myl_cnt *cnt)
     char *suffix = lau->netns_suffix ?: "";
     int rc = snprintf(cnt->netns_name, sizeof(cnt->netns_name), "%s%s", cnt->name, suffix);
     if (rc < 0 || rc == 0 || rc >= sizeof(cnt->netns_name)) {
-        return log_error("genname %s failed", cnt->name);
+        return log_error_rf("genname %s failed", cnt->name);
     }
 
     // generate path e,g "/var/run/netns/name-ns"
     cnt->netns_path = gen_path(lau->netns_dir, cnt->netns_name);
     if (!cnt->netns_path) {
-        return log_errno("genpath %s failed", cnt->netns_name);
+        return log_errno_rf("genpath %s failed", cnt->netns_name);
     }
 
     // bind mount path
     cnt->netns_fd = mount_netns(cnt->netns_path);
     if (cnt->netns_fd == -1) {
-        return log_error("mount_netns %s failed", cnt->netns_name);
+        return log_error_rf("mount_netns %s failed", cnt->netns_name);
     }
     cnt->netns_mounted = 1;
 
@@ -1125,7 +1125,7 @@ static char *gen_id(char *buf, int len, const char *name)
 
     int rc = snprintf(buf, len, "%08x", id);
     if (rc < 0 || rc == 0 || rc >= len)  {
-        return log_errnon("gen_id failed for %s", name);
+        return log_error_rn("gen_id failed for %s", name);
     }
 
     return buf;
@@ -1135,8 +1135,7 @@ char *create_subdir(const char *dir, const char *subdir, mode_t mode)
 {
     char *path = gen_path(dir, subdir);
     if (!path) {
-        log_errno("create_subdir genpath %s failed", subdir);
-        return NULL;
+        return log_errno_rn("create_subdir genpath %s failed", subdir);
     }
 
     int rc = create_path(path, mode);
@@ -1173,7 +1172,7 @@ int create_root(struct myl_lau *lau, struct myl_cnt *cnt)
 
     cnt->root_path = gen_path(lau->store_dir, name);
     if (!cnt->root_path) {
-        return log_errno("create_root genpath %s failed", name);
+        return log_errno_rf("create_root genpath %s failed", name);
     }
 
     RUN(create_dir(cnt->root_path, lau->dir_mode, 1));
@@ -1194,15 +1193,16 @@ int mount_overlay(struct myl_lau *lau, struct myl_cnt *cnt)
     );
 
     if (rc == -1) {
-        log_errno("mount overlayfs genopts failed");
-        return -1;
+        return log_errno_rf("mount overlayfs genopts failed");
     }
 
     rc = mount("overlay", cnt->rootfs_path, "overlay", 0, opts);
     if (rc == -1) {
         log_errno("mount overlayfs %s failed", cnt->rootfs_path);
     }
-    cnt->overlay_mounted = 1;
+    else {
+        cnt->overlay_mounted = 1;
+    }
 
     free(opts);
 
@@ -1285,7 +1285,7 @@ static int set_cable_name(struct myl_lau *lau, struct myl_cnt *cnt)
 
     int rc = snprintf(cnt->veth_name, sizeof(cnt->veth_name), "%s%s", prefix, cnt->name);
     if (rc < 0 || rc == 0 || rc >= sizeof(cnt->veth_name))
-        return log_error("set_cable_name: snprintf %d failed", rc);
+        return log_error_rf("set_cable_name: snprintf %d failed", rc);
 
     return 0;
 }
@@ -1322,16 +1322,16 @@ int check_reaped(struct myl_lau *lau, struct myl_cnt *cnt)
             log_info("Container '%s' exit ok (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
             return EXIT_OK;
         }
-        return log_error("Container '%s' died (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
+        return log_error_rf("Container '%s' died (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
     }
     else if (WIFSIGNALED(cnt->status)) {
         int sig = WTERMSIG(cnt->status);
         snprintf(why, sizeof(why), "signal %d (%s)", sig, strsignal(sig));
-        return log_error("Container '%s' died (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
+        return log_error_rf("Container '%s' died (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
     }
     else {
         snprintf(why, sizeof(why), "status 0x%08x", cnt->status);
-        return log_error("Container '%s' died (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
+        return log_error_rf("Container '%s' died (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
     }
 
 }
@@ -1340,7 +1340,7 @@ int check_wait(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     pid_t res = waitpid(cnt->child_pid, &cnt->status, WNOHANG);
     if (res == -1) {
-        return log_errno("waipid for %s failed", cnt->name);
+        return log_errno_rf("waipid for %s failed", cnt->name);
     }
     if (res == cnt->child_pid && check_reaped(lau, cnt) != 0) {
         return -1;
@@ -1366,12 +1366,12 @@ int myl_wake_sync(struct myl_lau *lau, struct myl_cnt *cnt)
         int _errno = errno;
         close_fd(&cnt->go_write_fd);
         errno = _errno;
-        return log_errno("write wake-sync for %s failed", cnt->name);
+        return log_errno_rf("write wake-sync for %s failed", cnt->name);
     }
 
     // relese pipe
     if (close_fd(&cnt->go_write_fd) != 0) {
-        return log_errno("close wait-sync for %s failed", cnt->name);
+        return log_errno_rf("close wait-sync for %s failed", cnt->name);
     }
 
     return 0;
@@ -1390,12 +1390,12 @@ int myl_wait_sync(struct myl_lau *lau, struct myl_cnt *cnt)
         int _errno = errno;
         close_fd(&cnt->ready_read_fd);
         errno = _errno;
-        return log_errno("read wait-sync for %s failed", cnt->name);
+        return log_errno_rf("read wait-sync for %s failed", cnt->name);
     }
 
     // relese pipe
     if (close_fd(&cnt->ready_read_fd) != 0) {
-        return log_errno("close wait-sync %s failed", cnt->name);
+        return log_errno_rf("close wait-sync %s failed", cnt->name);
     }
 
     if (verbose) {
@@ -1439,7 +1439,7 @@ int open_host_netns(struct myl_lau *lau)
     // XXX fd must be for this process only (O_CLOEXEC)
     lau->host_netns_fd = open(HOST_NETNS_PATH, O_RDONLY | O_CLOEXEC);
     if (lau->host_netns_fd == -1) {
-        return log_errno("open host_netns failed");
+        return log_errno_rf("open host_netns failed");
     }
 
     return 0;
@@ -1515,10 +1515,6 @@ int lau_setup(struct myl_lau *lau)
     return 0;
 }
 
-
-
-
-
 static struct myl_cnt *lau_find_child(struct myl_lau *lau, pid_t pid)
 {
     for (int i = 0; i < lau->num_config; i++) {
@@ -1534,7 +1530,7 @@ char *validate_dir(const char *key, struct str_slice dir)
 {
     char *path = realpath(dir.ptr, NULL);
     if (!path) {
-        return log_errnon("%s realpath %s failed", key, dir.ptr);
+        return log_errno_rn("%s realpath %s failed", key, dir.ptr);
     }
 
     // Check if the path exists
@@ -1578,13 +1574,12 @@ static struct myl_cnt *lau_add(
 {
     struct myl_cnt *cnt;
 
-    if (!name) return log_errorn("Missing container name");
-    if (!cmd_path) return log_errorn("Missing cmd_name");
-    if (!exec_path) return log_errorn("Missing exec_path");
+    if (!name) return log_error_rn("Missing container name");
+    if (!cmd_path) return log_error_rn("Missing cmd_name");
+    if (!exec_path) return log_error_rn("Missing exec_path");
 
     if (lau->num_config >= lau->max_config) { 
-        log_error("Too many containers - num %d >= max %d", lau->num_config, lau->max_config);
-        return NULL;
+        return log_error_rn("Too many containers - num %d >= max %d", lau->num_config, lau->max_config);
     }
 
     cnt = &lau->configs[lau->num_config++];
@@ -1643,7 +1638,7 @@ int lau_wait(struct myl_lau *lau)
                 lau->num_run = 0;
                 break;
             }
-            return log_errno("waitpid failed");;
+            return log_errno_rf("waitpid failed");;
         }
         struct myl_cnt *cnt = lau_find_child(lau, pid);
         if (!cnt) {
@@ -1684,17 +1679,17 @@ int lau_setup_signals(struct myl_lau *lau)
     sa.sa_sigaction = lau_handle_signal;
     sa.sa_flags = SA_SIGINFO;
     if (sigaction(SIGINT, &sa, NULL) == -1) {
-        return log_errno("setup sigint");
+        return log_errno_rf("setup sigint");
     }
     if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        return log_errno("setup sigterm");
+        return log_errno_rf("setup sigterm");
     }
 
     // XXX prevent write(fd) trigger a SIGPIPE signal
     sa.sa_handler = SIG_IGN;
     sa.sa_flags = 0;
     if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-        return log_errno("setup SIGPIPE");
+        return log_errno_rf("setup SIGPIPE");
     }
 
     // all done
@@ -1810,12 +1805,12 @@ int lau_init(struct myl_lau *lau)
     // setup default dirs
     lau->cur_dir = getcwd(NULL, 0);
     if (!lau->cur_dir)  {
-        return log_errno("get_cwd failed");
+        return log_errno_rf("get_cwd failed");
     }
 
     lau->base_dir = gen_path(lau->cur_dir, "mylauncher");
     if (!lau->base_dir) {
-        return log_errno("gen_path mylaucher");
+        return log_errno_rf("gen_path mylaucher");
     }
 
     lau->netns_dir = gen_path(lau->base_dir, "netns_dir");

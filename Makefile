@@ -42,7 +42,7 @@ BIN_DIR = bin
 SCRIPTS_DIR = scripts
 
 .PHONY: all
-all: $(BUILD_DIR) cmds rootfs
+all: $(BUILD_DIR) cmds
 
 # object files
 $(BUILD_DIR):
@@ -64,7 +64,7 @@ $(CMDS_DONE): $(CMDS) | $(BUILD_DIR)
 cmds: $(CMDS_DONE)
 
 # server
-SERVER_SRCS = src/util.c src/sock.c src/db.c src/server.c
+SERVER_SRCS = src/util.c src/log.c src/sock.c src/db.c src/server.c
 SERVER_OBJS = $(SERVER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 SERVER_DEPS = $(SERVER_OBJS:.o=.d)
 -include $(SERVER_DEPS)
@@ -72,7 +72,7 @@ server: $(SERVER_OBJS)
 	$(cmd_LD) $(LDFLAGS) $(SERVER_OBJS) -o $@
 
 # client
-CLIENT_SRCS = src/util.c src/client.c
+CLIENT_SRCS = src/util.c src/log.c src/client.c
 CLIENT_OBJS = $(CLIENT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 CLIENT_DEPS = $(CLIENT_OBJS:.o=.d)
 -include $(CLIENT_DEPS)
@@ -81,7 +81,7 @@ client: $(CLIENT_OBJS)
 
 # launcher
 LAUNCHER_LIBS = $(SECURITY_LIBS)
-LAUNCHER_SRCS = src/util.c src/launcher.c
+LAUNCHER_SRCS = src/util.c src/log.c src/launcher.c
 LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 LAUNCHER_DEPS = $(LAUNCHER_OBJS:.o=.d)
 -include $(LAUNCHER_DEPS)
@@ -168,14 +168,14 @@ test-client: client
 		
 
 # generate new security rules
-.PHONY: gen_seccomp
+.PHONY: gen-seccomp
 CMD_FILE   = tests/test_req.txt
 GEN_SECCOMP = $(SCRIPTS_DIR)/gen_seccomp.awk
 STRACE_SRV = $(BUILD_DIR)/strace_srv.txt
 STRACE_CLI = $(BUILD_DIR)/strace_cli.txt
 STRACE_RAW = $(BUILD_DIR)/strace_raw.txt
 SECCOMP_H  = $(BUILD_DIR)/seccomp_rules.h
-gen_seccomp: client server
+gen-seccomp: client server
 	@echo "Generating seccomp rules..."
 	@strace -c -f -o $(STRACE_SRV) ./server localhost:$(TEST_PORT) & STRACE_PID=$$!; \
 	SERV_PID=$$(pgrep -P $$STRACE_PID); \

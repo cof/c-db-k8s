@@ -18,6 +18,7 @@
 
 #include "config.h"
 #include "util.h"
+#include "log.h"
 #include "sock.h"
 
 #define MAX_EVENTS 10
@@ -106,7 +107,7 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
         line->len = len;
 
         if (len > MAX_LINE) {
-            return log_error("line too big - len %d > max %d", len, MAX_LINE);
+            return log_error_rf("line too big - len %d > max %d", len, MAX_LINE);
         }
 
         // line length + CRLF
@@ -115,7 +116,7 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
 
     // incomplete line
     if (buf->len > MAX_LINE) {
-        return log_error("line too big - len %zu > max %d", buf->len, MAX_LINE);
+        return log_error_rf("line too big - len %zu > max %d", buf->len, MAX_LINE);
     }
 
     if (buf->rptr > buf->data) {

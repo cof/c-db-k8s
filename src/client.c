@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "util.h"
+#include "log.h"
 
 // big enough for "[" host "]" :" port + null
 #define MAX_HOSTPORT (4 + NI_MAXHOST + NI_MAXSERV)

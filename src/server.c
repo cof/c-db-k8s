@@ -37,6 +37,8 @@
 
 #include "config.h"
 #include "util.h"
+#include "list.h"
+#include "log.h"
 #include "sock.h"
 #include "db.h"
 
@@ -71,7 +73,7 @@ static int send_str(struct simple_client *client, struct str_slice str)
 {
     char *dst = make_space(&client->write_buf, str.len + 2);
     if (!dst) {
-        return log_error("make space for %zu bytes failed", str.len + 2);
+        return log_error_rf("make space for %zu bytes failed", str.len + 2);
     }
 
     memcpy(dst, str.ptr, str.len);
@@ -339,7 +341,7 @@ static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uin
 
     if (rc == -1) {
         sock->sys_err = -1;
-        return log_errno("epoll_ctl failed (fd=%d, op=%d,events=%u", sock->fd, op, events);
+        return log_errno_rf("epoll_ctl failed (fd=%d, op=%d,events=%u", sock->fd, op, events);
     }
 
     // registered
@@ -465,17 +467,17 @@ int setup_signals(struct simple_server *server)
     sa.sa_sigaction = handle_signal;
     sa.sa_flags = SA_SIGINFO;
     if (sigaction(SIGINT, &sa, NULL) == -1) {
-        return log_errno("setup sigint");
+        return log_errno_rf("setup sigint");
     }
     if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        return log_errno("setup sigterm");
+        return log_errno_rf("setup sigterm");
     }
 
     // XXX prevent write(fd) trigger a signal
     sa.sa_handler = SIG_IGN;
     sa.sa_flags = 0;
     if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-        return log_errno("setup SIGPIPE");
+        return log_errno_rf("setup SIGPIPE");
     }
 
     return 0;
@@ -489,7 +491,7 @@ int server_poll(struct simple_server *server)
 
     if (nfd < 0) {
         if (errno == EINTR) return 0;
-        return log_errno("server PID:%d epoll_wait failed", server->pid);
+        return log_errno_rf("server PID:%d epoll_wait failed", server->pid);
     }
 
     for (int i = 0; i < nfd; i++) {
@@ -527,7 +529,7 @@ int setup_listener(struct simple_server *server)
 
     server->epoll_fd = epoll_create1(0);
     if (server->epoll_fd == -1) {
-        return log_errno("epoll_create1 failed");
+        return log_errno_rf("epoll_create1 failed");
     }
 
     // register for incoming connections
@@ -559,10 +561,10 @@ int server_parse_argv(struct simple_server *server, int argc, char *argv[])
         }
         // store
         if (host.len && (server->host = slice_strdup(host)) == NULL) {
-            return log_errno("strdup-hostname");
+            return log_errno_rf("strdup-hostname");
         }
         if (port.len && (server->port = slice_strdup(port)) == NULL) { 
-            return log_errno("strdup-portno");
+            return log_errno_rf("strdup-portno");
         }
     }
 
@@ -571,7 +573,7 @@ int server_parse_argv(struct simple_server *server, int argc, char *argv[])
         struct str_slice file_name = slice_make_cstr(argv[2]);
         slice_trim(&file_name);
         if (file_name.len && (server->db_filename = slice_strdup(file_name)) == NULL) {
-            return log_errno("strdup db-filename");
+            return log_errno_rf("strdup db-filename");
         }
     }
 
@@ -624,7 +626,7 @@ static int server_init(struct simple_server *state)
 
     state->port = strdup(TCP_PORT_STR);
     if (!state->port) {
-        return log_errno("strdup %s", TCP_PORT_STR);
+        return log_errno_rf("strdup %s", TCP_PORT_STR);
     }
 
     return 0;
@@ -636,7 +638,7 @@ struct simple_server *server_create(void)
 
     server = malloc(sizeof(*server));
     if (!server) {
-        return log_errnon("Malloc failed for server state");
+        return log_errno_rn("Malloc failed for server state");
     }
 
     return server;

@@ -1,8 +1,9 @@
 #include <stdlib.h>
 #include <string.h>
-#include "util.h"
-#include "db.h"
 
+#include "util.h"
+#include "log.h"
+#include "db.h"
 
 // assume 10000 entries,load factor 2/3
 // table size 10000 * 3/2 = 15000
@@ -17,10 +18,8 @@ struct db_rec {
     char data[];
 };
 
-
-
+// our database
 static struct db_rec *hash_table[HASHSIZE];
-
 
 static int hash(const void *key, int klen)
 {

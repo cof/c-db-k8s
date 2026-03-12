@@ -7,61 +7,6 @@
 #include <stdarg.h>
 #include "util.h"
 
-void log_info(const char *fmt, ...)
-{
-    va_list args;  
-
-    fprintf(stdout, "[+] ");
-
-    va_start(args, fmt);
-    vfprintf(stdout, fmt, args);
-    va_end(args);
-
-    fprintf(stdout, "\n");
-    fflush(stdout);
-}
-
-
-int _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
-{
-    va_list args;  
-
-    fprintf(stderr, "[ERROR] %s:%d (%s): ", file, line, func);
-
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-
-    if (ec != 0) {
-        fprintf(stderr, ": %s (errno: %d)", strerror(ec), ec);
-    }
-
-    fprintf(stderr, "\n");
-
-    // XXX always -1
-    return -1;
-}
-
-void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
-{
-    va_list args;  
-
-    fprintf(stderr, "[FATAL] %s:%d (%s): ", file, line, func);
-
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-
-    if (ec != 0) {
-        fprintf(stderr, ": %s (errno: %d)", strerror(ec), ec);
-    }
-
-    fprintf(stderr, "\n");
-    fflush(stderr);
-
-    exit(1);
-}
-
 char *gen_path(const char *dir, const char *name)
 {
     if (!dir || !name) return NULL;
