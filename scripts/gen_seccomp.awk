@@ -3,7 +3,6 @@
 BEGIN {
     # Force these into 'seen' so the loop below won't add them again
     seen["execve"] = 1
-    seen["prctl"] = 1
     seen["exit_group"] = 1
     seen["rt_sigreturn"] = 1
     seen["brk"] = 1
