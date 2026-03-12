@@ -71,6 +71,98 @@
 
 #define EXIT_OK 1
 
+// container config
+struct myl_cnt {
+    // user config
+    char *name;      // container name
+    char *cmd_path;  //  location of cmd
+    char *exec_path;  // process to lanuch
+    char **exec_argv; // command line args
+    int exec_argc;
+    char *ip_addr;    // ip addr to add to veth
+    // paths
+    char *root_path;     // location of container dir
+    char *rootfs_path;   // For the bind mount and pivot_root()
+    char *netns_path;    // bind mounted network namespae
+    char *dst_path;      // bind mounted cmd path
+    // networks
+    char netns_name[IFNAMSIZ]; // network namespace name
+    char veth_name[IFNAMSIZ];  // container eth0 link
+    // used by overlay FS
+    char *lower_path;   
+    char *upper_path;   
+    char *work_path;   
+    int netns_fd;
+    // parent sync child
+    int go_read_fd;    // child reads
+    int go_write_fd;   // parent writes
+    // child sync with parent
+    int ready_read_fd; // parent reads
+    int ready_write_fd; // child writes
+    // stack - created by mmap
+    void *stack; 
+    size_t stack_size;
+    pid_t child_pid;  
+    int status; // waitpid
+    // security 
+    uid_t uid;
+    uid_t gid;
+    // flags - bit fields
+    unsigned int use_subdir      : 1; // use a rootfs subdir instead of name
+    unsigned int need_network    : 1; // configure network
+    unsigned int run             : 1; // clone child is active
+    unsigned int netns_mounted   : 1; // netns active
+    unsigned int overlay_mounted : 1; // overlay FS active
+    unsigned int cmd_mounted     : 1; // cmd file was mounted
+    unsigned int drop_sudo       : 1; // setuid|setgid
+    unsigned int drop_caps       : 1; // drop capabilities 
+    unsigned int drop_privs   : 1; // prctl PR_SET_NO_NEW_PRIVS
+    unsigned int use_seccomp  : 1; // seccomp filter
+    // waitpid flags
+    unsigned int exit : 1;
+    unsigned int signalled : 1;
+};
+
+// launcher state
+struct myl_lau {
+    char *cur_dir; // cwd where laucher start
+    char *base_dir; // root dir for all launcher state
+    char *src_dir; // where host cmd files live
+    char *run_dir; // where host cmd files live
+    char *netns_dir;  // netns mounts /var/run/netns
+    char *runtime_dir; 
+    char *store_dir;
+    char *rootfs_dir; // where a rootfs lives
+    char *netns_suffix;
+    char *cable_prefix;
+    int start_delay;
+    // container config
+    struct myl_cnt configs[MAX_CONFIG];
+    unsigned int max_config;
+    unsigned int num_config;
+    // 
+    unsigned int num_run;
+    int host_netns_fd;
+    mode_t dir_mode;
+    // security
+    char *sudo_user;
+    int sudo_uid;
+    int sudo_gid;
+    int euid;
+    // flags - bit fields
+    unsigned int start_order  : 1; // start container in order
+    unsigned int sudo_active  : 1; // launcher is run with sudo
+    unsigned int drop_sudo    : 1; // drop sudo on containers
+    unsigned int drop_caps    : 1; // drop capabilities
+    unsigned int drop_privs   : 1; // prctl PR_SET_NO_NEW_PRIVS
+    unsigned int use_seccomp  : 1; // use seccomp filters
+    unsigned int use_name_id  : 1;
+    unsigned int use_subdirs  : 1; // rootfs
+    unsigned int use_overlay  : 1; // lower,upper,work,merged
+    unsigned int mount_cmds   : 1; // mount cmd files instead of copying 
+    unsigned int child_add_ip : 1; // child sets up network
+};
+
 static int verbose;
 
 static int inline child_reaped(int status)
@@ -472,95 +564,6 @@ static void shutdown_pid(int pid, int wait)
     }
 }
 
-struct myl_cnt {
-    // user config
-    char *name;      // container name
-    char *cmd_path;  //  location of cmd
-    char *exec_path;  // process to lanuch
-    char **exec_argv; // command line args
-    int exec_argc;
-    char *ip_addr;    // ip addr to add to veth
-    // paths
-    char *root_path;     // location of container dir
-    char *rootfs_path;   // For the bind mount and pivot_root()
-    char *netns_path;    // bind mounted network namespae
-    char *dst_path;      // bind mounted cmd path
-    // networks
-    char netns_name[IFNAMSIZ]; // network namespace name
-    char veth_name[IFNAMSIZ];  // container eth0 link
-    // used by overlay FS
-    char *lower_path;   
-    char *upper_path;   
-    char *work_path;   
-    int netns_fd;
-    // parent sync child
-    int go_read_fd;    // child reads
-    int go_write_fd;   // parent writes
-    // child sync with parent
-    int ready_read_fd; // parent reads
-    int ready_write_fd; // child writes
-    // stack - created by mmap
-    void *stack; 
-    size_t stack_size;
-    pid_t child_pid;  
-    int status; // waitpid
-    // security 
-    uid_t uid;
-    uid_t gid;
-    // flags - bit fields
-    unsigned int use_subdir      : 1; // use a rootfs subdir instead of name
-    unsigned int need_network    : 1; // configure network
-    unsigned int run             : 1; // clone child is active
-    unsigned int netns_mounted   : 1; // netns active
-    unsigned int overlay_mounted : 1; // overlay FS active
-    unsigned int cmd_mounted     : 1; // cmd file was mounted
-    unsigned int drop_sudo       : 1; // setuid|setgid
-    unsigned int drop_caps       : 1; // drop capabilities 
-    unsigned int drop_privs   : 1; // prctl PR_SET_NO_NEW_PRIVS
-    unsigned int use_seccomp  : 1; // seccomp filter
-    // waitpid flags
-    unsigned int exit : 1;
-    unsigned int signalled : 1;
-};
-
-struct myl_lau {
-    char *cur_dir; // cwd where laucher start
-    char *base_dir; // root dir for all launcher state
-    char *src_dir; // where host cmd files live
-    char *run_dir; // where host cmd files live
-    char *netns_dir;  // netns mounts /var/run/netns
-    char *runtime_dir; 
-    char *store_dir;
-    char *rootfs_dir; // where a rootfs lives
-    char *netns_suffix;
-    char *cable_prefix;
-    int start_delay;
-    // container config
-    struct myl_cnt configs[MAX_CONFIG];
-    unsigned int max_config;
-    unsigned int num_config;
-    // 
-    unsigned int num_run;
-    int host_netns_fd;
-    mode_t dir_mode;
-    // security
-    char *sudo_user;
-    int sudo_uid;
-    int sudo_gid;
-    int euid;
-    // flags - bit fields
-    unsigned int start_order  : 1; // start container in order
-    unsigned int sudo_active  : 1; // launcher is run with sudo
-    unsigned int drop_sudo    : 1; // drop sudo on containers
-    unsigned int drop_caps    : 1; // drop capabilities
-    unsigned int drop_privs   : 1; // prctl PR_SET_NO_NEW_PRIVS
-    unsigned int use_seccomp  : 1; // use seccomp filters
-    unsigned int use_name_id  : 1;
-    unsigned int use_subdirs  : 1; // rootfs
-    unsigned int use_overlay  : 1; // lower,upper,work,merged
-    unsigned int mount_cmds   : 1; // mount cmd files instead of copying 
-    unsigned int child_add_ip : 1; // child sets up network
-};
 
 static int child_wait_sync(struct myl_cnt *cnt)
 {
@@ -1564,31 +1567,6 @@ done:
     return path;
 }
 
-void print_usage(struct myl_lau *lau, const char *cmd)
-{
-    const char *base = strrchr(cmd, '/');
-    const char *prog_name = (base) ? base + 1 : cmd;
-    int w= 15;
-
-    printf("Usage: %s [OPTIONS]\n\n", prog_name);
-    printf("Options:\n");
-
-    printf("  %-*s %s\n", w, "-help", "this help option");
-    printf("  %-*s %s\n", w, "-v",    "debug verbose mode");
-    printf("  %-*s %s\n", w, "rootfs=", "root file system");
-    printf("  %-*s %s\n", w, "srcdir=", "cmd file dir");
-    printf("  %-*s %s\n", w, "netnsdir=", "network namespace dir (default cwd)");
-    printf("  %-*s %s default=%d\n", w, "startorder=","start containes order", START_ORDER);
-    printf("  %-*s %s default=%d\n", w, "startdelay=","start delay order", START_DELAY);
-
-    printf("  %-*s %s default=%d\n", w, "dropsudo=","drop sudo privilge", DROP_SUDO);
-    printf("  %-*s %s default=%d\n", w, "dropcaps=","drop capabilities ", DROP_CAPS);
-    printf("  %-*s %s default=%d\n", w, "dropprivs=","drop capabilities ", DROP_PRIVS);
-    printf("  %-*s %s default=%d\n", w, "useseccomp=", "use seccomp filters", USE_SECCOMP);
-
-    printf("\nExample:\n");
-    printf("  %s startorder=1 startdelay=5\n", prog_name);
-}
 
 static struct myl_cnt *lau_add(
     struct myl_lau *lau,
@@ -1721,6 +1699,32 @@ int lau_setup_signals(struct myl_lau *lau)
 
     // all done
     return 0;
+}
+
+void print_usage(struct myl_lau *lau, const char *cmd)
+{
+    const char *base = strrchr(cmd, '/');
+    const char *prog_name = (base) ? base + 1 : cmd;
+    int w= 15;
+
+    printf("Usage: %s [OPTIONS]\n\n", prog_name);
+    printf("Options:\n");
+
+    printf("  %-*s %s\n", w, "-help", "this help option");
+    printf("  %-*s %s\n", w, "-v",    "debug verbose mode");
+    printf("  %-*s %s\n", w, "rootfs=", "root file system");
+    printf("  %-*s %s\n", w, "srcdir=", "cmd file dir");
+    printf("  %-*s %s\n", w, "netnsdir=", "network namespace dir (default cwd)");
+    printf("  %-*s %s default=%d\n", w, "startorder=","start containes order", START_ORDER);
+    printf("  %-*s %s default=%d\n", w, "startdelay=","start delay order", START_DELAY);
+
+    printf("  %-*s %s default=%d\n", w, "dropsudo=","drop sudo privilge", DROP_SUDO);
+    printf("  %-*s %s default=%d\n", w, "dropcaps=","drop capabilities ", DROP_CAPS);
+    printf("  %-*s %s default=%d\n", w, "dropprivs=","set  NO_NEW_PRIVS  ", DROP_PRIVS);
+    printf("  %-*s %s default=%d\n", w, "useseccomp=", "use seccomp filters", USE_SECCOMP);
+
+    printf("\nExample:\n");
+    printf("  %s startorder=1 startdelay=5\n", prog_name);
 }
 
 int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
