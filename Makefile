@@ -340,4 +340,5 @@ install-vm: $(RUN_IMAGE)
 wipe-vm:
 	 virsh destroy $(VM_NAME)  || true
 	 virsh undefine $(VM_NAME) || true
+	 rm -fr vmdir
 
