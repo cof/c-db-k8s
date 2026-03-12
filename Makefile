@@ -26,6 +26,7 @@ INSTALL = install
 TAR = tar
 CC = gcc
 LD = gcc
+CTAGS = ctags
 
 # compiler flags
 CFLAGS += -D_GNU_SOURCE -Wall -Werror -O2 -Isrc -MMD -MP
@@ -240,6 +241,11 @@ install : all
 	$(INSTALL) -D -m 755 client $(BIN_DIR)/client/client
 	$(INSTALL) -D -m 755 launcher $(BIN_DIR)
 
+SOURCES = $(wildcard src/*.c src/*.h)
+.PHONY: tags
+tags: $(SOURCES)
+	@echo "Creating tags file"
+	$(Q)$(CTAGS) $(SOURCES)
 
 .PHONY: clean
 clean:
