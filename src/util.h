@@ -165,6 +165,9 @@ static inline struct str_slice *slice_tolower(struct str_slice *str)
     return str;
 }
 
+char *slice_strdup(const struct str_slice str);
+char *itoa(char *buf, int len, int val);
+char *int_tostr(int val);
 
 char *gen_path(const char *dir, const char *name);
 
