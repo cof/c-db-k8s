@@ -8,7 +8,7 @@ A simple client, server, laucjer
 ## Prerequisites
 
 - **GCC**: Version 9.0 or higher.
-- **make**: Version 9.0 or higher.
+- **make**: Version 4.0 or higher.
 - **Bash**: Version 4.0+ for the test runner.
 
 ## Building the Project
@@ -17,8 +17,9 @@ A simple client, server, laucjer
 - **make install** Copy all binaries to bin folder
 - **make install-vm** Download and create a test-launcher VM
 - **make list-vm**  Show test-launcher VM status
-- **make list-cache** Show vm iso downloads
-- **make wipe-vm** shutdown and undefine the VM
+- **make list-cache** Show VM iso downloads
+- **make show-config** Show VM config
+- **make wipe-vm** shutdown VM, undefine VM and remove the VM file
 - **make gen-seccomp** generate a new seccomp rules flle
 - **make rootfs** generate a roofs for the containers
 - **make test** : Compiles all binaries and runs server,client tests
@@ -56,12 +57,12 @@ Clients simply connect to server and send commands to modify key/value store.
 - Uses socket/bind/listen/accept for network I/O
 - Uses non blocking sockets
 - Use dual stack sockets that support both IPv4 and IPv6
-- Uses epoll (level trigged) to monitor all socket events
+- Uses epoll (level triggered) to monitor all socket events
 - Uses a socket wrapper api to read/write/track/log/errors
 - Uses util string api to process strings
-- Uses a readline wrapper around client sockets
+- Uses a custom read-line wrapper around client sockets
 - listens by default using wildcard [::]:6379
-- cmdline can override this
+- cmd-line can override this
 
 **Example usage**
 
@@ -70,7 +71,7 @@ Clients simply connect to server and send commands to modify key/value store.
 
 ## 2. Client
 A simple telnet client that connect to a server address.  
-Client will connet to server and read/write line to server.
+Client will connect to server and read/write lines to server.
 
 **Supported featues**
 
@@ -106,21 +107,23 @@ Client will connet to server and read/write line to server.
 A linux runtime container launcher for running server and client in isolated namespaces:
 
 
-**Supported featues**
+**Supported features**
 
-- Usea a simple C api for container configuration
 - Create an manages its own network namespaces
+- Supports privilege dropping (sudo,caps,privs,seccomp)
+- Use a simple API for container configuration
 
 **Design**
 
 - Creates its own runtime dirs for network and filesystem namepaces
 - By default it create runtime dir in the current dir
-- Support cmd line args to allow runtime defaults
+- Support cmd line args to overide runtime defaults
 - Uses signal to catch SIGTERM and SIGINT
-- Uses a container api to configure add an list of container to run.
-- Create and manages its own netwok namespace files
-- Supports running container in order or parallel
-- Uses setns and  clone to run containers in their own netns
+- Uses a container api to configure a list of containers to run.
+- Create and manages its own network namespace files
+- Supports running container in order or in parallel
+- Uses bind mount to create network namespace files
+- Uses setns and clone to run containers in their own netns
 - Uses pipe to sync with child 
 - Child setup proc and its own rootfs before excing containerA
 - Child supports privilege dropping sudo|caps|priv|seccomp

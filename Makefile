@@ -274,8 +274,8 @@ RUN_IMAGE = $(VMDIR)/$(VM_FILE)
 VM_MAC := 52:54:00:12:34:56
 VM_IP  := 192.168.122.243
 
-.PHONY: show-vmconfig
-show-vmconfig:
+.PHONY: show-config
+show-config:
 	@echo "MIRROR=$(MIRROR)"
 	@echo "REL_URL=$(REL_URL)"
 	@echo "REL_FILE=$(REL_FILE)"
