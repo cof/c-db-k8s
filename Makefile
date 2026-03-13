@@ -314,8 +314,6 @@ test-pod:
 	@echo "Checling logs"
 	@kubectl logs deployment/client-app --tail=20 > output.txt
 
-
-
 .PHONY: list-pod
 list-pod:
 	kubectl get all
