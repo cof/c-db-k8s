@@ -1,6 +1,6 @@
 # db-k8s
 
-Run a database client server applications inside containers.
+Run a database client and server application inside containers.
 
 - **Local Containers**  run DB client/server inside a custom container
 - **Kubernetes**   Deploy DB client/server to real k8s setup
@@ -35,103 +35,25 @@ Misc targets
 - **make rootfs** generate a roofs for the containers
 
 
-## 1. Local Container Deployment
+## 1. Local Containers
 
-Simply runs a database client and server inside a custom containers.
+Runs a database client and server inside custom containers.
 
+- **launcher** A Linux container runtime management tool
 - **server**  A TCP server that implement SET|GET|DEL cmds to DB
-- **client**  A TCP client suppors a telnet like connection to server
-- **launcher**  A Linux container runtime management tool
+- **client**  A TCP client supports a telnet like connection to server
 
-## Design Notes
+## 1.1 Launcher
 
-- All database logic in db.c and API exposed: in db.h 
-- String processing adn  logging in util.c and API exposed in util.h
-- server uses epoll and DB api to support simple SET|GET|DEL api
-- client is very simple stdin/sdout/socket read/put line program
-- launcher is a linux container runtime mangement tool
-- All binaries are statically linked to prevent ldd issues
-- An Alpine Linux VM was used to test launcher
-
-### 1.1 Server
-A TCP server than support a telnet-style api to acccsss a key/value store.  
-Clients simply connect to server and send commands to modify key/value store.
-
-**Supported Commands:**
-
-- SET key value - store a key value
-- GET key       - retrive a key value
-- DEL key       - delete key/value from store
-- QUIT          - close connection
-
-**Supported featues**
-
-- Implements a telnet style cmd SET|GET|DEL api to a DB
-- Implements a DB using mmap database files
-
-**Design**
-
-- Uses signal to catch SIGTERM and SIGINT
-- Uses mmap to create a database file
-- Uses getaddrinfo to select a socket address
-- Uses socket/bind/listen/accept for network I/O
-- Uses non blocking sockets
-- Use dual stack sockets that support both IPv4 and IPv6
-- Uses epoll (level triggered) to monitor all socket events
-- Uses a socket wrapper api to read/write/track/log/errors
-- Uses util string api to process strings
-- Uses a custom read-line wrapper around client sockets
-- listens by default using wildcard [::]:6379
-- cmd-line can override this
-
-**Example usage**
-
-    $ ./server 
-    [+] Database listening on [::]:6379
-
-### 1.2 Client
-A simple telnet client that connect to a server address.  
-Client will connect to server and read/write lines to server.
-
-**Supported featues**
-
-- Connect to a server addres and port
-- read and writes line to a socket
-
-**Design**
-
-- Uses getaddrinfo() to get a server TCP address
-- Uses socket/connect/fdopen to read/write network I/O
-- Uses fdopen to wrap socket into  read/write FIlE.
-- Uses fgets/fputs to read/write lines to server
-- Captures all error and logs them to stderr
-
-
-**Example usage**
-
-	$ ./client 127.0.0.1
-	[+] Connectivity test: OK
-	> set foo bar
-	OK
-	> get foo
-	bar
-	> del foo
-	OK
-	> quit
-	OK
-	> 
-	[+] Connection closed by foreign host.
-
-
-## Launcher
-A linux runtime container launcher for running server and client in isolated namespaces:
-
+A linux runtime container launcher for running applications in isolated namespaces.
 
 **Supported features**
 
-- Create an manages its own network namespaces
+- Create and manages its own network namespaces
+- Creates an isolated filesystem (rootfs)
 - Supports privilege dropping (sudo,caps,privs,seccomp)
 - Use a simple API for container configuration
+- An Alpine Linux VM was used to test launcher
 
 **Design**
 
@@ -193,6 +115,77 @@ A linux runtime container launcher for running server and client in isolated nam
 	[+] Container 'client' exit ok (pid=2408 why=exit_code 0)
 	[+] Server PID:1 shutting down: got signal 15 (Terminated) from UID:0 PID:0 
 	launcher:~/bin$ 
+
+### 1.2 Server
+A TCP server than support a telnet-style api to acccsss a key/value store.  
+Clients simply connect to server and send commands to modify key/value store.
+
+**Supported Commands:**
+
+- SET key value - store a key value
+- GET key       - retrive a key value
+- DEL key       - delete key/value from store
+- QUIT          - close connection
+
+**Supported featues**
+
+- Supoorts a telnet style cmd SET|GET|DEL api to a DB
+- Database using mmap database file
+
+**Design**
+
+- Uses signal to catch SIGTERM and SIGINT
+- Uses mmap to create a database file
+- Uses getaddrinfo to select a socket address
+- Uses socket/bind/listen/accept for network I/O
+- Uses non blocking sockets
+- Use dual stack sockets that support both IPv4 and IPv6
+- Uses epoll (level triggered) to monitor all socket events
+- Uses a socket wrapper api to read/write/track/log/errors
+- Uses util string api to process strings
+- Uses a custom read-line wrapper around client sockets
+- listens by default using wildcard [::]:6379
+- cmd-line can override this
+
+**Example usage**
+
+    $ ./server 
+    [+] Database listening on [::]:6379
+
+### 1.3 Client
+A simple telnet client that connect to a server address.  
+Client will connect to server and read/write lines to server.
+
+**Supported featues**
+
+- Connect to a server addres and port
+- read and writes line to a socket
+
+**Design**
+
+- Uses getaddrinfo() to get a server TCP address
+- Uses socket/connect/fdopen to read/write network I/O
+- Uses fdopen to wrap socket into  read/write FIlE.
+- Uses fgets/fputs to read/write lines to server
+- Captures all error and logs them to stderr
+
+
+**Example usage**
+
+	$ ./client 127.0.0.1
+	[+] Connectivity test: OK
+	> set foo bar
+	OK
+	> get foo
+	bar
+	> del foo
+	OK
+	> quit
+	OK
+	> 
+	[+] Connection closed by foreign host.
+
+
 
 ## 2. Kubernetes
 
