@@ -9,7 +9,10 @@ A simple client, server, laucjer
 
 - **GCC**: Version 9.0 or higher.
 - **make**: Version 4.0 or higher.
-- **Bash**: Version 4.0+ for the test runner.
+- **Bash**: Version 4.0+ for running tests
+- **awk**: Version 4.0+ for running tests
+- **Docker**: for buiding container images
+- **kind**:  for managing clusters
 
 ## Building the Project
 

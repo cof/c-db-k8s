@@ -1,0 +1,69 @@
+# database service provided by our server
+apiVersion: v1
+kind: Service
+metadata:
+  name: "db-service"
+spec:
+  selector:
+    app: "server-db" # name of container group that provides service
+  ports:
+    - name: "cli-service"
+      protocol: "TCP"
+      port: 6379
+      targetPort: "cli-port"
+  clusterIP: None # Headless service for StatefulSet
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: "server-pod"
+spec:
+  serviceName: "db-service" # service this pod provides
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "server-db" # container groups to manage
+  template:
+    metadata:
+      labels:
+        app: "server-db" # container group name
+    spec:
+      containers:
+      - name: "server-container"
+        image: "db-k8s-server:v1" # docker image file
+        ports:
+        - name: "cli-port"
+          protocol: "TCP"
+          containerPort: 6379
+        volumeMounts:
+        - name: "server-data"
+          mountPath: "/var/lib/server"
+        securityContext:
+          runAsNonRoot: true 
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - "ALL"
+          seccompProfile:
+            type: "RuntimeDefault" # default syscall allow list
+        resources:
+          limits:
+            memory: "64Mi"
+            cpu: "500m"
+          requests:
+            memory: "8Mi"
+            cpu: "250m"
+        # argv we pass to server 
+        args:
+        - ":6379"
+        - "/var/lib/server/database.bin"
+  volumeClaimTemplates:
+  - metadata:
+      name: "server-data"
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: "10Mi"
+

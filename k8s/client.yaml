@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "client-app"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: "client-pod"
+  template:
+    metadata:
+      labels:
+        app: "client-pod"
+    spec:
+      initContainers:
+      - name: "wait-db-service"
+        image: "alpine"
+        command: ["sh", "-c", "until nc -zv db-service 6379; do echo 'Waiting for db-service...'; sleep 2; done"]
+      containers:
+      - name: "client-pod"
+        image: db-k8s-client:v1
+        stdin: true # keep stdin open or client will exit ...
+        tty: true   # allow user to attach
+        readinessProbe:
+          exec:
+            command: ["sh", "-c", "nc -zv db-service 6379"]
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          limits:
+            memory: "8Mi"
+            cpu: "500m"
+          requests:
+            memory: "4Mi"
+            cpu: "250m"
+        # argv we pass to client
+        args:
+          - "db-service"
+          - "6379"

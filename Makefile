@@ -40,9 +40,10 @@ BUILD_DIR = build
 SRC_DIR = src
 BIN_DIR = bin
 SCRIPTS_DIR = scripts
+CMDS = server client launcher
 
 .PHONY: all
-all: $(BUILD_DIR) cmds
+all: $(CMDS) | $(BUILD_DIR)
 
 # object files
 $(BUILD_DIR):
@@ -52,18 +53,8 @@ $(BUILD_DIR):
 $(BIN_DIR):
 	@mkdir -p $@
 
-# build our binaries
-.PHONY: cmds
-CMDS = server client launcher
-BIN_CMDS = db/server client/client launcher
-ROOTFS_CMDS = server client
-CMDS_DONE = $(BUILD_DIR)/.cmds_done
-$(CMDS_DONE): $(CMDS) | $(BUILD_DIR)
-	@echo "  CMDS  done"
-	@touch $@
-cmds: $(CMDS_DONE)
-
 # server
+# ------
 SERVER_SRCS = src/util.c src/log.c src/sock.c src/db.c src/server.c
 SERVER_OBJS = $(SERVER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 SERVER_DEPS = $(SERVER_OBJS:.o=.d)
@@ -72,6 +63,7 @@ server: $(SERVER_OBJS)
 	$(cmd_LD) $(LDFLAGS) $(SERVER_OBJS) -o $@
 
 # client
+# ------
 CLIENT_SRCS = src/util.c src/log.c src/client.c
 CLIENT_OBJS = $(CLIENT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 CLIENT_DEPS = $(CLIENT_OBJS:.o=.d)
@@ -80,6 +72,7 @@ client: $(CLIENT_OBJS)
 	$(cmd_LD) $(LDFLAGS) $(CLIENT_OBJS) -o $@
 
 # launcher
+# ------
 LAUNCHER_LIBS = $(SECURITY_LIBS)
 LAUNCHER_SRCS = src/util.c src/log.c src/launcher.c
 LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
@@ -192,7 +185,6 @@ gen-seccomp: client server
 	@awk -f $(GEN_SECCOMP) $(STRACE_RAW) > $(SECCOMP_H)
 	@echo "SUCCESS: $(SECCOMP_H)"
 
-
 # 
 # roofs
 # ======
@@ -235,14 +227,19 @@ $(ROOTFS_TAR) : $(ROOTFS_DONE)
 # install
 # =======
 .PHONY: install
-install : all
-	@mkdir -p $(BIN_DIR)
+INSTALL_DONE=$(BUILD_DIR)/.install_done
+BIN_SERVER=$(BIN_DIR)/db/server
+BIN_CLIENT=$(BIN_DIR)/client/client#
+BIN_CMDS= $(BIN_CLIENT) $(BIN_SERVER)
+install: $(INSTALL_DONE)
+$(BIN_CMDS): $(CMDS) | $(BUILD_DIR) $(BIN_DIR) 
 	$(INSTALL) -D -m 755 server $(BIN_DIR)/db/server
 	$(INSTALL) -D -m 755 client $(BIN_DIR)/client/client
 	$(INSTALL) -D -m 755 launcher $(BIN_DIR)
+	touch $(INSTALL_DONE)
 
-SOURCES = $(wildcard src/*.c src/*.h)
 .PHONY: tags
+SOURCES = $(wildcard src/*.c src/*.h)
 tags: $(SOURCES)
 	@echo "Creating tags file"
 	$(Q)$(CTAGS) $(SOURCES)
@@ -251,9 +248,88 @@ tags: $(SOURCES)
 clean:
 	rm -rf $(BUILD_DIR) $(ROOTFS_DIR) $(CMDS) $(BIN_DIR) tags
 
+.PHONY: clean-all
+cleana: clean-k8 clean
+	@echo "Clean done"
+
+.PHONY: spotless
+spotless: clean
+	@echo "Wiping everthing"
+	docker system prune -af --volumes
+
+# ---------
+# k8s stuff
+# ---------
+CLUSTER_NAME=db-k8s
+SERVER_IMG=db-k8s-server:v1
+CLIENT_IMG=db-k8s-client:v1
+
+DOCKER_DONE=$(BUILD_DIR)/.docker_done
+CLUSTER_DONE=$(BUILD_DIR)/.cluster_done
+LOAD_DONE=$(BUILD_DIR)/.load_done
+DEPLOY_DONE=$(BUILD_DIR)/.deploy_done
+DONE_FILES = $(DOCKER_DONE) $(CLUSTER_DONE) $(LOAD_DONE) $(DEPLOY_DONE)
+
+# create docker images
+.PHONY: build-images 
+build-images: $(DOCKER_DONE)
+$(DOCKER_DONE) : $(BIN_CMDS) | $(BUILD_DIR)
+	@echo "Building Docker images..."
+	docker build --build-arg BIN_NAME=$(BIN_SERVER) -t $(SERVER_IMG) -f docker/server.Dockerfile .
+	docker build --build-arg BIN_NAME=$(BIN_CLIENT) -t $(CLIENT_IMG) -f docker/client.Dockerfile .
+	touch $(DOCKER_DONE)
+
+# ensure cluster exists
+.PHONY: create-cluster
+create-cluster: $(CLUSTER_DONE)
+$(CLUSTER_DONE): | $(BUILD_DIR)
+	kind get clusters | grep -qx $(CLUSTER_NAME) || kind create cluster --name $(CLUSTER_NAME)
+	touch $(CLUSTER_DONE)
+
+# load docker images
+.PHONY: load-images
+load-images: $(LOAD_DONE)
+$(LOAD_DONE): $(DOCKER_DONE) $(CLUSTER_DONE) | $(BUILD_DIR) 
+	kind load docker-image $(SERVER_IMG) --name $(CLUSTER_NAME)
+	kind load docker-image $(CLIENT_IMG) --name $(CLUSTER_NAME)
+	touch $(LOAD_DONE)
+
+# deploy the pods
+.PHONY: deploy
+deploy : $(DEPLOY_DONE)
+$(DEPLOY_DONE): $(LOAD_DONE) | $(BUILD_DIR)
+	@echo "Applying k8s manifest..."
+	kubectl apply -k k8s/
+	@echo "Restarting pods..."
+	kubectl rollout restart deployment/client-app
+	kubectl rollout restart statefulset/server-pod
+	touch $(DEPLOY_DONE)
+
+.PHONY: test-pod
+TEST_POD_RESULT = $(BUILD_DIR)/test_pod.txt
+test-pod: 
+	@echo "Sending test cmds to client"
+	@kubectl exec -i deployment/client-app -- sh -c "cat > /proc/1/fd/0" < $(TEST_REQ_FILE)
+	@sleep 1
+	@echo "Checling logs"
+	@kubectl logs deployment/client-app --tail=20 > output.txt
 
 
-# VM stuff
+
+.PHONY: list-pod
+list-pod:
+	kubectl get all
+
+# delete cluster and docker images
+clean-k8s:
+	@echo "Cleaning k8s config"
+	kind delete cluster --name $(CLUSTER_NAME) || true
+	docker rmi $(SERVER_IMG) $(CLIENT_IMG) || true
+	rm -f $(DONE_FILES)
+
+#
+# VM for testing lanucher
+# 
 
 # alpine linux
 OS_VARIANT= alpinelinux3.21
