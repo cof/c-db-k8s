@@ -229,10 +229,10 @@ $(ROOTFS_TAR) : $(ROOTFS_DONE)
 .PHONY: install
 INSTALL_DONE=$(BUILD_DIR)/.install_done
 BIN_SERVER=$(BIN_DIR)/db/server
-BIN_CLIENT=$(BIN_DIR)/client/client#
+BIN_CLIENT=$(BIN_DIR)/client/client
 BIN_CMDS= $(BIN_CLIENT) $(BIN_SERVER)
 install: $(INSTALL_DONE)
-$(BIN_CMDS): $(CMDS) | $(BUILD_DIR) $(BIN_DIR) 
+$(INSTALL_DONE): $(CMDS) | $(BUILD_DIR) $(BIN_DIR) 
 	$(INSTALL) -D -m 755 server $(BIN_DIR)/db/server
 	$(INSTALL) -D -m 755 client $(BIN_DIR)/client/client
 	$(INSTALL) -D -m 755 launcher $(BIN_DIR)
@@ -273,7 +273,7 @@ DONE_FILES = $(DOCKER_DONE) $(CLUSTER_DONE) $(LOAD_DONE) $(DEPLOY_DONE)
 # create docker images
 .PHONY: build-images 
 build-images: $(DOCKER_DONE)
-$(DOCKER_DONE) : $(BIN_CMDS) | $(BUILD_DIR)
+$(DOCKER_DONE) : $(INSTALL_DONE) | $(BUILD_DIR)
 	@echo "Building Docker images..."
 	docker build --build-arg BIN_NAME=$(BIN_SERVER) -t $(SERVER_IMG) -f docker/server.Dockerfile .
 	docker build --build-arg BIN_NAME=$(BIN_CLIENT) -t $(CLIENT_IMG) -f docker/client.Dockerfile .
