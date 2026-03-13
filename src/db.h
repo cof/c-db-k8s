@@ -1,3 +1,15 @@
+/*
+ * DB implements a key:value store
+
+ * API
+ * ---
+ * db_init  - create database  -> rc = db_init(file_name)
+ * db_deinit - shutdown database
+ * db_set  - set a key value   -> db_set(key, value)
+ * db_get  - get value for key -> value = db_get(ket)
+ * db_del  - delete key e.g    -> rc = db_del(key)
+ *
+ */
 #ifndef __DB_H__
 #define __DB_H__
 

@@ -60,27 +60,30 @@ static int mysockaddr_tostr(struct sockaddr *addr, socklen_t addr_len, char *buf
 
 int main(int argc, char *argv[])
 {
+    const char *hostname;
+    const char *port_str;
+
     // parse cmd line
     if (argc < 2) {
         fatal_error("Missing hostname");
     }
-
-    char *hostname = strdup(argv[1]);
-    char *port = strrchr(hostname, ':');
-    if (port) *port++ = '\0';
-    if (strlen(hostname) == 0) {
-        fatal_error("hostname cannot be blank");
+    hostname = argv[1];
+    port_str = argc > 2 ? argv[2] : TCP_PORT_STR;
+    if (!hostname || strlen(hostname) == 0) {
+        fatal_error("Missing hostname");
     }
-    if (!port || strlen(port) == 0) port = TCP_PORT_STR;
+    if (!port_str || strlen(port_str) == 0) {
+        fatal_error("Missing port");
+    }
 
     // resolve hostname+ port string to list of (ip+port)
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    int rc = getaddrinfo(hostname, port, &hints, &res);
+    int rc = getaddrinfo(hostname, port_str, &hints, &res);
     if (rc != 0) {
-        fatal_error("getaddrinfo(%s,%s) : %s\n", hostname, port, gai_strerror(rc));
+        fatal_error("getaddrinfo(%s,%s) : %s\n", hostname, port_str, gai_strerror(rc));
     }
 
     // try to connect 

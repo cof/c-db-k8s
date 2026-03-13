@@ -1,7 +1,10 @@
 /*
- * DB  implements a simple key:value store
+ * DB implements a key:value store
+ *
+ * 2 storage modes
+ * - use in memory store
+ * - use mmap database file
  */
-
 #include <stdlib.h>
 #include <string.h>
 
@@ -11,14 +14,18 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 
+#include "config.h"
 #include "util.h"
 #include "log.h"
 #include "db.h"
 
-
-// assume 10000 entries,load factor 2/3
-// table size 10000 * 3/2 = 15000
-// nearest prime is 15013
+/* 
+ * 10000 entries
+ * load factor 2/3
+ * table size 10000 * 3/2 = 15000
+ * nearest prime is 15013
+ */
+#define DB_MAX_REC 10000
 #define DB_TABLE_SIZE 15013
 #define DB_HDR_SIZE (2 * sizeof(uint64_t))
 #define DB_FILE_SIZE (4 * 1024)
@@ -120,15 +127,15 @@ static struct db_rec *hash_search(int idx, struct str_slice key)
 
 static struct db_rec *hash_find(struct str_slice key)
 {
-    return hash_search(hash(key.ptr, key.len), key);
+    int idx = hash(key.ptr, key.len);
+    return hash_search(idx, key);
 }
 
 static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
 {
     int idx = hash(key.ptr, key.len);
-
-    // fist check if entry already exists
     uint64_t *pp = &db_buckets[idx];
+
     while (*pp) {
         // get hash or mmap entry
         struct db_rec *rec = db_file
@@ -140,7 +147,9 @@ static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
             if (!new_rec) return NULL;
             // chain
             new_rec->next = rec->next;
-            *pp = new_rec->next;
+            *pp = db_file 
+                ? (uint64_t) ((char*) new_rec - (char*) db_mmap_ptr)
+                : (uintptr_t) new_rec;
             // all done
             if (!db_file) free_rec(rec);
             return new_rec;
@@ -177,8 +186,14 @@ static int file_init(const char *file_name)
         return log_errno_rf("fstat db-file %s failed", file_name);
     }
 
-    size_t file_size = DB_HDR_SIZE + DB_TABLE_SIZE * sizeof(uint64_t) + 1024;
+    // calc min file size
+    size_t file_size = 0;
+    file_size += DB_HDR_SIZE;
+    file_size += DB_TABLE_SIZE * sizeof(uint64_t);
+    file_size += DB_MAX_REC * MAX_LINE;
+
     if (st.st_size < file_size) {
+        /// need to resize file
         if (ftruncate(fd, file_size) == -1) {
             int _errno = errno;
             close(fd);
@@ -256,10 +271,11 @@ int db_set(struct str_slice key, struct str_slice val)
 
 struct str_slice db_get(struct str_slice key)
 {
-    struct db_rec *rec;
-
-    rec = hash_find(key);
-    if (!rec) return slice_make(NULL, 0);
+    struct db_rec *rec = hash_find(key);
+    if (!rec) {
+        // not found
+        return slice_make(NULL, 0);
+    }
 
     return slice_make(rec->data + rec->key_len, rec->val_len);
 }
