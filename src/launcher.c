@@ -565,7 +565,6 @@ static void shutdown_pid(int pid, int wait)
     }
 }
 
-
 static int child_wait_sync(struct myl_cnt *cnt)
 {
     // close the pipe ends we don't need
@@ -913,7 +912,7 @@ static int lau_cnt_start(void *arg)
     _exit(9);
 }
 
-int myl_lau_run(struct myl_lau *lau, struct myl_cnt *cnt)
+int lau_run_cnt(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     if (verbose) log_info("Launcher starting %s", cnt->name);
 
@@ -1306,7 +1305,7 @@ int setup_network(struct myl_lau *lau, struct myl_cnt *cnt)
     return 0;
 }
 
-int check_reaped(struct myl_lau *lau, struct myl_cnt *cnt)
+int lau_check_reaped(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     char why[40];
 
@@ -1336,23 +1335,23 @@ int check_reaped(struct myl_lau *lau, struct myl_cnt *cnt)
 
 }
 
-int check_wait(struct myl_lau *lau, struct myl_cnt *cnt)
+int lau_check_wait(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     pid_t res = waitpid(cnt->child_pid, &cnt->status, WNOHANG);
     if (res == -1) {
         return log_errno_rf("waipid for %s failed", cnt->name);
     }
-    if (res == cnt->child_pid && check_reaped(lau, cnt) != 0) {
+    if (res == cnt->child_pid && lau_check_reaped(lau, cnt) != 0) {
         return -1;
     }
 
     return 0;
 }
 
-int myl_wake_sync(struct myl_lau *lau, struct myl_cnt *cnt)
+int lau_wake_sync(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     // check if chlld still running
-    if (check_wait(lau, cnt) != 0) {
+    if (lau_check_wait(lau, cnt) != 0) {
         return -1;
     }
 
@@ -1377,10 +1376,10 @@ int myl_wake_sync(struct myl_lau *lau, struct myl_cnt *cnt)
     return 0;
 }
 
-int myl_wait_sync(struct myl_lau *lau, struct myl_cnt *cnt)
+int lau_wait_sync(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     // check if chlld still running
-    if (check_wait(lau, cnt) != 0) {
+    if (lau_check_wait(lau, cnt) != 0) {
         return -1;
     }
 
@@ -1416,25 +1415,26 @@ int lau_sync(struct myl_lau *lau)
     if (lau->start_order) {
         // sequential sync
         for (int i = 0; i < lau->num_config; i++) {
-            RUN(myl_wake_sync(lau, &lau->configs[i]));
-            RUN(myl_wait_sync(lau, &lau->configs[i]));
+            RUN(lau_wake_sync(lau, &lau->configs[i]));
+            RUN(lau_wait_sync(lau, &lau->configs[i]));
             sleep(lau->start_delay);
         }
     }
     else {
         // parallel sync
         for (int i = 0; i < lau->num_config; i++) {
-            RUN(myl_wake_sync(lau, &lau->configs[i]));
+            RUN(lau_wake_sync(lau, &lau->configs[i]));
         }
         for (int i = 0; i < lau->num_config; i++) {
-            RUN(myl_wait_sync(lau, &lau->configs[i]));
+            RUN(lau_wait_sync(lau, &lau->configs[i]));
         }
     }
 
     return 0;
 }
 
-int open_host_netns(struct myl_lau *lau)
+// open host's default network interface
+int lau_open_def_netns(struct myl_lau *lau)
 {
     // XXX fd must be for this process only (O_CLOEXEC)
     lau->host_netns_fd = open(HOST_NETNS_PATH, O_RDONLY | O_CLOEXEC);
@@ -1445,6 +1445,7 @@ int open_host_netns(struct myl_lau *lau)
     return 0;
 }
 
+// cable two containers together
 int lau_cable(struct myl_lau *lau, struct myl_cnt *x, struct myl_cnt *y)
 {
     if (verbose) {
@@ -1481,7 +1482,7 @@ int lau_run(struct myl_lau *lau)
     }
 
     for (int i = 0; i < lau->num_config; i++) {
-        RUN(myl_lau_run(lau, &lau->configs[i]));
+        RUN(lau_run_cnt(lau, &lau->configs[i]));
     }
 
     return 0;
@@ -1494,7 +1495,7 @@ int lau_setup(struct myl_lau *lau)
         log_info("Launcher setup infrastucture");
     }
 
-    RUN(open_host_netns(lau));
+    RUN(lau_open_def_netns(lau));
 
     // create dirs
     RUN(create_path(lau->netns_dir, lau->dir_mode));
@@ -1648,7 +1649,7 @@ int lau_wait(struct myl_lau *lau)
         }
         // check if running 
         cnt->status = status;
-        status = check_reaped(lau, cnt);
+        status = lau_check_reaped(lau, cnt);
         if (status != 0) {
             break;
         }
