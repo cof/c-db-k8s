@@ -1,9 +1,9 @@
 # db-k8s
-A simple client, server, laucjer
 
-- **server**  A TCP server that implement SET|GET|DEL cmds to DB
-- **client**  A TCP client suppors a telnet like connection to server
-- **launcher**  A Linux container runtime management tool
+Run a database client server applications inside containers.
+
+- **Local Containers**  run DB client/server inside a custom container
+- **Kubernetes**   Deploy DB client/server to real k8s setup
 
 ## Prerequisites
 
@@ -11,12 +11,20 @@ A simple client, server, laucjer
 - **make**: Version 4.0 or higher.
 - **Bash**: Version 4.0+ for running tests
 - **awk**: Version 4.0+ for running tests
-- **Docker**: for buiding container images
-- **kind**:  for managing clusters
+- **Docker**: for building container images
+- **kind**:  for creating clusters and loading docker images
+- **k8s**:  for managing pods
 
 ## Building the Project
 
 - **make all** (Default): Compiles server,client,launcher
+- **make deploy**  Deploy client and server into k8s
+- **make test** : Runs server,client tests
+- **make clean**: Removes compiled binaries, object files, k8s artifacts and test logs
+- **make spotless**: clean + docker system prune
+
+Misc targets
+
 - **make install** Copy all binaries to bin folder
 - **make install-vm** Download and create a test-launcher VM
 - **make list-vm**  Show test-launcher VM status
@@ -25,8 +33,15 @@ A simple client, server, laucjer
 - **make wipe-vm** shutdown VM, undefine VM and remove the VM file
 - **make gen-seccomp** generate a new seccomp rules flle
 - **make rootfs** generate a roofs for the containers
-- **make test** : Compiles all binaries and runs server,client tests
-- **make clean**: Removes all compiled binaries, object files and test logs
+
+
+## 1. Local Container Deployment
+
+Simply runs a database client and server inside a custom containers.
+
+- **server**  A TCP server that implement SET|GET|DEL cmds to DB
+- **client**  A TCP client suppors a telnet like connection to server
+- **launcher**  A Linux container runtime management tool
 
 ## Design Notes
 
@@ -38,7 +53,7 @@ A simple client, server, laucjer
 - All binaries are statically linked to prevent ldd issues
 - An Alpine Linux VM was used to test launcher
 
-## 1. Server
+### 1.1 Server
 A TCP server than support a telnet-style api to acccsss a key/value store.  
 Clients simply connect to server and send commands to modify key/value store.
 
@@ -52,10 +67,12 @@ Clients simply connect to server and send commands to modify key/value store.
 **Supported featues**
 
 - Implements a telnet style cmd SET|GET|DEL api to a DB
+- Implements a DB using mmap database files
 
 **Design**
 
 - Uses signal to catch SIGTERM and SIGINT
+- Uses mmap to create a database file
 - Uses getaddrinfo to select a socket address
 - Uses socket/bind/listen/accept for network I/O
 - Uses non blocking sockets
@@ -72,7 +89,7 @@ Clients simply connect to server and send commands to modify key/value store.
     $ ./server 
     [+] Database listening on [::]:6379
 
-## 2. Client
+### 1.2 Client
 A simple telnet client that connect to a server address.  
 Client will connect to server and read/write lines to server.
 
@@ -176,4 +193,58 @@ A linux runtime container launcher for running server and client in isolated nam
 	[+] Container 'client' exit ok (pid=2408 why=exit_code 0)
 	[+] Server PID:1 shutting down: got signal 15 (Terminated) from UID:0 PID:0 
 	launcher:~/bin$ 
+
+## 2. Kubernetes
+
+Deploy the the database client and server on Kubernetes.
+
+To deploy simply run
+
+    $ make deploy
+
+This will:
+
+- Compile the client,server,launcher
+- Install them into bin folder
+- build docker images files
+- create a cluster
+- load docker images into cluster
+- start the k8s pods
+
+To see the k8s pods simply run
+
+    $ make list-pod
+
+**Example usage**
+
+    $ make list-pod
+    kubectl get all
+    NAME                              READY   STATUS    RESTARTS   AGE
+    pod/client-app-86b75f877c-2xv4f   1/1     Running   0          76m
+    pod/client-app-86b75f877c-dbfxg   1/1     Running   0          76m
+    pod/client-app-86b75f877c-dj8rb   1/1     Running   0          76m
+    pod/server-pod-0                  1/1     Running   0          76m
+
+    NAME                 TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)    AGE
+    service/db-service   ClusterIP   None         <none>        6379/TCP   140m
+    service/kubernetes   ClusterIP   10.96.0.1    <none>        443/TCP    140m
+
+    NAME                         READY   UP-TO-DATE   AVAILABLE   AGE
+    deployment.apps/client-app   3/3     3            3           140m
+
+    NAME                                    DESIRED   CURRENT   READY   AGE
+    replicaset.apps/client-app-59ccc6f6dc   0         0         0       131m
+    replicaset.apps/client-app-67d945f567   0         0         0       131m
+    replicaset.apps/client-app-67d9cf8b4d   0         0         0       134m
+    replicaset.apps/client-app-76759d5bdf   0         0         0       133m
+    replicaset.apps/client-app-798bcff9b7   0         0         0       135m
+    replicaset.apps/client-app-7d54d6b68f   0         0         0       134m
+    replicaset.apps/client-app-844b59d7b4   0         0         0       125m
+    replicaset.apps/client-app-86b75f877c   3         3         3       76m
+    replicaset.apps/client-app-89bdbd7b     0         0         0       77m
+    replicaset.apps/client-app-9dc9d7fcf    0         0         0       126m
+    replicaset.apps/client-app-f6f56c588    0         0         0       106m
+
+    NAME                          READY   AGE
+    statefulset.apps/server-pod   1/1     140m
 
