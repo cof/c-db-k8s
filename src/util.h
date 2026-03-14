@@ -11,10 +11,14 @@
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
 #define STR_LIT(s) (s), (sizeof(s) - 1)
+#define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
+
+// ptr macros
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 #define make_ptr(ptr, offset)  ((void *)  ( ((char *) ptr) + offset))
-#define make_cptr(ptr, offset) ((char *) (ptr + offset))
-#define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
+#define make_offset(base, ptr) ((uint64_t) ((char *) (ptr) - (char *) (base)))
+#define make_mem(val) ((void *) ((uintptr_t) val))
+#define unmake_mem(val) ((uintptr_t) (val))
 
 // Stringification macros
 #define XSTR(a) #a

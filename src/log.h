@@ -71,6 +71,11 @@ void _fatal_error(const char *file, int line, const char *func, int ec, const ch
     UTIL_FAIL; \
 })
 
+#define log_ec_rf(ec, ...) ({ \
+    _log_error(__FILE__, __LINE__, __func__, ec,  __VA_ARGS__); \
+    UTIL_FAIL; \
+})
+
 
 #define fatal_error(...) _fatal_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__)
 #define fatal_errno(...) _fatal_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__)

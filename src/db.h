@@ -13,7 +13,9 @@
 #ifndef __DB_H__
 #define __DB_H__
 
-#define DB_FAIL -1
+#define DB_FAIL   -1
+#define DB_REINIT -2
+#define DB_MAGIC 0x4D594442 // MYDB
 
 int db_init(const char *file_name);
 void db_deinit(void);
