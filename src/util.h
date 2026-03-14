@@ -11,6 +11,7 @@
 
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
+#define ARRAY(a)  ARR_LEN(a), a
 #define STR_LIT(s) (s), (sizeof(s) - 1)
 #define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
 
@@ -199,13 +200,17 @@ static inline uint64_t dbj2a_hash_slice(const struct str_slice str)
 #define GETOPT_NOARG  0
 #define GETOPT_REQARG 1
 #define GETOPT_OPTARG 2
-#define GETOPT_MAX 10
+#define GETOPT_MAX 20
+#define GETDEF(x) (x), 1
 
 struct get_opt {
     const char *name;
     const char *desc;
     int has_arg;
     int val;
+    // TODO use a union
+    int def_val;
+    unsigned int have_defval : 1;
 };
 
 struct getopt_parse {
@@ -227,5 +232,9 @@ static inline struct str_slice getopt_val(struct getopt_parse *parse)
 {
     return parse->val;
 }
+
+void print_usage(const char *cmd, 
+    int num_opt, const struct get_opt opt[num_opt],
+    int num_exa, char *examples[num_exa]);
 
 #endif

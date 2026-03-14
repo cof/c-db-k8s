@@ -55,6 +55,7 @@
 #include "log.h"
 
 // config defaults
+#define BASE_DIR "mylauncher"
 #define RUN_DIR "/run/asimple_launcher"
 #define STORE_dir "/var/lib/asimple_launcher"
 #define NETNS_DIR "/var/run/netns"
@@ -1709,97 +1710,87 @@ int lau_setup_signals(void)
     return 0;
 }
 
-void print_usage(struct myl_lau *lau, const char *cmd)
-{
-    (void) lau;
-    const char *base = strrchr(cmd, '/');
-    const char *prog_name = (base) ? base + 1 : cmd;
-    int w= 15;
-
-    printf("Usage: %s [OPTIONS]\n\n", prog_name);
-    printf("Options:\n");
-
-    printf("  %-*s %s\n", w, "-help", "this help option");
-    printf("  %-*s %s\n", w, "-v",    "debug verbose mode");
-    printf("  %-*s %s\n", w, "rootfs=", "root file system");
-    printf("  %-*s %s\n", w, "srcdir=", "cmd file dir");
-    printf("  %-*s %s\n", w, "netnsdir=", "network namespace dir (default cwd)");
-    printf("  %-*s %s default=%d\n", w, "startorder=","start containes order", START_ORDER);
-    printf("  %-*s %s default=%d\n", w, "startdelay=","start delay order", START_DELAY);
-
-    printf("  %-*s %s default=%d\n", w, "dropsudo=","drop sudo privilge", DROP_SUDO);
-    printf("  %-*s %s default=%d\n", w, "dropcaps=","drop capabilities ", DROP_CAPS);
-    printf("  %-*s %s default=%d\n", w, "dropprivs=","set  NO_NEW_PRIVS  ", DROP_PRIVS);
-    printf("  %-*s %s default=%d\n", w, "useseccomp=", "use seccomp filters", USE_SECCOMP);
-
-    printf("\nExample:\n");
-    printf("  %s startorder=1 startdelay=5\n", prog_name);
-}
-
 int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
 {
-    int num_err = 0;
+    struct get_opt opts[] = {
+        { "help",   "This help", 0, 'h' },
+        { "verbose","debug verbose mode", 0, 'v' },
+        { "srcdir",  "Path where containers binarys live (default=cwd)",  1, 's' },
+        { "netnsdir", "Network namespace dir",  1, 'n' },
+        { "rootfs",  "rootfs dir to mount into container using OverlayFS", 1, 'r' },
+        { "start-order", "Start order (0=parallel,1=sequential)",  1, 'o', GETDEF(lau->start_order)  },
+        { "start-delay", "Start delay order in secs",  1, 'd', GETDEF(lau->start_delay) },
+        { "drop-sudo",  "Drop sudo privilge", 0, 'u', GETDEF(lau->drop_sudo) },
+        { "drop-caps",  "Drop capabilities",  0, 'c', GETDEF(lau->drop_caps) },
+        { "drop-privs", "Disable SET_NO_NEW_PRIVS", 0, 'p', GETDEF(lau->drop_privs) },
+        { "use-seccomp", "Use seccomp filters", 0, 'e', GETDEF(lau->use_seccomp) }
+    };
 
-    for (int i = 1; i < argc; i++) {
-        // get key ["=value"]
-        struct str_slice opt = slice_make_cstr(argv[i]);
-        struct str_slice val = slice_split(&opt, '=');
+    char *examples[] = {
+        "startorder=1 startdelay=5"
+    };
 
-        if (slice_cmp_cstr(opt, STR_LIT("-help"))) {
-            print_usage(lau, argv[0]);
-            num_err++;
-        }
-        else if (slice_cmp_cstr(opt, STR_LIT("-v"))) {
-            // log everthtng
+    struct getopt_parse parse;
+    struct str_slice val;
+    int opt;
+
+    int rc = getopt_init(&parse, argc, argv, ARR_LEN(opts), opts);
+    if (rc) return rc;
+
+    while ((opt = getopt_next(&parse)) != -1) {
+        switch(opt) {
+        case 'h': // help
+            print_usage(argv[0], ARRAY(opts), ARRAY(examples));
+            return -1;
+        case 'v': // verbose
             verbose = 1;
-        }
-        else if (slice_cmp_cstr(opt, STR_LIT("rootfs"))) {
-            lau->rootfs_dir = validate_dir("rootfs", val);
-            if (!lau->rootfs_dir) {
-                num_err++;
-            }
-        }
-        else if (slice_cmp_cstr(opt, STR_LIT("srcdir"))) {
+            break;
+        case 's': // srcdir
+            val = getopt_val(&parse);
+            if (lau->src_dir) free(lau->src_dir);
             lau->src_dir = validate_dir("srcdir", val);
-            if (!lau->src_dir) {
-                num_err++;
-            }
-        }
-        else if (slice_cmp_cstr(opt, STR_LIT("netnsdir"))) {
+            if (!lau->src_dir) return -1;
+            break;
+        case 'n':  // netnsdir
+            val = getopt_val(&parse);
             lau->netns_dir = validate_dir("netnsdir", val);
-            if (!lau->netns_dir) {
-                num_err++;
-            }
-        }
-        else if (slice_cmp_cstr(opt, STR_LIT("startorder"))) {
+            if (!lau->netns_dir) return -1;
+            break;
+        case 'r': // rootfs
+            val = getopt_val(&parse);
+            if (lau->rootfs_dir) free(lau->rootfs_dir);
+            lau->rootfs_dir = validate_dir("rootfs", val);
+            if (!lau->rootfs_dir) return -1;
+            break;
+        case 'o': // startorder
             lau->start_order = atoi(val.ptr) != 0;
-        }
-        else if (slice_cmp_cstr(opt, STR_LIT("startdelay"))) {
+            break;
+        case 'd': // startdelay
             lau->start_delay = atoi(val.ptr);
             if (lau->start_delay < 0) {
-                log_error("startdelay must greater than 0");
-                num_err++;
+                return log_error_rf("startdelay must greater than 0");
             }
-        }
-        else if (slice_cmp_cstr(opt, STR_LIT("dropsudo"))) {
+            break;
+        case 'u': // drop-sudo
             lau->drop_sudo = atoi(val.ptr) != 0;
-        }
-        else if (slice_cmp_cstr(opt, STR_LIT("dropcaps"))) {
+            break;
+        case 'c': // drop-caps
             lau->drop_caps = atoi(val.ptr) != 0;
-        }
-        else if (slice_cmp_cstr(opt, STR_LIT("dropprivs"))) {
+            break;
+        case 'p': // dropprivs
             lau->drop_privs = atoi(val.ptr) != 0;
-        }
-        else if (slice_cmp_cstr(opt, STR_LIT("useseccomp"))) {
+            break;
+        case 'e': // useseccomp:
             lau->use_seccomp = atoi(val.ptr) != 0;
-        } 
-        else {
-            log_errno("Unsupported option %s", opt.ptr);
-            num_err++;
+            break;
+        case ':': // missing value
+            return log_error_rf("Option: --%s requries an arg", opts[parse.opt_idx].name);
+        case '?': // unknown
+            return log_error_rf("Error: Unknown option %s", argv[parse.opt_idx]);
         }
     }
 
-    return num_err;
+    return 0;
 }
 
 
@@ -1816,20 +1807,20 @@ int lau_init(struct myl_lau *lau)
     lau->drop_privs = DROP_PRIVS;
     lau->use_seccomp = USE_SECCOMP;
 
-    // setup default dirs
     lau->cur_dir = getcwd(NULL, 0);
     if (!lau->cur_dir)  {
         return log_errno_rf("get_cwd failed");
     }
 
-    lau->base_dir = gen_path(lau->cur_dir, "mylauncher");
+    // setup default dirs
+    lau->base_dir = gen_path(lau->cur_dir, BASE_DIR);
     if (!lau->base_dir) {
         return log_errno_rf("gen_path mylaucher");
     }
-
+    lau->run_dir   = gen_path(lau->base_dir, "run_dir");
     lau->netns_dir = gen_path(lau->base_dir, "netns_dir");
-    lau->run_dir = gen_path(lau->base_dir, "run_dir");
     lau->store_dir = gen_path(lau->base_dir, "store_dir");
+
     lau->netns_suffix = strdup("-ns");
     lau->cable_prefix = strdup("veth-");
     lau->dir_mode = STANDARD_MODE;

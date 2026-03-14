@@ -551,19 +551,27 @@ int setup_database(struct simple_server *state)
 int server_parse_argv(struct simple_server *server, int argc, char *argv[])
 {
     struct get_opt opts[] = {
+        { "help",   "This help", 0, 'e' },
         { "hostname",  "hostname to listen on", 1, 'h' },
-        { "port",     "port to listen on",      1, 'p' },
+        { "port",     "port to listen on",      1, 'p', GETDEF(atoi(server->port)) },
         { "database", "Path to database file",  1, 'd' }
+    };
+
+    char *examples[] = {
+        "--hostname 127.0.0.1 --port 6379 --database mydb.bin"
     };
 
     struct getopt_parse parse;
     struct str_slice val;
     int opt;
 
-    getopt_init(&parse, argc, argv, ARR_LEN(opts), opts);
+    getopt_init(&parse, argc, argv, ARRAY(opts));
 
     while ((opt = getopt_next(&parse)) != -1) {
         switch(opt) {
+        case 'e': // help
+            print_usage(argv[0], ARRAY(opts), ARRAY(examples));
+            return -1;
         case 'h': // hostname
             val = getopt_val(&parse);
             val = slice_unbracket(val, '[', ']');
