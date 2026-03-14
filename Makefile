@@ -10,6 +10,7 @@ Q=
 endif
 
 DEBUG ?= 0
+VALGRIND ?= 0
 
 ifeq ($(V),1)
 cmd_TAR = $(TAR)
@@ -29,11 +30,15 @@ LD = gcc
 CTAGS = ctags
 
 # compiler flags
-CFLAGS += -D_GNU_SOURCE -Wall -Werror -O2 -Isrc -MMD -MP
+CFLAGS += -D_GNU_SOURCE -Wall -Werror -Wextra -O2 -Isrc -MMD -MP
 ifeq ($(DEBUG), 1)
 	CFLAGS += -O0 -ggdb3
 endif
-LDFLAGS = -static
+
+# valgrind reports errors when using static
+ifeq ($(VALGRIND), 0)
+	LDFLAGS = -static
+endif
 
 # dirs
 BUILD_DIR = build
