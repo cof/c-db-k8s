@@ -31,7 +31,7 @@ CTAGS = ctags
 # compiler flags
 CFLAGS += -D_GNU_SOURCE -Wall -Werror -O2 -Isrc -MMD -MP
 ifeq ($(DEBUG), 1)
-	CFLAGS += -O0 -g
+	CFLAGS += -O0 -ggdb3
 endif
 LDFLAGS = -static
 
@@ -60,7 +60,7 @@ SERVER_OBJS = $(SERVER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 SERVER_DEPS = $(SERVER_OBJS:.o=.d)
 -include $(SERVER_DEPS)
 server: $(SERVER_OBJS)
-	$(cmd_LD) $(LDFLAGS) $(SERVER_OBJS) -o $@
+	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(SERVER_OBJS) -o $@
 
 # client
 # ------
@@ -69,7 +69,7 @@ CLIENT_OBJS = $(CLIENT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 CLIENT_DEPS = $(CLIENT_OBJS:.o=.d)
 -include $(CLIENT_DEPS)
 client: $(CLIENT_OBJS)
-	$(cmd_LD) $(LDFLAGS) $(CLIENT_OBJS) -o $@
+	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(CLIENT_OBJS) -o $@
 
 # launcher
 # ------
@@ -79,7 +79,7 @@ LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 LAUNCHER_DEPS = $(LAUNCHER_OBJS:.o=.d)
 -include $(LAUNCHER_DEPS)
 launcher: $(LAUNCHER_OBJS)
-	$(cmd_LD) $(LDFLAGS) $(LAUNCHER_OBJS) $(LAUNCHER_LIBS) -o $@
+	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(LAUNCHER_OBJS) $(LAUNCHER_LIBS) -o $@
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@
