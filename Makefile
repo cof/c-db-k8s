@@ -30,7 +30,11 @@ LD = gcc
 CTAGS = ctags
 
 # compiler flags
-CFLAGS += -D_GNU_SOURCE -Wall -Werror -Wextra -O2 -Isrc -MMD -MP
+NO_EXTRA = -Wno-missing-field-initializers
+CFLAGS += -D_GNU_SOURCE -Wall -Werror -Wextra $(NO_EXTRA) -O2 -Isrc -MMD -MP
+LDFLAGS = -static
+
+# debug build
 ifeq ($(DEBUG), 1)
 	CFLAGS += -O0 -ggdb3
 endif
