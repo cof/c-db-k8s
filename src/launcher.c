@@ -166,7 +166,7 @@ struct myl_lau {
 
 static int verbose;
 
-static int inline child_reaped(int status)
+static inline int child_reaped(int status)
 {
     return WIFEXITED(status) | WIFSIGNALED(status) ? 1 : 0;
 }
@@ -768,7 +768,7 @@ int clear_all_caps(void)
 
 // samples/seccomp/bpf-direct.c
 // strace -c server
-int apply_seccomp(struct myl_cnt *cnt)
+int apply_seccomp(void)
 {
     struct sock_filter filter[] = {
 
@@ -874,7 +874,7 @@ static int setup_priv(struct myl_cnt *cnt)
         return log_errno_rf("prctl set-nonnew_privs failed for container %s", cnt->name);
     }
 
-    if (cnt->use_seccomp && apply_seccomp(cnt) != 0) {
+    if (cnt->use_seccomp && apply_seccomp() != 0) {
         return log_errno_rf("apply-seccomp failed for container %s", cnt->name);
     }
 
@@ -1001,8 +1001,8 @@ void myl_cnt_cleanup(struct myl_cnt *cnt)
 
     // release bind mount
     if (cnt->netns_mounted) {
-        if (umount2(cnt->netns_path, MNT_DETACH));
-        if (unlink(cnt->netns_path));
+        umount2(cnt->netns_path, MNT_DETACH);
+        unlink(cnt->netns_path);
         cnt->netns_mounted = 0;
     }
 
@@ -1075,7 +1075,7 @@ static char **exec_args_parse(const char *exec_path, const char *exec_args, int 
         return NULL;
     }
 
-    for (int i = 0; i < p.we_wordc; i++) {
+    for (size_t i = 0; i < p.we_wordc; i++) {
         argv[i+1] = strdup(p.we_wordv[i]);
         if (!argv[i+1]) {
             log_errno("strdup failed");
@@ -1096,8 +1096,11 @@ int create_netns(struct myl_lau *lau, struct myl_cnt *cnt)
     // generate name e.g "name-ns"
     char *suffix = lau->netns_suffix ?: "";
     int rc = snprintf(cnt->netns_name, sizeof(cnt->netns_name), "%s%s", cnt->name, suffix);
-    if (rc < 0 || rc == 0 || rc >= sizeof(cnt->netns_name)) {
-        return log_error_rf("genname %s failed", cnt->name);
+    if (rc < 0) {
+        return log_errno_rf("genname %s failed", cnt->name);
+    }
+    if ((size_t) rc >= sizeof(cnt->netns_name)) {
+        return log_error_rf("genname %s no space", cnt->name);
     }
 
     // generate path e,g "/var/run/netns/name-ns"
@@ -1150,12 +1153,17 @@ int create_subdirs(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     if (!lau->use_subdirs) return 0;
 
-    if (!(cnt->rootfs_path = create_subdir(lau->store_dir, "rootfs", 0755))) return -1;
-    if (!lau->use_overlay) return 0;
+    cnt->rootfs_path = create_subdir(lau->store_dir, "rootfs", 0755);
+    if (!cnt->rootfs_path) return -1;
 
-    if (!(cnt->lower_path = create_subdir(lau->store_dir, "lower", 0755)));
-    if (!(cnt->upper_path = create_subdir(lau->store_dir, "upper", 0755)));
-    if (!(cnt->work_path = create_subdir(lau->store_dir, "work", 0755)));
+    // add overay
+    if (!lau->use_overlay) return 0;
+    cnt->lower_path = create_subdir(lau->store_dir, "lower", 0755);
+    if (!cnt->lower_path) return -1;
+    cnt->upper_path = create_subdir(lau->store_dir, "upper", 0755);
+    if (!cnt->upper_path) return -1;
+    cnt->work_path = create_subdir(lau->store_dir, "work", 0755);
+    if (!cnt->work_path) return -1;
 
     return 0;
 }
@@ -1279,17 +1287,20 @@ int check_network(struct myl_lau *lau, struct myl_cnt *cnt)
 
 static int set_cable_name(struct myl_lau *lau, struct myl_cnt *cnt)
 {
-    const char *prefix = lau->cable_prefix;
-    if (!prefix) prefix = "";
+    const char *prefix = lau->cable_prefix ?: "";
 
     int rc = snprintf(cnt->veth_name, sizeof(cnt->veth_name), "%s%s", prefix, cnt->name);
-    if (rc < 0 || rc == 0 || rc >= sizeof(cnt->veth_name))
-        return log_error_rf("set_cable_name: snprintf %d failed", rc);
+    if (rc < 0) {
+        return log_errno_rf("set_cable_name: snprintf failed");
+    }
+    if ((size_t) rc >= sizeof(cnt->veth_name)) {
+        return log_error_rf("set_cable_name: no space");
+    }
 
     return 0;
 }
 
-int setup_network(struct myl_lau *lau, struct myl_cnt *cnt)
+int setup_network(struct myl_cnt *cnt)
 {
     if (verbose) {
         log_info("launcher setup-network (name=%s ipaddr=%s" , cnt->name, cnt->ip_addr);
@@ -1414,7 +1425,7 @@ int lau_sync(struct myl_lau *lau)
 
     if (lau->start_order) {
         // sequential sync
-        for (int i = 0; i < lau->num_config; i++) {
+        for (size_t i = 0; i < lau->num_config; i++) {
             RUN(lau_wake_sync(lau, &lau->configs[i]));
             RUN(lau_wait_sync(lau, &lau->configs[i]));
             sleep(lau->start_delay);
@@ -1422,10 +1433,10 @@ int lau_sync(struct myl_lau *lau)
     }
     else {
         // parallel sync
-        for (int i = 0; i < lau->num_config; i++) {
+        for (size_t i = 0; i < lau->num_config; i++) {
             RUN(lau_wake_sync(lau, &lau->configs[i]));
         }
-        for (int i = 0; i < lau->num_config; i++) {
+        for (size_t i = 0; i < lau->num_config; i++) {
             RUN(lau_wait_sync(lau, &lau->configs[i]));
         }
     }
@@ -1467,8 +1478,8 @@ int lau_cable(struct myl_lau *lau, struct myl_cnt *x, struct myl_cnt *y)
         return -1;
     }
 
-    RUN(setup_network(lau, x));
-    RUN(setup_network(lau, y));
+    RUN(setup_network(x));
+    RUN(setup_network(y));
 
     log_info("Created veth pair: %s <-> %s", x->veth_name, y->veth_name);
 
@@ -1481,7 +1492,7 @@ int lau_run(struct myl_lau *lau)
         log_info("Launcher starting %d containers", lau->num_config);
     }
 
-    for (int i = 0; i < lau->num_config; i++) {
+    for (size_t i = 0; i < lau->num_config; i++) {
         RUN(lau_run_cnt(lau, &lau->configs[i]));
     }
 
@@ -1502,7 +1513,7 @@ int lau_setup(struct myl_lau *lau)
     RUN(create_path(lau->store_dir, lau->dir_mode));
     RUN(create_path(lau->run_dir, lau->dir_mode));
 
-    for (int i = 0; i < lau->num_config; i++) {
+    for (size_t i = 0; i < lau->num_config; i++) {
         struct myl_cnt *cnt = &lau->configs[i];
         RUN(create_root(lau, cnt));
         RUN(create_subdirs(lau, cnt));
@@ -1518,7 +1529,7 @@ int lau_setup(struct myl_lau *lau)
 
 static struct myl_cnt *lau_find_child(struct myl_lau *lau, pid_t pid)
 {
-    for (int i = 0; i < lau->num_config; i++) {
+    for (size_t i = 0; i < lau->num_config; i++) {
         if (lau->configs[i].child_pid == pid) {
             return &lau->configs[i];
         }
@@ -1633,7 +1644,7 @@ int lau_wait(struct myl_lau *lau)
             if (errno == EINTR) continue;
             if (errno == ECHILD) {
                 // no more children - stop now
-                for (int i = 0; i < lau->num_config; i++) {
+                for (size_t i = 0; i < lau->num_config; i++) {
                     lau->configs[i].run = 0;
                 }
                 lau->num_run = 0;
@@ -1660,6 +1671,7 @@ int lau_wait(struct myl_lau *lau)
 
 void lau_handle_signal(int signo, siginfo_t *info, void *ucontext)
 {
+    (void) ucontext;
     caught_signo = signo;
 
     sender_pid = 0;
@@ -1673,7 +1685,7 @@ void lau_handle_signal(int signo, siginfo_t *info, void *ucontext)
     keep_running = 0;
 }
 
-int lau_setup_signals(struct myl_lau *lau)
+int lau_setup_signals(void)
 {
     struct sigaction sa = { 0 };
 
@@ -1699,6 +1711,7 @@ int lau_setup_signals(struct myl_lau *lau)
 
 void print_usage(struct myl_lau *lau, const char *cmd)
 {
+    (void) lau;
     const char *base = strrchr(cmd, '/');
     const char *prog_name = (base) ? base + 1 : cmd;
     int w= 15;
@@ -1839,7 +1852,7 @@ int lau_init(struct myl_lau *lau)
 
 void lau_destroy(struct myl_lau *lau)
 {
-    for (int i = 0; i < lau->num_config; i++) {
+    for (size_t i = 0; i < lau->num_config; i++) {
         myl_cnt_cleanup(&lau->configs[i]);
     }
     lau->num_config = 0;
@@ -1885,7 +1898,7 @@ int main(int argc, char *argv[])
     if (!lau) fatal_error("Failed to create launher state");
     if (lau_init(lau) != 0) goto done;
     if (lau_parse_argv(lau, argc, argv) != 0) goto done;
-    if (lau_setup_signals(lau) != 0) goto done;
+    if (lau_setup_signals() != 0) goto done;
 
     // add containers
     struct myl_cnt *db  = lau_add(lau, "db", "db/server", "/bin/server", NULL, "10.0.0.1");

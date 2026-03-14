@@ -29,7 +29,7 @@
 
 // big enough for "[" host "]" :" port + null
 #define MAX_HOSTPORT (4 + NI_MAXHOST + NI_MAXSERV)
-static int mysockaddr_tostr(struct sockaddr *addr, socklen_t addr_len, char *buf, int len)
+static int mysockaddr_tostr(struct sockaddr *addr, socklen_t addr_len, char *buf, size_t buf_len)
 {
     // convert address/port to string
     char host[NI_MAXHOST];
@@ -42,20 +42,38 @@ static int mysockaddr_tostr(struct sockaddr *addr, socklen_t addr_len, char *buf
     );
 
     if (rc != 0) {
-        fprintf(stderr, "getnameinfo failed - %s", gai_strerror(rc));
+        log_error("get name+port string - %s", gai_strerror(rc));
         return -1;
     }
 
-    // finaly load addr:port string
-    char *dst = buf;
-    if (addr->sa_family == AF_INET6) *dst++ = '[';
-    dst = mempcpy(dst, host, strlen(host));
-    if (addr->sa_family == AF_INET6) *dst++ = ']';
-    *dst++ = ':';
-    dst = mempcpy(dst, port, strlen(port));
-    *dst = '\0';
+    if (buf_len == 0) return 0;
 
-    return dst - buf;
+    // copy host
+    size_t wlen = 0;
+    size_t len = strlen(host);
+    size_t need_len = len;
+    if (addr->sa_family == AF_INET6) need_len += 2;
+    if (wlen + need_len > buf_len) {
+        return log_error_rf("No space for hostname");
+    }
+    if (addr->sa_family == AF_INET6) buf[wlen++] = '[';
+    memcpy(buf + wlen, host, len);
+    wlen += len;
+    if (addr->sa_family == AF_INET6) buf[wlen++] = ']';
+
+    // copy port:
+    len = strlen(port);
+    need_len = len + 2;
+    if (wlen + need_len > buf_len) {
+        return log_error_rf("No space for port");
+    }
+    buf[wlen++] = ':';
+    memcpy(buf + wlen, port, len);
+    wlen += len;
+
+    buf[wlen] = '\0';
+
+    return wlen;
 }
 
 int main(int argc, char *argv[])
