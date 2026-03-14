@@ -4,10 +4,9 @@
 // socket errors
 #define SOCK_OK      0 // read return 0 - nothing to do
 #define SOCK_DATA    1 // read or write worked
+#define SOCK_ERROR  -1 // open|read|write|close error
 #define SOCK_AGAIN  -2 // read would block (EAGAIN|EWOULDBLOCK)
-#define SOCK_ERROR  -2 // read|write|close error
 #define SOCK_CLOSED -3 // read returned 0
-
 
 #define MAX_EVENTS 10
 
@@ -38,15 +37,14 @@ struct simple_sock {
     unsigned int recv_close : 1; // got read 0
     unsigned int wait_write : 1; // waitiinf for writeable event
     unsigned int sys_err    : 1; // read/write error
+    struct sockaddr_in6 addr;
 };
 
-int create_listener(const char *host, const char *port, char *addr_str, int addr_str_len);
-int sock_accept(struct simple_sock *sock, char *addr_str, int addr_str_len);
+int sock_listen_hostport(struct simple_sock *sock, const char *host, const char *port);
+int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr);
 int sock_read(struct simple_sock *sock, struct rwbuf *buf);
 int sock_write(struct simple_sock *sock, struct rwbuf *buf);
 int sock_close(struct simple_sock *sock, int can_log);
-
-
-
+char *sock_tostr(struct simple_sock *sock);
 
 #endif

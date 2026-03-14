@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <getopt.h>
 
 #define UTIL_FAIL -1
 
@@ -50,9 +51,19 @@ static inline struct str_slice slice_copy(struct str_slice val)
     return val;
 }
 
-static inline int slice_cmp_cstr(struct str_slice str, const char *cstr, int len)
+static inline int slice_cmp_cstr(struct str_slice str, const char *cstr, size_t len)
 {
     return len == str.len && memcmp(str.ptr, cstr, len) == 0;
+}
+
+static inline struct str_slice slice_unbracket(struct str_slice str, int left, int right)
+{
+    if (str.len && str.ptr[0] == left) {
+        str.ptr++; str.len--;
+        if (str.ptr[str.len] == right) str.len--;
+    }
+
+    return str;
 }
 
 static inline struct str_slice slice_rsplit(struct str_slice *src, int ch)
@@ -184,5 +195,37 @@ static inline uint64_t dbj2a_hash_slice(const struct str_slice str)
     return dbj2a_hash(str.ptr, str.len);
 }
 
+// wrapper around getopt_long
+#define GETOPT_NOARG  0
+#define GETOPT_REQARG 1
+#define GETOPT_OPTARG 2
+#define GETOPT_MAX 10
+
+struct get_opt {
+    const char *name;
+    const char *desc;
+    int has_arg;
+    int val;
+};
+
+struct getopt_parse {
+    char **argv;
+    size_t argc;
+    size_t num_opt;
+    struct get_opt *opts;
+    struct str_slice val;
+    int opt_idx;
+    struct option long_opts[GETOPT_MAX+1];
+};
+
+int getopt_init(struct getopt_parse *parse, 
+    int argc, char *argv[],
+    size_t num_opt, struct get_opt opts[num_opt]);
+int getopt_next(struct getopt_parse *parse);
+
+static inline struct str_slice getopt_val(struct getopt_parse *parse)
+{
+    return parse->val;
+}
 
 #endif

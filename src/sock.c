@@ -129,7 +129,7 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
     return 0;
 }
 
-static int sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len, char *buf, int len)
+static int sockaddr_tobuf(struct sockaddr *addr, socklen_t addr_len, char *buf, size_t buf_len)
 {
     // convert address/port to string
     char host[NI_MAXHOST];
@@ -146,16 +146,34 @@ static int sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len, char *buf, 
         return -1;
     }
 
-    // finaly load addr:port string
-    char *dst = buf;
-    if (addr->sa_family == AF_INET6) *dst++ = '[';
-    dst = mempcpy(dst, host, strlen(host));
-    if (addr->sa_family == AF_INET6) *dst++ = ']';
-    *dst++ = ':';
-    dst = mempcpy(dst, port, strlen(port));
-    *dst = '\0';
+    if (buf_len == 0) return 0;
 
-    return dst - buf;
+    // copy host
+    size_t wlen = 0;
+    size_t len = strlen(host);
+    size_t need_len = len;
+    if (addr->sa_family == AF_INET6) need_len += 2;
+    if (wlen + need_len > buf_len) {
+        return log_error_rf("No space for hostname");
+    }
+    if (addr->sa_family == AF_INET6) buf[wlen++] = '[';
+    memcpy(buf + wlen, host, len);
+    wlen += len;
+    if (addr->sa_family == AF_INET6) buf[wlen++] = ']';
+
+    // copy port:
+    len = strlen(port);
+    need_len = len + 2;
+    if (wlen + need_len > buf_len) {
+        return log_error_rf("No space for port");
+    }
+    buf[wlen++] = ':';
+    memcpy(buf + wlen, port, len);
+    wlen += len;
+
+    buf[wlen] = '\0';
+
+    return wlen;
 }
 
 int sockfd_get_addr(int sockfd, char *buf, int len)
@@ -170,12 +188,12 @@ int sockfd_get_addr(int sockfd, char *buf, int len)
         return -1;
     }
 
-    return sockaddr_tostr((struct sockaddr *) &addr, addr_len, buf, len);
+    return sockaddr_tobuf((struct sockaddr *) &addr, addr_len, buf, len);
 }
 
 static struct addrinfo *resolve_addr(const char *host, const char *port)
 {
-    struct addrinfo hints = { 0 }, *res = NULL;
+    struct addrinfo hints, *res = NULL;
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET6; // want dual stack
@@ -185,80 +203,92 @@ static struct addrinfo *resolve_addr(const char *host, const char *port)
 
     int rc = getaddrinfo(host, port, &hints, &res);
     if (rc != 0) {
-        log_error(gai_strerror(rc), "resolve address(host=%s port=%s)", host, port);
-        return NULL;
+        return log_error_rn(gai_strerror(rc), "resolve address(host=%s port=%s)", host, port);
     }
 
     return res;
 }
 
 // create inet(4|6) tcp listener socket
-static int open_listener(struct addrinfo *res, const char *addr_str)
+static int sock_listen_addr(struct simple_sock *sock, struct addrinfo *res)
 {
-    int fd = socket(res->ai_family, res->ai_socktype | SOCK_NONBLOCK, 0);
-    if (fd == -1) {
-        log_errno("create socket(%d, %d) for addr %s", res->ai_family, res->ai_socktype, addr_str);
+    char tmp[100];
+    char *addr_str = "?";
+
+    int rc = sockaddr_tobuf(res->ai_addr, res->ai_addrlen, tmp, sizeof(tmp));
+    if (rc != -1) {
+        // got an address
+        addr_str = tmp;
+    }
+
+    sock->fd = socket(res->ai_family, res->ai_socktype | SOCK_NONBLOCK, 0);
+    if (sock->fd == -1) {
+        log_errno("create socket(%d, %d) for addr %s failed",
+            res->ai_family, res->ai_socktype, addr_str);
         goto err;
     }
 
+    // copy addr
+    memcpy(&sock->addr, res->ai_addr, sizeof(sock->addr));
+
     // turn off IPV6_ONLY - request dual stack
     int opt = 0;
-    if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)) == -1)  {
+    if (setsockopt(sock->fd, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)) == -1)  {
         log_errno("disable IPV6_ONLY");
         goto err;
     }
 
     // turn on REUSE_ADDR
     opt = 1;
-    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
+    if (setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
         log_errno("enable reuse_addr");
         goto err;
     }
 
     // bind to address
-    if (bind(fd, res->ai_addr, res->ai_addrlen) == -1) {
+    if (bind(sock->fd, res->ai_addr, res->ai_addrlen) == -1) {
         log_errno("bind to (%s) failed", addr_str);
         goto err;
     }
 
     // finally tell os to start listening
-    if (listen(fd, SOMAXCONN) == -1) {
-        log_errno("listen on %d,%s failed", fd, addr_str);
+    if (listen(sock->fd, SOMAXCONN) == -1) {
+        log_errno("listen on %d,%s failed", sock->fd, addr_str);
         goto err;
     }
 
     // all done
-    return fd;
+    return 0;
 
 err:
-    if (fd != -1) close(fd);
-    return -1;
+    if (sock->fd != -1) {
+        close(sock->fd);
+        sock->fd = -1;
+        //sock->sys_err = 1;
+    }
+
+    // failed
+    return SOCK_ERROR;
 }
 
-int create_listener(const char *host, const char *port, char *addr_str, int addr_str_len)
+
+int sock_listen_hostport(struct simple_sock *sock, const char *host, const char *port)
 {
     // resolve addr/port string to IP address + port
     struct addrinfo *res = resolve_addr(host, port);
     if (!res) return -1;
 
-    // convert the bindable address to string - (logging)
-    if (sockaddr_tostr(res->ai_addr, res->ai_addrlen, addr_str, addr_str_len) == -1) {
-        freeaddrinfo(res);
-        return -1;
-    }
-
-    int fd = open_listener(res, addr_str);
+    int rc = sock_listen_addr(sock, res);
     freeaddrinfo(res);
-
-    return fd;
+    
+    return rc;
 }
 
-int sock_accept(struct simple_sock *sock, char *addr_str, int addr_str_len)
+int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr)
 {
-    struct sockaddr_storage addr;
-    socklen_t addr_len = sizeof(addr);
+    socklen_t addr_len = sizeof(*addr);
 
-    int fd = accept4(sock->fd, (struct sockaddr *) &addr, &addr_len, SOCK_NONBLOCK);
+    int fd = accept4(sock->fd, addr, &addr_len, SOCK_NONBLOCK);
     if (fd == -1) {
         /// EAGAIN|EWOULDBLOCK - means no more pending accepts ..
         return -1;
@@ -267,11 +297,6 @@ int sock_accept(struct simple_sock *sock, char *addr_str, int addr_str_len)
     // turn off nagle
     int opt = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
-
-    if (addr_str) {
-        int rc = sockaddr_tostr((struct sockaddr *) &addr, addr_len, addr_str, addr_str_len);
-        if (rc == -1) *addr_str = '\0';
-    }
 
     return fd;
 }
@@ -337,7 +362,7 @@ int sock_write(struct simple_sock *sock, struct rwbuf *buf)
 
     while (buf->len) {
 
-        size_t nw = write(sock->fd, buf->rptr, buf->len);
+        ssize_t nw = write(sock->fd, buf->rptr, buf->len);
 
         if (nw == -1) {
             // write failed
@@ -381,4 +406,23 @@ int sock_close(struct simple_sock *sock, int can_log)
     }
 
     return 0;
+}
+
+char *sock_tostr(struct simple_sock *sock)
+{
+    static char bufs[16][40];
+    static int idx;
+
+    char *buf = bufs[idx];
+    size_t len = sizeof(bufs[0]);
+    idx = (idx + 1) & 15;
+
+    socklen_t addr_len = sizeof(struct sockaddr_in6);
+    int rc = sockaddr_tobuf((struct sockaddr *) &sock->addr, addr_len, buf, len);
+    if (rc == -1) {
+        // need a value
+        return "<null>";
+    }
+
+    return buf;
 }

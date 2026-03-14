@@ -258,7 +258,7 @@ static int file_init(const char *file_name)
     file_size += table_size;
     file_size += DB_MAX_REC * MAX_LINE;
 
-    if (st.st_size < file_size) {
+    if ((size_t) st.st_size < file_size) {
         /// need to resize file
         if (ftruncate(fd, file_size) == -1) {
             int ec = errno;

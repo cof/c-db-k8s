@@ -48,7 +48,6 @@ struct simple_client {
     struct simple_server *parent;
     struct rwbuf read_buf;
     struct rwbuf write_buf;
-    char name[MAX_HOSTPORT];
 };
 
 struct simple_server {
@@ -56,13 +55,11 @@ struct simple_server {
     struct simple_sock sock;
     struct list_elem clients;
     // user config
-    char *host;
+    char *hostname;
     char *port;
-    char *db_filename;
-    size_t db_filesize;
+    char *database;
     //  state
     int epoll_fd; // epoll_create1
-    char name[MAX_HOSTPORT];
 };
 
 
@@ -138,6 +135,7 @@ static int cmd_del(struct simple_client *client, struct str_slice key)
 
 static int cmd_quit(struct simple_client *client, struct str_slice args)
 {
+    (void) args;
     struct str_slice res = slice_make(STR_LIT("OK"));
 
     send_rsp(client, res);
@@ -149,6 +147,7 @@ static int cmd_quit(struct simple_client *client, struct str_slice args)
 
 static int cmd_unsupp(struct simple_client *client, struct str_slice args)
 {
+    (void) args;
     struct str_slice res = slice_make(STR_LIT("UNSUPP"));
 
     return send_rsp(client, res);
@@ -167,7 +166,7 @@ static struct {
 
 static int find_cmd(struct str_slice cmd)
 {
-    for (int i = 0; i < ARR_LEN(cmds); i++) {
+    for (size_t i = 0; i < ARR_LEN(cmds); i++) {
         if (slice_cmp_cstr(cmd, cmds[i].name, cmds[i].len)) {
             return i;
         }
@@ -209,7 +208,7 @@ static void client_close(struct simple_client *client, int force)
 static void client_destroy(struct simple_client *client, int can_log)
 {
     if (can_log) {
-        log_info("Client local-close %s", client->name);
+        log_info("Client local-close %s", sock_tostr(&client->sock));
     }
 
     sock_close(&client->sock, can_log);
@@ -224,15 +223,21 @@ static void client_destroy(struct simple_client *client, int can_log)
     free(client);
 }
 
-struct simple_client *client_create(int fd)
+struct simple_client *client_create(int fd, struct sockaddr_in6 *addr)
 {
     struct simple_client *client;
 
     client = malloc(sizeof(*client));
-    if (!client) return NULL;
-
+    if (!client) {
+        return log_errno_rn("Create client failed");
+    }
     memset(client, 0,  sizeof(*client));
+
     client->sock.fd = fd;
+    if (addr) {
+        memcpy(&client->sock.addr, addr, sizeof(*addr));
+    }
+
     init_rwbuf(&client->read_buf, MAX_LINE * 4);
     list_init(&client->node);
 
@@ -276,7 +281,7 @@ void do_client_read(struct simple_client *client)
         // read failed
         if (rc == SOCK_CLOSED) {
             // client closed its end
-            log_info("Client remote-closed %s", client->name);
+            log_info("Client remote-closed %s", sock_tostr(&client->sock));
             client_close(client, 0);
         }
         return;
@@ -354,24 +359,21 @@ static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uin
 
 struct simple_client *server_accept(struct simple_server *server)
 {
-    char name[MAX_HOSTPORT];
+    struct sockaddr_in6 addr;
 
-    int fd = sock_accept(&server->sock, name, sizeof(name));
+    int fd = sock_accept(&server->sock, &addr);
     if (fd == -1) {
         // no connection available ?
         return NULL;
     }
 
-    struct simple_client *client = client_create(fd);
+    struct simple_client *client = client_create(fd, &addr);
     if (!client) {
         // out of memory ?
         log_error("client_create failed!");
         close(fd);
         return NULL;
     }
-
-    // set peer name
-    memcpy(client->name, name, strlen(name));
 
     // register with epoll - XXX readable events only
     client->parent = server;
@@ -384,7 +386,7 @@ struct simple_client *server_accept(struct simple_server *server)
     // add to servers client list 
     list_append(&server->clients, &client->node);
 
-    log_info("Client connected from %s", client->name);
+    log_info("Client connected from %s", sock_tostr(&client->sock));
 
     return client;
 }
@@ -422,7 +424,7 @@ static void do_server_check(struct simple_server *server)
     close(server->sock.fd);
     server->sock.fd = -1;
 
-    log_info("Database stopped listening on %s", server->name);
+    log_info("Database stopped listening on %s", sock_tostr(&server->sock));
 }
 
 static void handle_server(struct simple_server *server, uint32_t events)
@@ -446,8 +448,9 @@ volatile sig_atomic_t caught_signo = 0;
 volatile sig_atomic_t sender_pid = 0; 
 volatile sig_atomic_t sender_uid = 0; 
 
-void handle_signal(int signo, siginfo_t *info, void *ucontext)
+static void handle_signal(int signo, siginfo_t *info, void *ucontext)
 {
+    (void) ucontext;
     caught_signo = signo;
 
     sender_pid = 0;
@@ -463,6 +466,7 @@ void handle_signal(int signo, siginfo_t *info, void *ucontext)
 
 int setup_signals(struct simple_server *server)
 {
+    (void) server;
     struct sigaction sa = { 0 };
 
     sa.sa_sigaction = handle_signal;
@@ -520,13 +524,8 @@ int server_run(struct simple_server *server)
 
 int setup_listener(struct simple_server *server)
 {
-    server->sock.fd = create_listener(
-        server->host, server->port, 
-        server->name, sizeof(server->name)
-    );
-    if (server->sock.fd == -1) {
-        return -1;
-    }
+    int rc = sock_listen_hostport(&server->sock, server->hostname, server->port);
+    if (rc) return rc;
 
     server->epoll_fd = epoll_create1(0);
     if (server->epoll_fd == -1) {
@@ -538,7 +537,7 @@ int setup_listener(struct simple_server *server)
         return -1;
     }
 
-    log_info("Database listening on %s", server->name);
+    log_info("Database listening on %s", sock_tostr(&server->sock));
 
     // all done
     return 0;
@@ -546,35 +545,54 @@ int setup_listener(struct simple_server *server)
 
 int setup_database(struct simple_server *state)
 {
-    return db_init(state->db_filename);
+    return db_init(state->database);
 }
 
 int server_parse_argv(struct simple_server *server, int argc, char *argv[])
 {
-    // listenr address:port 
-    if (argc > 1 && argv[1]) {
-        // parse
-        struct str_slice host = slice_make_cstr(argv[1]);
-        struct str_slice port = slice_rsplit(&host, ':');
-        if (host.len && host.ptr[0] == '[') {
-            host.ptr++; host.len--;
-            if (host.ptr[host.len] == ']') host.len--;
-        }
-        // store
-        if (host.len && (server->host = slice_strdup(host)) == NULL) {
-            return log_errno_rf("strdup-hostname");
-        }
-        if (port.len && (server->port = slice_strdup(port)) == NULL) { 
-            return log_errno_rf("strdup-portno");
-        }
-    }
+    struct get_opt opts[] = {
+        { "hostname",  "hostname to listen on", 1, 'h' },
+        { "port",     "port to listen on",      1, 'p' },
+        { "database", "Path to database file",  1, 'd' }
+    };
 
-    // database filename
-    if (argc > 1 && argv[2]) {
-        struct str_slice file_name = slice_make_cstr(argv[2]);
-        slice_trim(&file_name);
-        if (file_name.len && (server->db_filename = slice_strdup(file_name)) == NULL) {
-            return log_errno_rf("strdup db-filename");
+    struct getopt_parse parse;
+    struct str_slice val;
+    int opt;
+
+    getopt_init(&parse, argc, argv, ARR_LEN(opts), opts);
+
+    while ((opt = getopt_next(&parse)) != -1) {
+        switch(opt) {
+        case 'h': // hostname
+            val = getopt_val(&parse);
+            val = slice_unbracket(val, '[', ']');
+            if (server->hostname) free(server->hostname);
+            server->hostname = slice_strdup(val);
+            if (!server->hostname) {
+                return log_errno_rf("strdup-hostname");
+            }
+            break;
+        case 'p': // port
+            val = getopt_val(&parse);
+            if (server->port) free(server->port);
+            server->port = slice_strdup(val);
+            if (!server->port) {
+                return log_errno_rf("strdup-portno");
+            }
+            break;
+        case 'd': // database
+            val = getopt_val(&parse);
+            if (server->database) free(server->database);
+            server->database = slice_strdup(val);
+            if (!server->database) {
+                return log_errno_rf("strdup database");
+            }
+            break;
+        case ':': // missing value
+            return log_error_rf("Option: --%s requries an arg", opts[parse.opt_idx].name);
+        case '?': // unknown
+            return log_error_rf("Error: Unknown option %s", argv[parse.opt_idx]);
         }
     }
 
@@ -592,16 +610,22 @@ void server_free(struct simple_server *server)
 
     if (server->sock.fd != -1) {
         close(server->sock.fd);
-        server->sock.fd = -1;
     }
 
     if (server->epoll_fd != -1) {
         close(server->epoll_fd);
-        server->epoll_fd = -1;
     }
 
-    if (server->db_filename) {
-        free(server->db_filename);
+    if (server->hostname) {
+        free(server->hostname);
+    }
+
+    if (server->port) {
+        free(server->port);
+    }
+
+    if (server->database) {
+        free(server->database);
     }
 
     free(server);
@@ -614,19 +638,20 @@ void server_destroy(struct simple_server *server)
     server_free(server);
 }
 
-static int server_init(struct simple_server *state)
+static int server_init(struct simple_server *server)
 {
-    memset(state, 0, sizeof(*state));
-    state->sock.fd = -1;
-    state->epoll_fd = -1;
+    memset(server, 0, sizeof(*server));
+    server->sock.fd = -1;
+    server->epoll_fd = -1;
 
-    state->sock.is_server = 1;
-    list_init(&state->clients);
+    server->sock.is_server = 1;
+    list_init(&server->clients);
 
-    state->pid = getpid();
+    server->pid = getpid();
 
-    state->port = strdup(TCP_PORT_STR);
-    if (!state->port) {
+    // set defaults
+    server->port = strdup(TCP_PORT_STR);
+    if (!server->port) {
         return log_errno_rf("strdup %s", TCP_PORT_STR);
     }
 
