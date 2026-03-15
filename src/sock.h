@@ -45,6 +45,7 @@ int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr);
 int sock_read(struct simple_sock *sock, struct rwbuf *buf);
 int sock_write(struct simple_sock *sock, struct rwbuf *buf);
 int sock_close(struct simple_sock *sock, int can_log);
+char *sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len);
 char *sock_tostr(struct simple_sock *sock);
 
 #endif

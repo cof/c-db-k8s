@@ -263,25 +263,32 @@ static inline uint64_t dbj2a_hash_slice(const struct str_slice str)
 }
 
 // wrapper around getopt_long
+#define GETOPT_EOF     -1
+#define GETOPT_MISSVAL -2
+#define GETOPT_ERROPT  -3
+
 #define GETOPT_NOARG  0
 #define GETOPT_REQARG 1
 #define GETOPT_OPTARG 2
 #define GETOPT_MAX 20
-#define GETDEF(x) (x), 1
+#define GETOPT_DEFINT(x) .def_type = 1, .def_int = (x)
+#define GETOPT_DEFSTR(x) .def_type = 2, .def_str = (x)
 
 struct get_opt {
     const char *name;
     const char *desc;
     int has_arg;
     int val;
-    // TODO use a union
-    int def_val;
-    unsigned int have_defval : 1;
+    int def_type;
+    union  {
+        const char *def_str;
+        int def_int;
+    };
 };
 
 struct getopt_parse {
     char **argv;
-    size_t argc;
+    int argc;
     size_t num_opt;
     struct get_opt *opts;
     struct str_slice val;
@@ -297,6 +304,38 @@ int getopt_next(struct getopt_parse *parse);
 static inline struct str_slice getopt_val(struct getopt_parse *parse)
 {
     return parse->val;
+}
+
+static inline char *getopt_str(struct getopt_parse *parse)
+{
+    return parse->val.ptr;
+}
+
+static inline struct get_opt *getopt_curopt(struct getopt_parse *parse)
+{
+    int idx = parse->opt_idx;
+    if (idx < 0 || (size_t) idx > parse->num_opt) return NULL;
+    return &parse->opts[idx];
+}
+
+static inline struct get_opt *getopt_missopt(struct getopt_parse *parse)
+{
+    int idx = optind - 1;
+
+    if (idx < 0) return NULL;
+    parse->opt_idx = idx;
+
+    return &parse->opts[idx];
+}
+
+static inline char *getopt_erropt(struct getopt_parse *parse)
+{
+    int idx = optind - 1;
+
+    if (idx < 0) return "<null>";
+    if (idx >= parse->argc) return "<null>";
+
+    return parse->argv[idx];
 }
 
 void print_usage(const char *cmd, 

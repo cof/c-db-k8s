@@ -2,15 +2,16 @@
 # make all
 # make tests
 
+DEBUG ?= 0
+VALGRIND ?= 0
+
 # verbosity - aka Kbuild/HAProxy style
-V = 0
+V ?= 0
 Q = @
 ifeq ($V,1)
 Q=
 endif
 
-DEBUG ?= 0
-VALGRIND ?= 0
 
 ifeq ($(V),1)
 cmd_TAR = $(TAR)
@@ -32,7 +33,6 @@ CTAGS = ctags
 # compiler flags
 NO_EXTRA = -Wno-missing-field-initializers
 CFLAGS += -D_GNU_SOURCE -Wall -Werror -Wextra $(NO_EXTRA) -O2 -Isrc -MMD -MP
-LDFLAGS = -static
 
 # debug build
 ifeq ($(DEBUG), 1)
@@ -73,7 +73,7 @@ server: $(SERVER_OBJS)
 
 # client
 # ------
-CLIENT_SRCS = src/util.c src/log.c src/client.c
+CLIENT_SRCS = src/util.c src/log.c src/sock.c src/client.c
 CLIENT_OBJS = $(CLIENT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 CLIENT_DEPS = $(CLIENT_OBJS:.o=.d)
 -include $(CLIENT_DEPS)
@@ -314,6 +314,25 @@ $(DEPLOY_DONE): $(LOAD_DONE) | $(BUILD_DIR)
 	kubectl rollout restart statefulset/server-pod
 	touch $(DEPLOY_DONE)
 
+.PHONY: apply
+apply:
+	kubectl apply -k k8s/
+
+.PHONY: list-pod
+list-pod:
+	kubectl get statefulset/server-pod 
+	kubectl get deployment/client-app
+	kubectl get pods -l 'app in (client-pod, server-db)'
+
+.PHONY: list-all
+list-all:
+	kubectl get all
+
+.PHONY: list-logs
+list-logs:
+	kubectl logs statefulset/server-pod
+	kubectl logs deployment/client-app
+
 .PHONY: test-pod
 TEST_POD_RESULT = $(BUILD_DIR)/test_pod.txt
 test-pod: 
@@ -323,9 +342,6 @@ test-pod:
 	@echo "Checling logs"
 	@kubectl logs deployment/client-app --tail=20 > output.txt
 
-.PHONY: list-pod
-list-pod:
-	kubectl get all
 
 # delete cluster and docker images
 clean-k8s:

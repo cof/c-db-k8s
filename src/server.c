@@ -1,10 +1,7 @@
 /*
- S* server - a TCP server than supports telnet api to acesss a key/value store
- *
- * Usage: server [hosthame[:port]]
- *
- *   hostname - an ip address to listen on (default wildcard)
- *   port     - port number to listen on (default=6379)
+ * server   : TCP server than supports telnet api to acesss a key/value store
+ * Usage    : ./server --help
+ * Example  : ./server --hostnanme 127.0.0.1 --port 5379
  *
  * Supported commands:
  *
@@ -548,12 +545,24 @@ int setup_database(struct simple_server *state)
     return db_init(state->database);
 }
 
+static int set_str(char **str, struct get_opt *opt, const char *val_str)
+{
+    if (*str) free(*str);
+    *str = strdup(val_str);
+
+    if (!*str) {
+        return log_error_rf("strdup %s failed", opt->name);
+    }
+
+    return 0;
+}
+
 int server_parse_argv(struct simple_server *server, int argc, char *argv[])
 {
     struct get_opt opts[] = {
         { "help",   "This help", 0, 'e' },
         { "hostname",  "hostname to listen on", 1, 'h' },
-        { "port",     "port to listen on",      1, 'p', GETDEF(atoi(server->port)) },
+        { "port",     "port to listen on",      1, 'p', GETOPT_DEFSTR(server->port) },
         { "database", "Path to database file",  1, 'd' }
     };
 
@@ -561,50 +570,22 @@ int server_parse_argv(struct simple_server *server, int argc, char *argv[])
         "--hostname 127.0.0.1 --port 6379 --database mydb.bin"
     };
 
+    // process cmd-line options
     struct getopt_parse parse;
-    struct str_slice val;
-    int opt;
-
-    getopt_init(&parse, argc, argv, ARRAY(opts));
-
-    while ((opt = getopt_next(&parse)) != -1) {
-        switch(opt) {
-        case 'e': // help
-            print_usage(argv[0], ARRAY(opts), ARRAY(examples));
-            return -1;
-        case 'h': // hostname
-            val = getopt_val(&parse);
-            val = slice_unbracket(val, '[', ']');
-            if (server->hostname) free(server->hostname);
-            server->hostname = slice_strdup(val);
-            if (!server->hostname) {
-                return log_errno_rf("strdup-hostname");
-            }
-            break;
-        case 'p': // port
-            val = getopt_val(&parse);
-            if (server->port) free(server->port);
-            server->port = slice_strdup(val);
-            if (!server->port) {
-                return log_errno_rf("strdup-portno");
-            }
-            break;
-        case 'd': // database
-            val = getopt_val(&parse);
-            if (server->database) free(server->database);
-            server->database = slice_strdup(val);
-            if (!server->database) {
-                return log_errno_rf("strdup database");
-            }
-            break;
-        case ':': // missing value
-            return log_error_rf("Option: --%s requries an arg", opts[parse.opt_idx].name);
-        case '?': // unknown
-            return log_error_rf("Error: Unknown option %s", argv[parse.opt_idx]);
+    int rc = getopt_init(&parse, argc, argv, ARRAY(opts));
+    if (rc) return rc;
+    while ((rc = getopt_next(&parse)) >= 0) {
+        struct get_opt *opt = getopt_curopt(&parse);
+        switch(rc) {
+        case 'e': print_usage(argv[0], ARRAY(opts), ARRAY(examples)); return -1;
+        case 'h': rc = set_str(&server->hostname, opt, getopt_str(&parse)); break;
+        case 'p': rc = set_str(&server->port, opt, getopt_str(&parse)); break;
+        case 'd': rc = set_str(&server->database, opt, getopt_str(&parse)); break;
         }
+        if (rc < 0) break;
     }
 
-    return 0;
+    return rc == GETOPT_EOF ? 0 : -1;
 }
 
 void server_free(struct simple_server *server)

@@ -1,16 +1,8 @@
 /*
- * client - a telnet like TCP client
+ * client  : telnet like TCP client
+ * Usage   : ./client --help
+ * Example : ./client --hostname 127.0.0.1
  *
- * Usage: client hostname[:port]
- *
- *  hostname - hostname to connect to
- *  port - port number (default 6379)
- *
- * e.g.
- *  $ client 127.0.0.1
- *
- * Refs:
- * - man 3 getaddrinfo - getaddrinfo/connect
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,95 +18,58 @@
 #include "config.h"
 #include "util.h"
 #include "log.h"
+#include "sock.h"
 
-// big enough for "[" host "]" :" port + null
-#define MAX_HOSTPORT (4 + NI_MAXHOST + NI_MAXSERV)
-static int mysockaddr_tostr(struct sockaddr *addr, socklen_t addr_len, char *buf, size_t buf_len)
-{
-    // convert address/port to string
-    char host[NI_MAXHOST];
-    char port[NI_MAXSERV];
+static struct get_opt opts[] = {
+    { "help",   "This help", 0, 'e' },
+    { "hostname",  "hostname to listen on", 1, 'h' },
+    { "port",     "port to listen on",      1, 'p', GETOPT_DEFSTR(TCP_PORT_STR) },
+};
 
-    int rc = getnameinfo(addr, addr_len, 
-        host, sizeof(host),
-        port, sizeof(port),
-        NI_NUMERICHOST | NI_NUMERICSERV
-    );
-
-    if (rc != 0) {
-        log_error("get name+port string - %s", gai_strerror(rc));
-        return -1;
-    }
-
-    if (buf_len == 0) return 0;
-
-    // copy host
-    size_t wlen = 0;
-    size_t len = strlen(host);
-    size_t need_len = len;
-    if (addr->sa_family == AF_INET6) need_len += 2;
-    if (wlen + need_len > buf_len) {
-        return log_error_rf("No space for hostname");
-    }
-    if (addr->sa_family == AF_INET6) buf[wlen++] = '[';
-    memcpy(buf + wlen, host, len);
-    wlen += len;
-    if (addr->sa_family == AF_INET6) buf[wlen++] = ']';
-
-    // copy port:
-    len = strlen(port);
-    need_len = len + 2;
-    if (wlen + need_len > buf_len) {
-        return log_error_rf("No space for port");
-    }
-    buf[wlen++] = ':';
-    memcpy(buf + wlen, port, len);
-    wlen += len;
-
-    buf[wlen] = '\0';
-
-    return wlen;
-}
+static char *examples[] = {
+    "--hostname locahost --port 6379"
+};
 
 int main(int argc, char *argv[])
 {
-    const char *hostname;
-    const char *port_str;
+    const char *hostname = NULL;
+    const char *port = TCP_PORT_STR;
 
-    // parse cmd line
-    if (argc < 2) {
-        fatal_error("Missing hostname");
+    // process cmd-line options
+    struct getopt_parse parse;
+    int rc = getopt_init(&parse, argc, argv, ARRAY(opts));
+    if (rc) fatal_error("cmd-line parser failed");
+    while ((rc = getopt_next(&parse)) >= 0) {
+        switch(rc) {
+        case 'e': print_usage(argv[0], ARRAY(opts), ARRAY(examples)); return 0;
+        case 'h': hostname = getopt_str(&parse); break;
+        case 'p': port = getopt_str(&parse); break;
+        }
     }
-    hostname = argv[1];
-    port_str = argc > 2 ? argv[2] : TCP_PORT_STR;
-    if (!hostname || strlen(hostname) == 0) {
-        fatal_error("Missing hostname");
-    }
-    if (!port_str || strlen(port_str) == 0) {
-        fatal_error("Missing port");
-    }
+    if (rc != GETOPT_EOF) return -1;
+    if (!hostname) fatal_error("Missing hostname");
 
     // resolve hostname+ port string to list of (ip+port)
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    int rc = getaddrinfo(hostname, port_str, &hints, &res);
+    rc = getaddrinfo(hostname, port, &hints, &res);
     if (rc != 0) {
-        fatal_error("getaddrinfo(%s,%s) : %s\n", hostname, port_str, gai_strerror(rc));
+        fatal_error("getaddrinfo(%s,%s) : %s\n", hostname, port, gai_strerror(rc));
     }
 
     // try to connect 
     int sock_fd = -1;
-    char name[MAX_HOSTPORT];
+    const char *addr_str = NULL;
 
     for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
         sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (sock_fd == -1) continue;
-        mysockaddr_tostr(ai->ai_addr, ai->ai_addrlen, name, sizeof(name));
+        addr_str = sockaddr_tostr(ai->ai_addr, ai->ai_addrlen);
         rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
         if (rc != -1) break;
-        log_errno("connect(%s) failed", name);
+        log_errno("connect(%s) failed", addr_str);
         close(sock_fd);
         sock_fd = -1;
     }
@@ -166,7 +121,7 @@ int main(int argc, char *argv[])
             break;
         }
         if (rc < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-            log_errno("connecton(%s) failed", name);
+            log_errno("connecton(%s) failed", addr_str);
             fatal_error("Lost connection");
         }
     }

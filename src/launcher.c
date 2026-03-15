@@ -1,13 +1,14 @@
 /* 
  * launcher -a runtime container launcher
+ * Usage    : ./launcher --help
+ * Example  : sudo ./laucher
  * 
- *  CLONE_NEWUTS - private Hostname and NIS
- *  CLONE_PID    - private PID namespace
- *  CLONE_NEWNS  - privae mount namepsace
- *  CLONE_NEWNET - private network
- *
  * Notes
  * - TODO need to split this code into 3 (launcher/container/tools)
+ * - CLONE_NEWUTS - private Hostname and NIS
+ * - CLONE_PID    - private PID namespace
+ * - CLONE_NEWNS  - privae mount namepsace
+ * - CLONE_NEWNET - private network
  *
  * Refs:
  * - man 7 nampspaces
@@ -1539,11 +1540,11 @@ static struct myl_cnt *lau_find_child(struct myl_lau *lau, pid_t pid)
     return NULL;
 }
 
-char *validate_dir(const char *key, struct str_slice dir) 
+char *validate_dir(const char *key, const char *dir)
 {
-    char *path = realpath(dir.ptr, NULL);
+    char *path = realpath(dir, NULL);
     if (!path) {
-        return log_errno_rn("%s realpath %s failed", key, dir.ptr);
+        return log_errno_rn("%s realpath %s failed", key, dir);
     }
 
     // Check if the path exists
@@ -1576,6 +1577,25 @@ done:
     return path;
 }
 
+static int set_dir(char **dir, struct get_opt *opt, const char *val_str)
+{
+    if (*dir) free(*dir);
+    *dir = validate_dir(opt->name, val_str);
+    if (!*dir) return -1;
+
+    return 0;
+}
+
+static int set_int(int *ival, struct get_opt *opt, const char *val_str)
+{
+    int val = atoi(val_str);
+    if (val < 0) {
+        return log_error_rf("%s cannot be negative", opt->name);
+    }
+    *ival = val;
+
+    return 0;
+}
 
 static struct myl_cnt *lau_add(
     struct myl_lau *lau,
@@ -1718,79 +1738,41 @@ int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
         { "srcdir",  "Path where containers binarys live (default=cwd)",  1, 's' },
         { "netnsdir", "Network namespace dir",  1, 'n' },
         { "rootfs",  "rootfs dir to mount into container using OverlayFS", 1, 'r' },
-        { "start-order", "Start order (0=parallel,1=sequential)",  1, 'o', GETDEF(lau->start_order)  },
-        { "start-delay", "Start delay order in secs",  1, 'd', GETDEF(lau->start_delay) },
-        { "drop-sudo",  "Drop sudo privilge", 0, 'u', GETDEF(lau->drop_sudo) },
-        { "drop-caps",  "Drop capabilities",  0, 'c', GETDEF(lau->drop_caps) },
-        { "drop-privs", "Disable SET_NO_NEW_PRIVS", 0, 'p', GETDEF(lau->drop_privs) },
-        { "use-seccomp", "Use seccomp filters", 0, 'e', GETDEF(lau->use_seccomp) }
+        { "start-order", "Start order (0=parallel,1=sequential)",  1, 'o', GETOPT_DEFINT(lau->start_order)  },
+        { "start-delay", "Start delay order in secs",  1, 'd', GETOPT_DEFINT(lau->start_delay) },
+        { "drop-sudo",  "Drop sudo privilge", 0, 'u', GETOPT_DEFINT(lau->drop_sudo) },
+        { "drop-caps",  "Drop capabilities",  0, 'c', GETOPT_DEFINT(lau->drop_caps) },
+        { "drop-privs", "Disable SET_NO_NEW_PRIVS", 0, 'p', GETOPT_DEFINT(lau->drop_privs) },
+        { "use-seccomp", "Use seccomp filters", 0, 'e', GETOPT_DEFINT(lau->use_seccomp) }
     };
 
     char *examples[] = {
         "startorder=1 startdelay=5"
     };
 
+    // process cmd-line options
     struct getopt_parse parse;
-    struct str_slice val;
-    int opt;
-
     int rc = getopt_init(&parse, argc, argv, ARR_LEN(opts), opts);
     if (rc) return rc;
-
-    while ((opt = getopt_next(&parse)) != -1) {
-        switch(opt) {
-        case 'h': // help
-            print_usage(argv[0], ARRAY(opts), ARRAY(examples));
-            return -1;
-        case 'v': // verbose
-            verbose = 1;
-            break;
-        case 's': // srcdir
-            val = getopt_val(&parse);
-            if (lau->src_dir) free(lau->src_dir);
-            lau->src_dir = validate_dir("srcdir", val);
-            if (!lau->src_dir) return -1;
-            break;
-        case 'n':  // netnsdir
-            val = getopt_val(&parse);
-            lau->netns_dir = validate_dir("netnsdir", val);
-            if (!lau->netns_dir) return -1;
-            break;
-        case 'r': // rootfs
-            val = getopt_val(&parse);
-            if (lau->rootfs_dir) free(lau->rootfs_dir);
-            lau->rootfs_dir = validate_dir("rootfs", val);
-            if (!lau->rootfs_dir) return -1;
-            break;
-        case 'o': // startorder
-            lau->start_order = atoi(val.ptr) != 0;
-            break;
-        case 'd': // startdelay
-            lau->start_delay = atoi(val.ptr);
-            if (lau->start_delay < 0) {
-                return log_error_rf("startdelay must greater than 0");
-            }
-            break;
-        case 'u': // drop-sudo
-            lau->drop_sudo = atoi(val.ptr) != 0;
-            break;
-        case 'c': // drop-caps
-            lau->drop_caps = atoi(val.ptr) != 0;
-            break;
-        case 'p': // dropprivs
-            lau->drop_privs = atoi(val.ptr) != 0;
-            break;
-        case 'e': // useseccomp:
-            lau->use_seccomp = atoi(val.ptr) != 0;
-            break;
-        case ':': // missing value
-            return log_error_rf("Option: --%s requries an arg", opts[parse.opt_idx].name);
-        case '?': // unknown
-            return log_error_rf("Error: Unknown option %s", argv[parse.opt_idx]);
+    while ((rc = getopt_next(&parse)) >= 0) {
+        struct get_opt *opt = getopt_curopt(&parse);
+        switch(rc) {
+        case 'h': print_usage(argv[0], ARRAY(opts), ARRAY(examples)); return -1;
+        case 'v': verbose = 1; break;
+        case 's': rc = set_dir(&lau->src_dir, opt, getopt_str(&parse)); break;
+        case 'n': rc = set_dir(&lau->netns_dir, opt, getopt_str(&parse)); break;
+        case 'r': rc = set_dir(&lau->rootfs_dir, opt, getopt_str(&parse)); break;
+        case 'o': lau->start_order = atoi(getopt_str(&parse)) != 0; break;
+        case 'd': rc = set_int(&lau->start_delay, opt, getopt_str(&parse)); break;
+        case 'u': lau->drop_sudo = atoi(getopt_str(&parse)) != 0; break;
+        case 'c': lau->drop_caps = atoi(getopt_str(&parse)) != 0; break;
+        case 'p': lau->drop_privs = atoi(getopt_str(&parse)) != 0; break;
+        case 'e': lau->use_seccomp = atoi(getopt_str(&parse)) != 0; break;
         }
+        if (rc < 0) break;
     }
 
-    return 0;
+    return rc == GETOPT_EOF ? 0 : -1;
 }
 
 

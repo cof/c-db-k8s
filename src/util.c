@@ -66,6 +66,7 @@ char *int_tostr(int val)
     return itoa(str, sizeof(bufs[0][0]), val);
 }
 
+// wrapper around getopt_long
 
 int getopt_init(struct getopt_parse *parse, 
     int argc, char *argv[],
@@ -73,7 +74,7 @@ int getopt_init(struct getopt_parse *parse,
 {
     memset(parse->long_opts, 0, sizeof(parse->long_opts));
 
-    parse->argc = argc;
+    parse->argc = argc >= 0 ? argc : 0;
     parse->argv = argv;
 
     parse->opts = opts;
@@ -82,6 +83,9 @@ int getopt_init(struct getopt_parse *parse,
     if (num_opt > GETOPT_MAX) {
         return log_error_rf("Num opts %zu > max %d", num_opt, GETOPT_MAX);
     }
+
+    // disable getopt error reporiing
+    opterr = 0;
 
     for (size_t i = 0; i < num_opt; i++) {
         struct option *long_opt = &parse->long_opts[i];
@@ -97,18 +101,30 @@ int getopt_next(struct getopt_parse *parse)
 {
     int rc = getopt_long_only(
         parse->argc, parse->argv,
-        "", parse->long_opts, 
+        ":", parse->long_opts, 
         &parse->opt_idx
     );
 
-    if (rc == -1) return rc;
-    if (rc == '?' || rc == ':') {
-        parse->opt_idx = optind -1;
-        return rc;
+    if (rc == -1) {
+        // all cmd-line options parsed
+        return GETOPT_EOF;
+    }
+
+    if (rc == ':') {
+        //  Missing value
+        struct get_opt *opt = getopt_missopt(parse);
+        return log_error_re(GETOPT_MISSVAL, "Option: --%s requries an arg", opt->name);
+    }
+
+    if (rc == '?') {
+        // Unknown option
+        const char *opt = getopt_erropt(parse);
+        return log_error_re(GETOPT_ERROPT, "Error: Unknown option %s", opt);
     }
     
     parse->val = slice_make_cstr(optarg);
-    
+        
+    // option code
     return rc;
 }
 
@@ -125,8 +141,11 @@ void print_usage(const char *cmd,
 
     for (int i = 0; i < num_opt; i++) {
         printf(" --%-*s %s", w, opts[i].name, opts[i].desc);
-        if (opts[i].have_defval) {
-            printf(" (default=%d)", opts[i].def_val);
+        if (opts[i].def_type) {
+            const char *def_str = opts[i].def_type == 1
+                ? int_tostr(opts[i].def_int)
+                : opts[i].def_str;
+            printf(" (default=%s)", def_str);
         }
         printf("\n");
     }

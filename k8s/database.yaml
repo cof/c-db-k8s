@@ -56,7 +56,9 @@ spec:
             cpu: "250m"
         # argv we pass to server 
         args:
-        - ":6379"
+        - "--port"
+        - "6379"
+        - "--database"
         - "/var/lib/server/database.bin"
   volumeClaimTemplates:
   - metadata:

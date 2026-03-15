@@ -408,7 +408,7 @@ int sock_close(struct simple_sock *sock, int can_log)
     return 0;
 }
 
-char *sock_tostr(struct simple_sock *sock)
+char *sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len)
 {
     static char bufs[16][40];
     static int idx;
@@ -417,12 +417,13 @@ char *sock_tostr(struct simple_sock *sock)
     size_t len = sizeof(bufs[0]);
     idx = (idx + 1) & 15;
 
-    socklen_t addr_len = sizeof(struct sockaddr_in6);
-    int rc = sockaddr_tobuf((struct sockaddr *) &sock->addr, addr_len, buf, len);
-    if (rc == -1) {
-        // need a value
-        return "<null>";
-    }
+    int rc = sockaddr_tobuf(addr, addr_len, buf, len);
+    if (rc == -1) return "<null>";
 
     return buf;
+}
+
+char *sock_tostr(struct simple_sock *sock)
+{
+    return sockaddr_tostr((struct sockaddr *) &sock->addr, sizeof(sock->addr));
 }

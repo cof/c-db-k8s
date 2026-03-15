@@ -37,6 +37,11 @@ void _fatal_error(const char *file, int line, const char *func, int ec, const ch
     UTIL_FAIL; \
 })
 
+#define log_error_re(ec, ...) ({ \
+    _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
+    (ec); \
+})
+
 // report estr, return 0
 #define log_error_rz(...) ({ \
     _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
