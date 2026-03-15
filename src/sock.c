@@ -132,12 +132,12 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
 static int sockaddr_tobuf(struct sockaddr *addr, socklen_t addr_len, char *buf, size_t buf_len)
 {
     // convert address/port to string
-    char host[NI_MAXHOST];
-    char port[NI_MAXSERV];
+    char host_buf[NI_MAXHOST];
+    char port_buf[NI_MAXSERV];
 
     int rc = getnameinfo(addr, addr_len, 
-        host, sizeof(host),
-        port, sizeof(port),
+        host_buf, sizeof(host_buf),
+        port_buf, sizeof(port_buf),
         NI_NUMERICHOST | NI_NUMERICSERV
     );
 
@@ -149,19 +149,28 @@ static int sockaddr_tobuf(struct sockaddr *addr, socklen_t addr_len, char *buf, 
     if (buf_len == 0) return 0;
 
     // copy host
+    char *hostname = host_buf;
+    int add_bracket = addr->sa_family == AF_INET6;
+    struct str_slice prefix = slice_make_cstr("::ffff:");
+    if (!strncmp(hostname, prefix.ptr, prefix.len)) {
+        // remove IPv4-mapped IPv6 prefix
+        hostname += prefix.len;
+        add_bracket = 0;
+    }
     size_t wlen = 0;
-    size_t len = strlen(host);
+    size_t len = strlen(hostname);
     size_t need_len = len;
-    if (addr->sa_family == AF_INET6) need_len += 2;
+    if (add_bracket) need_len += 2;
     if (wlen + need_len > buf_len) {
         return log_error_rf("No space for hostname");
     }
-    if (addr->sa_family == AF_INET6) buf[wlen++] = '[';
-    memcpy(buf + wlen, host, len);
+    if (add_bracket) buf[wlen++] = '[';
+    memcpy(buf + wlen, hostname, len);
     wlen += len;
-    if (addr->sa_family == AF_INET6) buf[wlen++] = ']';
+    if (add_bracket) buf[wlen++] = ']';
 
     // copy port:
+    char *port = port_buf;
     len = strlen(port);
     need_len = len + 2;
     if (wlen + need_len > buf_len) {
