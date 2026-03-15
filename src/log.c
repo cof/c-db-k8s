@@ -15,7 +15,7 @@ void log_msg(const char *msg)
     fflush(stdout);
 }
 
-void _log_info(const char *what, const char *fmt, ...)
+void log_info(const char *what, const char *fmt, ...)
 {
     va_list args;  
 
@@ -79,4 +79,11 @@ void _fatal_error(const char *file, int line, const char *func, int ec, const ch
     fflush(stderr);
 
     exit(1);
+}
+
+void log_argv(const char *what, int argc, char *argv[])
+{
+    for (int i= 0 ; i < argc; i++) {
+        log_info(what, "argv[%d]=%s", i, argv[i]);
+    }
 }

@@ -21,9 +21,12 @@
 #include "sock.h"
 
 static struct get_opt opts[] = {
-    { "help",   "This help", 0, 'e' },
-    { "hostname",  "hostname to listen on", 1, 'h' },
-    { "port",     "port to listen on",      1, 'p', GETOPT_DEFSTR(TCP_PORT_STR) },
+    { "help",     "This help",             0, 'e' },
+    { "hostname", "hostname to listen on", 1, 'h' },
+    { "port",     "port to listen on",     1, 'p', GETOPT_DEFSTR(TCP_PORT_STR) },
+    { "log",      "log request/response",  0, 'l' },
+    { "argv",     "Dump argv to stdout",   0, 'a' }
+
 };
 
 static char *examples[] = {
@@ -34,6 +37,8 @@ int main(int argc, char *argv[])
 {
     const char *hostname = NULL;
     const char *port = TCP_PORT_STR;
+    int log = 0;
+
 
     // process cmd-line options
     struct getopt_parse parse;
@@ -44,6 +49,8 @@ int main(int argc, char *argv[])
         case 'e': print_usage(argv[0], ARRAY(opts), ARRAY(examples)); return 0;
         case 'h': hostname = getopt_str(&parse); break;
         case 'p': port = getopt_str(&parse); break;
+        case 'l': log = 1; break;
+        case 'a': log_argv("+", argc, argv); break;
         }
     }
     if (rc != GETOPT_EOF) return -1;
@@ -62,7 +69,6 @@ int main(int argc, char *argv[])
     // try to connect 
     int sock_fd = -1;
     const char *addr_str = NULL;
-
     for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
         sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (sock_fd == -1) continue;
@@ -80,44 +86,52 @@ int main(int argc, char *argv[])
 
     // wrap the fd into FILE
     FILE *server = fdopen(sock_fd, "r+");
-    if (!server) {
-        fatal_error("Failed to create in/out");
-    }
+    if (!server) fatal_error("Failed to create in/out");
 
     // at this stage safe to proceed
-    log_info("Connectivity test: OK");
+    log_info("+", "Connectivity test: OK");
     
     // loop until user hits ctrl-d or server closes
+    // TODO replace this with simple_sock
     char buf[4096];
     while (1) {
         // prompt
         fprintf(stdout, "> "); 
         fflush(stdout);
 
-        // read line 
-        if (fgets(buf, sizeof(buf), stdin) == NULL)  {
-            //  error or eof
+
+        // read request-line 
+        char *line = fgets(buf, sizeof(buf), stdin);
+        if (!line) {
+            log_info("+", "stdin closed");
             break;
         }
 
-        // send line to server
-        fputs(buf, server); 
-        fflush(server);
+        line[strcspn(line, "\r\n")] = '\0';
+        if (log) log_info("+", "send req: %s", line);
+
+        // send request to server
+        fprintf(server, "%s\n", line);
+        //fflush(server);
 
         // recv response from server
-        if (fgets(buf, sizeof(buf), server) == NULL)  {
+        line = fgets(buf, sizeof(buf), server);
+        if (!line) {
             // error or close
-            log_info("Connection closed by foreign host.");
+            log_info("+", "Connection closed by server");
             break;
         }
-        fprintf(stdout, "%s", buf);
-        fflush(stdout);
+
+        line[strcspn(line, "\r\n")] = '\0';
+        if (log) log_info("+", "recv rsp: %s", line);
+        fprintf(stdout, "%s\n", line);
+        //fflush(stdout);
 
         // check for server eof
         char ch;
         int rc = recv(fileno(server), &ch, 1, MSG_PEEK | MSG_DONTWAIT);
         if (rc == 0) {
-            log_info("Connection closed by foreign host.");
+            log_info("+", "Connection closed by server");
             break;
         }
         if (rc < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {

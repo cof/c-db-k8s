@@ -188,7 +188,7 @@ static int run_cmd(const char *fmt, ...)
     }
 
     if (verbose) {
-        log_info("%s", cmd);
+        log_info("LOG", "%s", cmd);
     }
 
     rc = system(cmd);
@@ -436,7 +436,7 @@ int setup_veth(const char *cont_name, const char *netns)
     RUN_CMD("ip link set %st netns %s", veth, netns);
     RUN_CMD("ip link set %s up", veth);
 
-    log_info("Created veth %s", veth);
+    log_info("+", "Created veth %s", veth);
 
     return 0;
 }
@@ -587,7 +587,7 @@ static int child_wait_sync(struct myl_cnt *cnt)
     }
 
     if (verbose) {
-        log_info("Container (name=%s pid=%d) recv-go", cnt->name, cnt->child_pid);
+        log_info("LOG", "Container (name=%s pid=%d) recv-go", cnt->name, cnt->child_pid);
     }
 
     return 0;;
@@ -596,7 +596,7 @@ static int child_wait_sync(struct myl_cnt *cnt)
 static int child_wake_sync(struct myl_cnt *cnt)
 {
     if (verbose)  {
-        log_info("Container (name=%s pid=%d) send-ready", cnt->name, cnt->child_pid);
+        log_info("LOG", "Container (name=%s pid=%d) send-ready", cnt->name, cnt->child_pid);
     }
 
     ssize_t nw = write_sync(cnt->ready_write_fd);
@@ -854,7 +854,7 @@ static int drop_sudo(struct myl_cnt *cnt)
 static int setup_priv(struct myl_cnt *cnt)
 {
     if (verbose) {
-        log_info("Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)", 
+        log_info("LOG", "Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)", 
             cnt->name, cnt->child_pid, cnt->uid, cnt->gid);
     }
 
@@ -890,7 +890,7 @@ static int lau_cnt_start(void *arg)
 
     cnt->child_pid = getpid();
     if (verbose) {
-        log_info("Container (name=%s pid=%d) started", cnt->name, cnt->child_pid);
+        log_info("LOG", "Container (name=%s pid=%d) started", cnt->name, cnt->child_pid);
     }
 
     if (set_identity(cnt->name) != 0) _exit(1);
@@ -916,7 +916,9 @@ static int lau_cnt_start(void *arg)
 
 int lau_run_cnt(struct myl_lau *lau, struct myl_cnt *cnt)
 {
-    if (verbose) log_info("Launcher starting %s", cnt->name);
+    if (verbose) {
+        log_info("LOG", "Launcher starting %s", cnt->name);
+    }
 
     if (create_pipes(cnt) != 0) {
         return -1;
@@ -1118,7 +1120,7 @@ int create_netns(struct myl_lau *lau, struct myl_cnt *cnt)
     }
     cnt->netns_mounted = 1;
 
-    log_info("Created network namespace: %s", cnt->netns_name);
+    log_info("+", "Created network namespace: %s", cnt->netns_name);
 
     return 0;
 }
@@ -1222,7 +1224,7 @@ int mount_overlay(struct myl_lau *lau, struct myl_cnt *cnt)
 int copy_files(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     if (verbose) {
-        log_info("Launcher copy-files (name=%s, cmd=%s)", cnt->name, cnt->cmd_path);
+        log_info("LOG", "Launcher copy-files (name=%s, cmd=%s)", cnt->name, cnt->cmd_path);
     }
 
     char *cmd_path = NULL, *dst_path = NULL, *dst_dir = NULL;
@@ -1305,7 +1307,7 @@ static int set_cable_name(struct myl_lau *lau, struct myl_cnt *cnt)
 int setup_network(struct myl_cnt *cnt)
 {
     if (verbose) {
-        log_info("launcher setup-network (name=%s ipaddr=%s" , cnt->name, cnt->ip_addr);
+        log_info("LOG", "launcher setup-network (name=%s ipaddr=%s" , cnt->name, cnt->ip_addr);
     }
 
     RUN_CMD("nsenter -t %d -n ip link set %s name eth0", cnt->child_pid, cnt->veth_name);
@@ -1369,7 +1371,7 @@ int lau_wake_sync(struct myl_lau *lau, struct myl_cnt *cnt)
     }
 
     if (verbose) {
-        log_info("Launcher (name=%s pid=%d) send-go", cnt->name, cnt->child_pid);
+        log_info("LOG", "Launcher (name=%s pid=%d) send-go", cnt->name, cnt->child_pid);
     }
 
     // wake up child
@@ -1411,7 +1413,7 @@ int lau_wait_sync(struct myl_lau *lau, struct myl_cnt *cnt)
     }
 
     if (verbose) {
-        log_info("Launcher (name=%s pid=%d) recv-ready", cnt->name, cnt->child_pid);
+        log_info("LOG", "Launcher (name=%s pid=%d) recv-ready", cnt->name, cnt->child_pid);
     }
 
     return 0;
@@ -1420,7 +1422,7 @@ int lau_wait_sync(struct myl_lau *lau, struct myl_cnt *cnt)
 int lau_sync(struct myl_lau *lau)
 {
     if (verbose) {
-        log_info("Launcher sync %d containers %s", 
+        log_info("LOG", "Launcher sync %d containers %s", 
             lau->num_config,
             lau->start_order ? "sequential" : "parallel");
     }
@@ -1462,7 +1464,7 @@ int lau_open_def_netns(struct myl_lau *lau)
 int lau_cable(struct myl_lau *lau, struct myl_cnt *x, struct myl_cnt *y)
 {
     if (verbose) {
-        log_info("Launcher create-cable (left=%s, right=%s)", x->name, y->name);
+        log_info("LOG", "Launcher create-cable (left=%s, right=%s)", x->name, y->name);
     }
 
     RUN(set_cable_name(lau, x));
@@ -1483,7 +1485,7 @@ int lau_cable(struct myl_lau *lau, struct myl_cnt *x, struct myl_cnt *y)
     RUN(setup_network(x));
     RUN(setup_network(y));
 
-    log_info("Created veth pair: %s <-> %s", x->veth_name, y->veth_name);
+    log_info("+", "Created veth pair: %s <-> %s", x->veth_name, y->veth_name);
 
     return 0;
 }
@@ -1491,7 +1493,7 @@ int lau_cable(struct myl_lau *lau, struct myl_cnt *x, struct myl_cnt *y)
 int lau_run(struct myl_lau *lau)
 {
     if (verbose) {
-        log_info("Launcher starting %d containers", lau->num_config);
+        log_info("LOG", "Launcher starting %d containers", lau->num_config);
     }
 
     for (size_t i = 0; i < lau->num_config; i++) {
@@ -1505,7 +1507,7 @@ int lau_run(struct myl_lau *lau)
 int lau_setup(struct myl_lau *lau)
 {
     if (verbose) {
-        log_info("Launcher setup infrastucture");
+        log_info("LOG", "Launcher setup infrastucture");
     }
 
     RUN(lau_open_def_netns(lau));
@@ -1676,7 +1678,7 @@ int lau_wait(struct myl_lau *lau)
         struct myl_cnt *cnt = lau_find_child(lau, pid);
         if (!cnt) {
             // XXX - not ours ?
-            log_info("waitpid reaped unknown child pid %d", pid);
+            log_info("LOG", "waitpid reaped unknown child pid %d", pid);
             continue;
         }
         // check if running 

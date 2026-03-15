@@ -242,6 +242,7 @@ BIN_CLIENT=$(BIN_DIR)/client/client
 BIN_CMDS= $(BIN_CLIENT) $(BIN_SERVER)
 install: $(INSTALL_DONE)
 $(INSTALL_DONE): $(CMDS) | $(BUILD_DIR) $(BIN_DIR) 
+	@echo "[Installing files]"
 	$(INSTALL) -D -m 755 server $(BIN_DIR)/db/server
 	$(INSTALL) -D -m 755 client $(BIN_DIR)/client/client
 	$(INSTALL) -D -m 755 launcher $(BIN_DIR)
@@ -328,10 +329,10 @@ list-pod:
 list-all:
 	kubectl get all
 
-.PHONY: list-logs
-list-logs:
-	kubectl logs statefulset/server-pod
-	kubectl logs deployment/client-app
+.PHONY: show-log
+show-log:
+	kubectl logs statefulset/server-pod | tail -n 10
+	kubectl logs deployment/client-app  | tail -n 10
 
 .PHONY: test-pod
 TEST_POD_RESULT = $(BUILD_DIR)/test_pod.txt

@@ -5,7 +5,7 @@
 
 // logger
 void log_msg(const char *msg);
-void _log_info(const char *what, const char *fmt, ...)
+void log_info(const char *what, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
     __attribute__((format(printf, 3, 4)));
@@ -14,7 +14,7 @@ void _log_error(const char *file, int line, const char *func, int ec, const char
 void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
     __attribute__((format(printf, 5, 6)));
 
-#define log_info(...) _log_info("+", __VA_ARGS__)
+void log_argv(const char *what, int argc, char *argv[]);
 
 #define log_msg_rf(msg) ({ \
     log_msg(msg); \

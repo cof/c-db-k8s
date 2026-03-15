@@ -205,7 +205,7 @@ static void client_close(struct simple_client *client, int force)
 static void client_destroy(struct simple_client *client, int can_log)
 {
     if (can_log) {
-        log_info("Client local-close %s", sock_tostr(&client->sock));
+        log_info("+", "server-close %s", sock_tostr(&client->sock));
     }
 
     sock_close(&client->sock, can_log);
@@ -278,7 +278,7 @@ void do_client_read(struct simple_client *client)
         // read failed
         if (rc == SOCK_CLOSED) {
             // client closed its end
-            log_info("Client remote-closed %s", sock_tostr(&client->sock));
+            log_info("+", "client-disconnect %s", sock_tostr(&client->sock));
             client_close(client, 0);
         }
         return;
@@ -383,7 +383,7 @@ struct simple_client *server_accept(struct simple_server *server)
     // add to servers client list 
     list_append(&server->clients, &client->node);
 
-    log_info("Client connected from %s", sock_tostr(&client->sock));
+    log_info("+", "Client connected from %s", sock_tostr(&client->sock));
 
     return client;
 }
@@ -421,7 +421,7 @@ static void do_server_check(struct simple_server *server)
     close(server->sock.fd);
     server->sock.fd = -1;
 
-    log_info("Database stopped listening on %s", sock_tostr(&server->sock));
+    log_info("+", "Database stopped listening on %s", sock_tostr(&server->sock));
 }
 
 static void handle_server(struct simple_server *server, uint32_t events)
@@ -534,7 +534,7 @@ int setup_listener(struct simple_server *server)
         return -1;
     }
 
-    log_info("Database listening on %s", sock_tostr(&server->sock));
+    log_info("+", "Database listening on %s", sock_tostr(&server->sock));
 
     // all done
     return 0;
@@ -563,7 +563,8 @@ int server_parse_argv(struct simple_server *server, int argc, char *argv[])
         { "help",   "This help", 0, 'e' },
         { "hostname",  "hostname to listen on", 1, 'h' },
         { "port",     "port to listen on",      1, 'p', GETOPT_DEFSTR(server->port) },
-        { "database", "Path to database file",  1, 'd' }
+        { "database", "Path to database file",  1, 'd' },
+        { "argv",     "Dump argv to stdout",    0, 'a' }
     };
 
     char *examples[] = {
@@ -581,6 +582,7 @@ int server_parse_argv(struct simple_server *server, int argc, char *argv[])
         case 'h': rc = set_str(&server->hostname, opt, getopt_str(&parse)); break;
         case 'p': rc = set_str(&server->port, opt, getopt_str(&parse)); break;
         case 'd': rc = set_str(&server->database, opt, getopt_str(&parse)); break;
+        case 'a': log_argv("+", argc, argv); break;
         }
         if (rc < 0) break;
     }
@@ -674,7 +676,7 @@ int main(int argc, char *argv[])
     if (server_run(server) != 0) { ec = 7; goto done; }
 
     if (caught_signo) {
-        log_info("Server PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
+        log_info("+","Server PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
             server->pid, 
             caught_signo, strsignal(caught_signo), 
             sender_uid,
