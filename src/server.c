@@ -180,7 +180,7 @@ int process_cmd(struct simple_client *client, struct str_slice cmd)
     struct str_slice name = slice_copy(cmd);
     struct str_slice args = slice_split(&name, ' ');
 
-    slice_toupper(&name);
+    name = slice_toupper(name);
     slice_trim(&args);
 
     int cmd_idx = find_cmd(name);

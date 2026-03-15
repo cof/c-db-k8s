@@ -1,13 +1,21 @@
+/*
+ * A util api for string and cmdline processing
+ *
+ */
 #ifndef __UTIL_H__
 #define __UTIL_H__
 
-#include <stdint.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 #include <getopt.h>
 
+// system errors
+#define UTIL_OK    0
 #define UTIL_FAIL -1
+#define UTIL_EOF  -2
 
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
@@ -26,11 +34,40 @@
 #define XSTR(a) #a
 #define STR(a) XSTR(a)
 
+static inline size_t safe_strlen(const char *str)
+{
+    return str ? strlen(str) : 0;
+}
+
+// return str if set else use default
+static inline const char *str_def(const char *str, const char *def_str)
+{
+    return str && *str ? str : def_str;
+}
+
+static inline size_t max(size_t x, size_t y)
+{
+    return x > y ? x : y;
+}
+
+static inline const char *ec_tostr(int len, const char *estr[len], int ec, const char *def)
+{
+    const char *str;
+
+    str = ec >= 0 && ec < len
+        ? estr[ec] 
+        : NULL;
+
+    return str ?: def;
+}
+
 // string handling code
 struct str_slice {
     char *ptr;
     size_t len;
 };
+
+#define SLICE(x) (int) (x).len, (x).ptr
 
 static inline struct str_slice slice_make(char *str, size_t len)
 {
@@ -103,7 +140,7 @@ static inline struct str_slice slice_split(struct str_slice *src, int ch)
     return dst;
 }
 
-static inline void str2lower(char *str, size_t len)
+static inline void str_tolower(char *str, size_t len)
 {
     while (len) {
         int ch = *str;
@@ -113,7 +150,7 @@ static inline void str2lower(char *str, size_t len)
     }
 }
 
-static inline void str2upper(char *str, size_t len)
+static inline void str_toupper(char *str, size_t len)
 {
     while (len) {
         int ch = *str;
@@ -123,9 +160,38 @@ static inline void str2upper(char *str, size_t len)
     }
 }
 
+
+
+
 static inline int iswhite(int ch) 
 {
     return ch == ' ' || ch == '\t' || ch == '\v' || ch == '\r' || ch == '\t' ? 1 : 0;
+}
+
+static inline int is_numeral(int ch) 
+{
+    return ch >= '0' && ch <= '9' ? 1 : 0;
+}
+
+
+static inline int str_isnumeric(const char *str, size_t len)
+{
+	if (!len) return 0;
+    
+    const char *end = str + len;
+
+    while (str < end) {
+        if (!is_numeral(*str)) return 0;
+        str++;
+    }
+
+    return 1;
+}
+
+static inline int slice_isnumeric(struct str_slice str)
+{
+    return str_isnumeric(str.ptr, str.len);
+
 }
 
 static inline struct str_slice *slice_ltrim(struct str_slice *str)
@@ -152,16 +218,16 @@ static inline struct str_slice *slice_trim(struct str_slice *str)
     return slice_ltrim(slice_rtrim(str));
 }
 
-static inline struct str_slice *slice_toupper(struct str_slice *str)
+static inline struct str_slice slice_toupper(struct str_slice str)
 {
-    str2upper(str->ptr, str->len);
+    str_toupper(str.ptr, str.len);
 
     return str;
 }
 
-static inline struct str_slice *slice_tolower(struct str_slice *str)
+static inline struct str_slice slice_tolower(struct str_slice str)
 {
-    str2lower(str->ptr, str->len);
+    str_tolower(str.ptr, str.len);
 
     return str;
 }
