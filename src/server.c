@@ -684,11 +684,11 @@ int main(int argc, char *argv[])
     int ec = EXIT_FAILURE;
 
     if (!(server = server_create())) { ec = 1; goto done; }
-    if (server_init(server) != 0)    { ec = 3; goto done; }
-    if (setup_signals(server) != 0)  { ec = 2 ;goto done; }
-    if (server_parse_argv(server, argc, argv) != 0) { ec = 4;  goto done; }
-    if (setup_database(server) != 0) { ec = 5; goto done; }
-    if (setup_listener(server) != 0) { ec = 6; goto done; }
+    if (server_init(server))    { ec = 2; goto done; }
+    if (setup_signals(server))  { ec = 3 ;goto done; }
+    if (server_parse_argv(server, argc, argv)) { ec = 4;  goto done; }
+    if (setup_database(server)) { ec = 5; goto done; }
+    if (setup_listener(server)) { ec = 6; goto done; }
 
     if (server_run(server) != 0) { ec = 7; goto done; }
 
