@@ -20,7 +20,7 @@ spec:
       - name: "client-pod"
         image: db-k8s-client:v1
         stdin: true # keep stdin open or client will exit ...
-        tty: true   # allow user to attach
+        tty: false   # allow user to attach
         readinessProbe:
           exec:
             command: ["sh", "-c", "nc -zv db-service 6379"]
@@ -39,3 +39,4 @@ spec:
           - "db-service"
           - "--port"
           - "6379"
+          - "--log"
