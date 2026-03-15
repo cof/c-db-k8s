@@ -39,7 +39,6 @@ int main(int argc, char *argv[])
     const char *port = TCP_PORT_STR;
     int log = 0;
 
-
     // process cmd-line options
     struct getopt_parse parse;
     int rc = getopt_init(&parse, argc, argv, ARRAY(opts));
