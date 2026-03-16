@@ -333,14 +333,20 @@ show-log:
 	kubectl logs statefulset/server-pod | tail -n 10
 	kubectl logs deployment/client-app  | tail -n 10
 
+# kubectl logs -l app=client-pod -f --prefix
+# kubectl logs -l app=server-db -f --prefix
 .PHONY: test-pod
 TEST_POD_RESULT = $(BUILD_DIR)/test_pod.txt
 test-pod: 
-	@echo "Sending test cmds to client"
-	@kubectl exec -i deployment/client-app -- sh -c "cat > /proc/1/fd/0" < $(TEST_REQ_FILE)
-	@sleep 1
-	@echo "Checling logs"
-	@kubectl logs deployment/client-app --tail=20 > output.txt
+	$(Q)echo "Staring test-pod"; \
+	RAND_STR=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30); \
+	CLIENT_POD=$$(kubectl get pods -l app=client-pod -o name | head -n 1); \
+	echo "Sending cmds to client-pod $$CLIENT_POD"; \
+	echo "SET test-pod $$RAND_STR" | kubectl attach -qi $$CLIENT_POD; \
+	echo "GET test-pod" | kubectl attach -qi $$CLIENT_POD; \
+	echo "Checking logs"; \
+	kubectl logs $$CLIENT_POD --tail=20 > $(TEST_POD_RESULT); \
+	grep -q "recv rsp: $$RAND_STR" $(TEST_POD_RESULT) || ( echo "ERROR: Missing $$RAND_STR"; exit 1)
 
 
 # delete cluster and docker images
