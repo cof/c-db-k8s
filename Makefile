@@ -1,8 +1,8 @@
 # Makefile for c-db-k8s
-# make all
-# make deploy
-# make test
-# make test-net
+# 
+# - make all
+# - make test-all
+# - make spotless
 
 
 # compiler,debug,dirs
@@ -233,11 +233,8 @@ $(ROOTFS_DONE): $(OUR_CMDS) | $(BUILD_DIR)
 $(ROOTFS_TAR) : $(ROOTFS_DONE)
 	$(cmd_TAR) -czf $@ $(ROOTFS_DIR)
 
-# seccomp filter
-
-# =======
-# install
-# =======
+# install cmds into bin
+# ---------------------
 .PHONY: install
 INSTALL_DONE=$(BUILD_DIR)/.install_done
 BIN_SERVER=$(BIN_DIR)/db/server
@@ -251,6 +248,8 @@ $(INSTALL_DONE): $(CMDS) | $(BUILD_DIR) $(BIN_DIR)
 	$(INSTALL) -D -m 755 launcher $(BIN_DIR)
 	touch $(INSTALL_DONE)
 
+# create tags file
+# ----------------
 .PHONY: tags
 SOURCES = $(wildcard src/*.c src/*.h)
 tags: $(SOURCES)
@@ -266,9 +265,13 @@ clean-all: clean-k8s clean
 	@echo "Clean done"
 
 .PHONY: spotless
-spotless: clean
+spotless: clean-all
 	@echo "Wiping everthing"
 	docker system prune -af --volumes
+
+.PHONY: test-all
+test-all: test test-wait test-pod test-net
+
 
 # ---------
 # k8s stuff
@@ -281,7 +284,16 @@ DOCKER_DONE=$(BUILD_DIR)/.docker_done
 CLUSTER_DONE=$(BUILD_DIR)/.cluster_done
 LOAD_DONE=$(BUILD_DIR)/.load_done
 DEPLOY_DONE=$(BUILD_DIR)/.deploy_done
-DONE_FILES = $(DOCKER_DONE) $(CLUSTER_DONE) $(LOAD_DONE) $(DEPLOY_DONE)
+WAIT_DONE=$(BUILD_DIR)/.wait_done
+DONE_FILES = $(DOCKER_DONE) $(CLUSTER_DONE) $(LOAD_DONE) $(DEPLOY_DONE) $(WAIT_DONE)
+
+# hack to wait for cluster to come up
+# ----------------------------------
+.PHONY: test-wait
+test-wait: $(WAIT_DONE)
+$(WAIT_DONE):
+	sleep 2
+	touch $(WAIT_DONE)
 
 # create docker images
 # --------------------
@@ -322,6 +334,7 @@ $(DEPLOY_DONE): $(LOAD_DONE) | $(BUILD_DIR)
 	kubectl rollout restart statefulset/server-pod
 	touch $(DEPLOY_DONE)
 
+
 # test set|get works
 # ------------------
 .PHONY: test-pod
@@ -330,10 +343,10 @@ test-pod: deploy
 	$(Q)echo "[INFO] Staring test-pod"; \
 	RAND_STR=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30); \
 	CLIENT_POD=$$(kubectl get pods -l app=client-pod -o name | head -n 1); \
-	echo "- Sending cmds to $$CLIENT_POD"; \
+	echo "- Sending SET|GET cmds to client $$CLIENT_POD"; \
 	echo "SET test-pod $$RAND_STR" | kubectl attach -qi $$CLIENT_POD; \
 	echo "GET test-pod" | kubectl attach -qi $$CLIENT_POD; \
-	echo "- Checking logs for $$RAND_STR"; \
+	echo "- Checking client logs for $$RAND_STR"; \
 	kubectl logs $$CLIENT_POD --tail=20 > $(TEST_POD_RESULT) 2>/dev/null; \
 	grep -q "recv rsp: $$RAND_STR" $(TEST_POD_RESULT) || ( echo "ERROR: Missing $$RAND_STR"; exit 1); \
 	echo "- TEST passed"
@@ -367,12 +380,15 @@ test-net: deploy
 
 
 # delete cluster and docker images
+# -------------------------------
 clean-k8s:
 	@echo "Cleaning k8s config"
 	k3d cluster delete $(CLUSTER_NAME) || true
 	docker rmi $(SERVER_IMG) $(CLIENT_IMG) || true
 	rm -f $(DONE_FILES)
 
+# misc k8s commands
+# --------------
 .PHONY: apply
 apply:
 	kubectl apply -k k8s/
@@ -395,9 +411,9 @@ show-log:
 # kubectl logs -l app=client-pod -f --prefix
 # kubectl logs -l app=server-db -f --prefix
 
-#
+# -----------------------
 # VM for testing lanucher
-# 
+# -----------------------
 
 # alpine linux
 OS_VARIANT= alpinelinux3.21
@@ -491,4 +507,3 @@ wipe-vm:
 	 virsh destroy $(VM_NAME)  || true
 	 virsh undefine $(VM_NAME) || true
 	 rm -fr vmdir
-

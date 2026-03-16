@@ -12,28 +12,37 @@ Run a database client and server application inside containers.
 - **Bash**: Version 4.0+ for running tests
 - **awk**: Version 4.0+ for running tests
 - **Docker**: for building container images
-- **kind**:  for creating clusters and loading docker images
-- **k8s**:  for managing pods
+- **k3d**:  for creating clusters, loading docker images and enforcing network policy
+- **kubectl**: for managing pods
 
 ## Building the Project
 
 - **make all** (Default): Compiles server,client,launcher
-- **make deploy**  Deploy client and server into k8s
-- **make test** : Runs server,client tests
+- **make deploy**  Deploy client and server into pods
 - **make clean**: Removes compiled binaries, object files, k8s artifacts and test logs
 - **make spotless**: clean + docker system prune
 
-Misc targets
+Test targets
+
+- **make test** standalone client and server tests
+- **make test-pod** tests client and server inside pods
+- **make test-net** tests network policy
+- **make test-all** run all tests
+
+Misc targets:
 
 - **make install** Copy all binaries to bin folder
+- **make gen-seccomp** generate a new seccomp rules flle
+- **make rootfs** generate a roofs for the containers
+- **make install** puts cmds into bin folder
+
+VM targets:
+
 - **make install-vm** Download and create a test-launcher VM
 - **make list-vm**  Show test-launcher VM status
 - **make list-cache** Show VM iso downloads
 - **make show-config** Show VM config
 - **make wipe-vm** shutdown VM, undefine VM and remove the VM file
-- **make gen-seccomp** generate a new seccomp rules flle
-- **make rootfs** generate a roofs for the containers
-
 
 ## 1. Local Containers
 
@@ -190,8 +199,8 @@ Client will connect to server and read/write lines to server.
 ## 2. Kubernetes
 
 Deploy the the database client and server on Kubernetes.
-
-To deploy simply run
+	
+To deploy simply make deploy or make test-all
 
     $ make deploy
 
@@ -202,42 +211,62 @@ This will:
 - build docker images files
 - create a cluster
 - load docker images into cluster
-- start the k8s pods
+- start the pods
 
-To see the k8s pods simply run
+**Supported featues**
 
-    $ make list-pod
+####2.1 Database
+- Database Deployment
+- StatefulSet with single replica
+- PersistentVolumeClaim for data
+- Service for stable DNS name
+- Resource limits and security context
+
+####2.2 Client
+- Deployment with configurable replicas
+- Environment-based database connection
+- Readiness probe that checks DB connectivity
+
+####2.3 Network Policy
+- Only client pods can reach database
+- Database cannot initiate outbound connections
+- Deny all other ingress to database
+
+####2.4 Observability
+- Client logs each request/response
+- Database logs connections with source IP
+
 
 **Example usage**
 
+To check the pods are up:
+
     $ make list-pod
-    kubectl get all
-    NAME                              READY   STATUS    RESTARTS   AGE
-    pod/client-app-86b75f877c-2xv4f   1/1     Running   0          76m
-    pod/client-app-86b75f877c-dbfxg   1/1     Running   0          76m
-    pod/client-app-86b75f877c-dj8rb   1/1     Running   0          76m
-    pod/server-pod-0                  1/1     Running   0          76m
+	kubectl get statefulset/server-pod 
+	NAME         READY   AGE
+	server-pod   1/1     4m2s
+    kubectl get deployment/client-app
+    NAME         READY   UP-TO-DATE   AVAILABLE   AGE
+    client-app   3/3     3            3           4m2s
+    kubectl get pods -l 'app in (client-pod, server-db)'
+    NAME                         READY   STATUS    RESTARTS   AGE
+    client-app-644b4d99d-hfh8w   1/1     Running   0          3m35s
+    client-app-644b4d99d-tg9xs   1/1     Running   0          4m2s
+    client-app-644b4d99d-zzl27   1/1     Running   0          3m40s
 
-    NAME                 TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)    AGE
-    service/db-service   ClusterIP   None         <none>        6379/TCP   140m
-    service/kubernetes   ClusterIP   10.96.0.1    <none>        443/TCP    140m
+To check the client and database work.
 
-    NAME                         READY   UP-TO-DATE   AVAILABLE   AGE
-    deployment.apps/client-app   3/3     3            3           140m
+	$ make test-pod
+	[INFO] Staring test-pod
+	- Sending SET|GET cmds to client pod/client-app-644b4d99d-hfh8w
+	- Checking client logs for N6gOogByp48KOp8OwgJvpOyOosBY7U
+	- TEST passed
 
-    NAME                                    DESIRED   CURRENT   READY   AGE
-    replicaset.apps/client-app-59ccc6f6dc   0         0         0       131m
-    replicaset.apps/client-app-67d945f567   0         0         0       131m
-    replicaset.apps/client-app-67d9cf8b4d   0         0         0       134m
-    replicaset.apps/client-app-76759d5bdf   0         0         0       133m
-    replicaset.apps/client-app-798bcff9b7   0         0         0       135m
-    replicaset.apps/client-app-7d54d6b68f   0         0         0       134m
-    replicaset.apps/client-app-844b59d7b4   0         0         0       125m
-    replicaset.apps/client-app-86b75f877c   3         3         3       76m
-    replicaset.apps/client-app-89bdbd7b     0         0         0       77m
-    replicaset.apps/client-app-9dc9d7fcf    0         0         0       126m
-    replicaset.apps/client-app-f6f56c588    0         0         0       106m
+To check the Nework Policy is active.
 
-    NAME                          READY   AGE
-    statefulset.apps/server-pod   1/1     140m
+	$ make test-net
+	Checking db-pod -> internet blocked PASS (Isolated)
+	Checking client-pod -> internet blocked: PASS (Isolated)
+	Checking client-pod -> db-pod allowd: PASS (Isolated)
+	Checking random-pod to db-pod:6379: PASS (Isolated)
 
