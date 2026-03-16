@@ -22,6 +22,7 @@
 #define ARRAY(a)  ARR_LEN(a), a
 #define STR_LIT(s) (s), (sizeof(s) - 1)
 #define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
+#define RMCONST(_t, _v) ((_t)(uintptr_t)(_v))
 
 // ptr macros
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
@@ -48,6 +49,11 @@ static inline const char *str_def(const char *str, const char *def_str)
 static inline size_t max(size_t x, size_t y)
 {
     return x > y ? x : y;
+}
+
+static inline size_t min(size_t x, size_t y)
+{
+    return x < y ? x : y;
 }
 
 static inline const char *ec_tostr(int len, const char *estr[len], int ec, const char *def)
@@ -159,8 +165,6 @@ static inline void str_toupper(char *str, size_t len)
         len--;
     }
 }
-
-
 
 
 static inline int iswhite(int ch) 
@@ -318,15 +322,6 @@ static inline struct get_opt *getopt_curopt(struct getopt_parse *parse)
     return &parse->opts[idx];
 }
 
-static inline struct get_opt *getopt_missopt(struct getopt_parse *parse)
-{
-    int idx = optind - 1;
-
-    if (idx < 0) return NULL;
-    parse->opt_idx = idx;
-
-    return &parse->opts[idx];
-}
 
 static inline char *getopt_erropt(struct getopt_parse *parse)
 {

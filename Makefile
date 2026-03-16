@@ -99,9 +99,8 @@ test: test-server test-client
 
 TEST_REQ_FILE = tests/test_req.txt
 TEST_RSP_FILE = tests/test_rsp.txt
-TEST_PORT := 6379
+TEST_PORT = 6379
 TEST_ADDR = 127.0.0.1
-TEST_HOSTPORT = $(TEST_ADDR):$(TEST_PORT)
 TEST_SERVER_LOG = $(BUILD_DIR)/test-server.log
 TEST_WAIT_RUN = 0.5
 
@@ -121,13 +120,13 @@ CHECK_ALIVE = \
 test-server: server
 	$(Q)echo "[ TEST-START $@ ]"; \
 	echo "Running server at $(TEST_HOSTPORT)"; \
-	./server $(TEST_HOSTPORT) 1> $(TEST_SERVER_LOG) 2>&1 & SERVER_PID=$$!; \
+	./server --hostname $(TEST_ADDR) --port $(TEST_PORT) 1> $(TEST_SERVER_LOG) 2>&1 & SERVER_PID=$$!; \
 	echo "Checking server at PID $$SERVER_PID"; \
 	sleep $(TEST_WAIT_RUN); \
 	$(call CHECK_ALIVE, $$SERVER_PID, "server", $(TEST_SERVER_LOG)); \
-	echo "Checking server at $(TEST_HOSTPORT)"; \
+	echo "Checking server at $(TEST_ADDR):$(TEST_PORT)"; \
 	timeout 3 bash -c 'until nc -z $(TEST_ADDR) $(TEST_PORT); do sleep 0.1; done' || \
-			(echo "FAIL: Server $$SERVER_PID at $(TEST_HOSTPORT) failed to connect!"; kill $$SERVER_PID 2>/dev/null; exit 1); \
+			(echo "FAIL: Server $$SERVER_PID at '$(TEST_ADDR):$(TEST_PORT)' failed to connect!"; kill $$SERVER_PID 2>/dev/null; exit 1); \
 	echo "Running tests..."; \
 	CMD="SET foo bar";  EXPECT="OK"; $(RUN_TEST); \
 	CMD="GET foo"; EXPECT="bar"; $(RUN_TEST); \
@@ -160,7 +159,7 @@ test-client: client
 	sleep $(TEST_WAIT_RUN); \
 	$(call CHECK_ALIVE,$$SERVER_PID, $(SIMPLE_SERVER)); \
 	echo "Sending $(TEST_REQ_FILE) via client" ; \
-	cat $(TEST_REQ_FILE) | timeout 2s ./client localhost $(TEST_PORT) > $(BUILD_RSP_FILE); \
+	cat $(TEST_REQ_FILE) | timeout 2s ./client --hostname $(TEST_ADDR) --port $(TEST_PORT) > $(BUILD_RSP_FILE); \
 	sed -i -e 's/^> //' -e '/^\[+]/d' $(BUILD_RSP_FILE); \
 	echo "Stopping $(SIMPLE_SERVER) at PID $$SERVER_PID"; \
 	kill -9 $$SERVER_PID 2>/dev/null || true; \

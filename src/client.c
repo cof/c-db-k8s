@@ -26,7 +26,6 @@ static struct get_opt opts[] = {
     { "port",     "port to listen on",     1, 'p', GETOPT_DEFSTR(TCP_PORT_STR) },
     { "log",      "log request/response",  0, 'l' },
     { "argv",     "Dump argv to stdout",   0, 'a' }
-
 };
 
 static char *examples[] = {

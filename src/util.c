@@ -67,6 +67,19 @@ char *int_tostr(int val)
 }
 
 // wrapper around getopt_long
+static struct get_opt *getopt_missopt(struct getopt_parse *parse)
+{
+    int val = optopt;
+
+    for (size_t i = 0; i < parse->num_opt; i++) {
+        if (parse->opts[i].val == val) {
+            parse->opt_idx = i;
+            return &parse->opts[i];
+        }
+    }
+
+    return NULL;
+}
 
 int getopt_init(struct getopt_parse *parse, 
     int argc, char *argv[],
@@ -79,6 +92,7 @@ int getopt_init(struct getopt_parse *parse,
 
     parse->opts = opts;
     parse->num_opt = num_opt;
+    parse->opt_idx = 0;
 
     if (num_opt > GETOPT_MAX) {
         return log_error_rf("Num opts %zu > max %d", num_opt, GETOPT_MAX);
@@ -87,13 +101,26 @@ int getopt_init(struct getopt_parse *parse,
     // disable getopt error reporiing
     opterr = 0;
 
-    for (size_t i = 0; i < num_opt; i++) {
-        struct option *long_opt = &parse->long_opts[i];
-        long_opt->name = opts[i].name;
-        long_opt->has_arg = opts[i].has_arg;
-        long_opt->val = opts[i].val;
+    // convert to getopt_long fmt
+    size_t i = 0;
+    while (1) {
+        struct option *lopt = &parse->long_opts[i];
+        struct get_opt *opt = &opts[i];
+        // 3 exit condtions
+        if (num_opt && i >= num_opt) break;
+        if (opt->name == NULL) break;
+        if (parse->num_opt >= GETOPT_MAX) {
+            return log_error_rf("Num opts %zu > max %d", num_opt, GETOPT_MAX);
+        }
+        // safe to load
+        lopt->name = opt->name;
+        lopt->has_arg = opt->has_arg;
+        lopt->val = opt->val;
+        if (!num_opt) parse->num_opt++;
+        i++;
     }
 
+    // all done
     return 0;
 }
 
@@ -123,7 +150,7 @@ int getopt_next(struct getopt_parse *parse)
     }
     
     parse->val = slice_make_cstr(optarg);
-        
+
     // option code
     return rc;
 }
