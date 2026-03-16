@@ -1,19 +1,47 @@
+#  server isolation
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: client-access
+  name: server-protection
 spec:
   podSelector:
     matchLabels:
-      app: server-db
+      app: db-pod
   policyTypes:
   - Ingress
+  - Egress
   ingress:
   - from:
     - podSelector:
         matchLabels:
-          app: "client-pod"
+          app: client-pod
     ports:
-    - protocol: "TCP"
-      port: "cli-port"
+    - protocol: TCP
+      port: 6379
+  egress: [] # Nothing allowed
+---
+# client isolation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: client-protection
+spec:
+  podSelector:
+    matchLabels:
+      app: client-pod
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: db-pod
+    ports:
+    - protocol: TCP
+      port: 6379
+  - to: # need DNS to find "db-service"
+    - namespaceSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53
 

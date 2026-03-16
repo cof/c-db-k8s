@@ -1,7 +1,12 @@
 # Makefile for c-db-k8s
 # make all
-# make tests
+# make deploy
+# make test
+# make test-net
 
+
+# compiler,debug,dirs
+# ------------------
 DEBUG ?= 0
 VALGRIND ?= 0
 
@@ -11,7 +16,6 @@ Q = @
 ifeq ($V,1)
 Q=
 endif
-
 
 ifeq ($(V),1)
 cmd_TAR = $(TAR)
@@ -258,7 +262,7 @@ clean:
 	rm -rf $(BUILD_DIR) $(ROOTFS_DIR) $(CMDS) $(BIN_DIR) tags
 
 .PHONY: clean-all
-cleana: clean-k8 clean
+clean-all: clean-k8s clean
 	@echo "Clean done"
 
 .PHONY: spotless
@@ -280,6 +284,7 @@ DEPLOY_DONE=$(BUILD_DIR)/.deploy_done
 DONE_FILES = $(DOCKER_DONE) $(CLUSTER_DONE) $(LOAD_DONE) $(DEPLOY_DONE)
 
 # create docker images
+# --------------------
 .PHONY: build-images 
 build-images: $(DOCKER_DONE)
 $(DOCKER_DONE) : $(INSTALL_DONE) | $(BUILD_DIR)
@@ -289,21 +294,24 @@ $(DOCKER_DONE) : $(INSTALL_DONE) | $(BUILD_DIR)
 	touch $(DOCKER_DONE)
 
 # ensure cluster exists
+# --------------------
 .PHONY: create-cluster
 create-cluster: $(CLUSTER_DONE)
 $(CLUSTER_DONE): | $(BUILD_DIR)
-	kind get clusters | grep -qx $(CLUSTER_NAME) || kind create cluster --name $(CLUSTER_NAME)
+	k3d cluster list | grep -qx $(CLUSTER_NAME) || k3d cluster create $(CLUSTER_NAME)
 	touch $(CLUSTER_DONE)
 
 # load docker images
+# ------------------
 .PHONY: load-images
 load-images: $(LOAD_DONE)
 $(LOAD_DONE): $(DOCKER_DONE) $(CLUSTER_DONE) | $(BUILD_DIR) 
-	kind load docker-image $(SERVER_IMG) --name $(CLUSTER_NAME)
-	kind load docker-image $(CLIENT_IMG) --name $(CLUSTER_NAME)
+	k3d image import $(SERVER_IMG) -c $(CLUSTER_NAME)
+	k3d image import $(CLIENT_IMG) -c $(CLUSTER_NAME)
 	touch $(LOAD_DONE)
 
 # deploy the pods
+# ---------------
 .PHONY: deploy
 deploy : $(DEPLOY_DONE)
 $(DEPLOY_DONE): $(LOAD_DONE) | $(BUILD_DIR)
@@ -313,6 +321,57 @@ $(DEPLOY_DONE): $(LOAD_DONE) | $(BUILD_DIR)
 	kubectl rollout restart deployment/client-app
 	kubectl rollout restart statefulset/server-pod
 	touch $(DEPLOY_DONE)
+
+# test set|get works
+# ------------------
+.PHONY: test-pod
+TEST_POD_RESULT = $(BUILD_DIR)/test_pod.txt
+test-pod: deploy
+	$(Q)echo "[INFO] Staring test-pod"; \
+	RAND_STR=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30); \
+	CLIENT_POD=$$(kubectl get pods -l app=client-pod -o name | head -n 1); \
+	echo "- Sending cmds to $$CLIENT_POD"; \
+	echo "SET test-pod $$RAND_STR" | kubectl attach -qi $$CLIENT_POD; \
+	echo "GET test-pod" | kubectl attach -qi $$CLIENT_POD; \
+	echo "- Checking logs for $$RAND_STR"; \
+	kubectl logs $$CLIENT_POD --tail=20 > $(TEST_POD_RESULT) 2>/dev/null; \
+	grep -q "recv rsp: $$RAND_STR" $(TEST_POD_RESULT) || ( echo "ERROR: Missing $$RAND_STR"; exit 1); \
+	echo "- TEST passed"
+
+PASS_STR = "\033[32mPASS (Isolated)\033[0m\n"
+FAIL_STR = "\033[31mFAIL (Leaking!)\033[0m\n"
+
+# Test: Network Policy
+# ------------------
+.PHONY: test-net
+test-net: deploy
+	$(Q)echo -n "Checking db-pod -> internet blocked "; \
+	MYPOD=$$(kubectl get pods -l app=db-pod -o name | head -n 1); \
+	kubectl exec $$MYPOD -- nc -w 3 -zv google.com 443 >/dev/null 2>&1; \
+	if [ $$? -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
+	echo -n "Checking client-pod -> internet blocked: "; \
+	MYPOD=$$(kubectl get pods -l app=client-pod -o name | head -n 1); \
+	kubectl exec $$MYPOD -- nc -w 3 -zv google.com 443 >/dev/null 2>&1; \
+	if [ $$? -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
+	echo -n "Checking client-pod -> db-pod allowd: "; \
+	MYPOD=$$(kubectl get pods -l app=client-pod -o name | head -n 1); \
+	kubectl exec $$MYPOD -- nc -w 3 -zv db-service 6379 >/dev/null 2>&1; \
+	if [ $$? -eq 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
+	echo -n "Checking random-pod to db-pod:6379: "; \
+	kubectl run random-pod --image=busybox -l app=stranger --restart=Never -- sleep 30 >/dev/null 2>&1; \
+	kubectl wait --for=condition=Ready pod/random-pod --timeout=15s >/dev/null 2>&1; \
+	kubectl exec random-pod -- nc -w 3 -zv db-service 6379 >/dev/null 2>&1; \
+	EXIT_CODE=$$?; \
+	kubectl delete pod random-pod --now >/dev/null 2>&1; \
+	if [ $$EXIT_CODE -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi
+
+
+# delete cluster and docker images
+clean-k8s:
+	@echo "Cleaning k8s config"
+	k3d cluster delete $(CLUSTER_NAME) || true
+	docker rmi $(SERVER_IMG) $(CLIENT_IMG) || true
+	rm -f $(DONE_FILES)
 
 .PHONY: apply
 apply:
@@ -335,26 +394,6 @@ show-log:
 
 # kubectl logs -l app=client-pod -f --prefix
 # kubectl logs -l app=server-db -f --prefix
-.PHONY: test-pod
-TEST_POD_RESULT = $(BUILD_DIR)/test_pod.txt
-test-pod: 
-	$(Q)echo "Staring test-pod"; \
-	RAND_STR=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30); \
-	CLIENT_POD=$$(kubectl get pods -l app=client-pod -o name | head -n 1); \
-	echo "Sending cmds to client-pod $$CLIENT_POD"; \
-	echo "SET test-pod $$RAND_STR" | kubectl attach -qi $$CLIENT_POD; \
-	echo "GET test-pod" | kubectl attach -qi $$CLIENT_POD; \
-	echo "Checking logs"; \
-	kubectl logs $$CLIENT_POD --tail=20 > $(TEST_POD_RESULT); \
-	grep -q "recv rsp: $$RAND_STR" $(TEST_POD_RESULT) || ( echo "ERROR: Missing $$RAND_STR"; exit 1)
-
-
-# delete cluster and docker images
-clean-k8s:
-	@echo "Cleaning k8s config"
-	kind delete cluster --name $(CLUSTER_NAME) || true
-	docker rmi $(SERVER_IMG) $(CLIENT_IMG) || true
-	rm -f $(DONE_FILES)
 
 #
 # VM for testing lanucher

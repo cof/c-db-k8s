@@ -1,7 +1,7 @@
 resources:
     - database.yaml
     - client.yaml
-    - network-policy.yaml
+    - network-policy.yaml 
 
 replicas:
   - name: "client-app"
