@@ -10,20 +10,7 @@
 #include "util.h"
 #include "log.h"
 
-char *gen_path(const char *dir, const char *name)
-{
-    if (!dir || !name) return NULL;
-
-    char *path = NULL;
-    int rc = asprintf(&path, "%s/%s", dir, name);
-
-    if (rc == -1) {
-        // out of memory ?
-        return NULL;
-    }
-
-    return path;
-}
+int verbose = 0;
 
 char *slice_strdup(const struct str_slice str)
 {

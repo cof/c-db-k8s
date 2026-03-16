@@ -3,6 +3,8 @@
 
 #include <errno.h>
 
+extern int verbose;
+
 // logger
 void log_msg(const char *msg);
 void log_info(const char *what, const char *fmt, ...)

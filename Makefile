@@ -87,7 +87,7 @@ client: $(CLIENT_OBJS)
 # launcher
 # ------
 LAUNCHER_LIBS = $(SECURITY_LIBS)
-LAUNCHER_SRCS = src/util.c src/log.c src/launcher.c
+LAUNCHER_SRCS = src/util.c src/log.c src/ns_util.c src/launcher.c
 LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 LAUNCHER_DEPS = $(LAUNCHER_OBJS:.o=.d)
 -include $(LAUNCHER_DEPS)
@@ -450,10 +450,6 @@ show-config:
 	@echo "BASE_IMAGE=$(BASE_IMAGE)"
 	@echo "RUN_IMAGE=$(RUN_IMAGE)"
 
-.PHONY: list-vm
-list-vm:
-	virsh dominfo $(VM_NAME) || true
-	virsh domifaddr $(VM_NAME) || true
 
 $(CACHE_DIR):
 	mkdir -p $@
@@ -502,6 +498,15 @@ install-vm: $(RUN_IMAGE)
 	--rng /dev/urandom \
 	--noautoconsole \
 	--import
+
+.PHONY: start-vm
+start-vm:
+	virsh start $(VM_NAME)
+
+.PHONY: list-vm
+list-vm:
+	virsh dominfo $(VM_NAME) || true
+	virsh domifaddr $(VM_NAME) || true
 
 wipe-vm:
 	 virsh destroy $(VM_NAME)  || true

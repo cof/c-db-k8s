@@ -4,7 +4,6 @@
  * Example  : sudo ./laucher
  * 
  * Notes
- * - TODO need to split this code into 3 (launcher/container/tools)
  * - CLONE_NEWUTS - private Hostname and NIS
  * - CLONE_PID    - private PID namespace
  * - CLONE_NEWNS  - privae mount namepsace
@@ -46,21 +45,14 @@
 #include <sys/sendfile.h>
 #include <sys/syscall.h> 
 
-#include <sys/prctl.h>
-#include <linux/capability.h>
-#include <linux/filter.h>
-#include <linux/audit.h> 
-#include <linux/seccomp.h>
-
 #include "util.h"
 #include "log.h"
+#include "ns_util.h"
 
 // config defaults
 #define BASE_DIR "mylauncher"
 #define RUN_DIR "/run/asimple_launcher"
 #define STORE_dir "/var/lib/asimple_launcher"
-#define NETNS_DIR "/var/run/netns"
-#define HOST_NETNS_PATH "/proc/self/ns/net"
 
 #define MAX_CONFIG 10
 #define START_ORDER 1
@@ -166,354 +158,10 @@ struct myl_lau {
     unsigned int child_add_ip : 1; // child sets up network
 };
 
-static int verbose;
 
 static inline int child_reaped(int status)
 {
     return WIFEXITED(status) | WIFSIGNALED(status) ? 1 : 0;
-}
-
-static int run_cmd(const char *fmt, ...)
-{
-    va_list args;
-    char *cmd;
-    int rc;
-
-    va_start(args, fmt);
-    rc = vasprintf(&cmd, fmt, args);
-    va_end(args);
-
-    if (rc < 0) {
-        return log_errno_rf("vsnprintf failed");
-    }
-
-    if (verbose) {
-        log_info("LOG", "%s", cmd);
-    }
-
-    rc = system(cmd);
-    if (rc == -1) {
-        log_errno("system(%s) failed", cmd);
-    }
-    else if (!WIFEXITED(rc)) {
-        log_error("cmd (%s) interupted", cmd);
-        rc = -1;
-    }
-    else if (WEXITSTATUS(rc) != 0) {
-        log_error("cmd (%s) exited %d" , cmd, WEXITSTATUS(rc));
-        rc = -1;
-    }
-    else {
-        rc = 0;
-    }
-
-    free(cmd);
-
-    // all done
-    return rc; 
-}
-
-
-#define RUN_CMD(x, ...) do { \
-    int rc = run_cmd(x,  ##__VA_ARGS__) ; \
-    if (rc != 0) return rc; \
-} while(0);
-
-#define RUN(x) do { \
-    int rc = (x); \
-    if (rc != 0) return rc; \
-} while(0);
-
-
-#define STANDARD_MODE 0755
-
-int create_dir(const char *path, mode_t mode, bool can_exist)
-{
-    int rc = mkdir(path, mode);
-
-    if (rc == -1 && (!can_exist || errno != EEXIST)) {
-        return log_errno_rf("create_dir %s failed", path);
-    }
-
-    return 0;
-}
-
-int create_path_nocopy(char *path, mode_t mode)
-{
-    if (!path) return -1;
-
-    int len = strlen(path);
-    if (path[len - 1] == '/') path[len - 1] = 0; 
-
-    // now traverse the path string
-    for (char *p = path + 1; *p; p++) {
-        if (*p == '/') {
-            *p = 0; // Temporarily terminate string
-            if (create_dir(path, mode, 1) != 0) {
-                return -1;
-            }
-            *p = '/'; // Restore slash
-        }
-    }
-
-    // Create last dir on path
-    return create_dir(path, mode, 1);
-}
-
-int create_path(const char *path, mode_t mode)
-{
-    char *tmp = strdup(path);
-    if (!tmp)
-        return log_errno_rf("create_path strdup %s failed", path);
-
-    int rc = create_path_nocopy(tmp, mode);
-    free(tmp);
-
-    return rc; 
-}
-
-static int mount_file(const char *path)
-{
-    // make file a mount point
-    if (mount(path, path, "none", MS_BIND, NULL) < 0) {
-        return log_errno_rf("mount self-bind %s failed", path);
-    }
-
-    // make file private
-    if (mount("", path, NULL, MS_PRIVATE, NULL) < 0) {
-        int _errno = errno;
-        umount2(path, MNT_DETACH);
-        errno = _errno;
-        return log_errno_rf("mount private %s failed", path);
-    }
-
-    return 0;
-}
-
-static int create_netns_file(const char *netns_path)
-{
-    int fd = open(netns_path, O_RDONLY | O_CREAT | O_EXCL, 0600);
-
-    if (fd == -1) {
-        // error ?
-        if (errno != EEXIST) {
-            return log_errno_rf("open %s failed", netns_path);
-        }
-        // file alredy exists - possible crash ?
-        if (umount2(netns_path, MNT_DETACH) == -1) {
-            if (errno != EINVAL && errno != ENOENT) {
-                return log_errno_rf("unmount2  %s failed", netns_path);
-            }
-        }
-        // remove file
-        if (unlink(netns_path) == -1) {
-            return log_errno_rf("unlink stale  %s failed", netns_path);
-        }
-        // try again
-        fd = open(netns_path, O_RDONLY | O_CREAT | O_EXCL, 0600);
-        if (fd == -1) {
-            return log_errno_rf("open %s failed", netns_path);
-        }
-    }
-
-    if (close(fd) != 0) {
-        // close failed -> rm file and return 
-        int _errno = errno;
-        unlink(netns_path);
-        errno = _errno; 
-        return log_errno_rf("close %s failed", netns_path);
-    }
-
-    return 0;
-}
-
-// bind mount a new nets
-static int mount_netns(const char *netns_path)
-{
-    // create path
-    if (create_netns_file(netns_path) != 0) {
-        return -1;
-    }
-
-    // convert to mount point
-    if (mount_file(netns_path) != 0) {
-        unlink(netns_path);
-        return -1;
-    }
-
-    // spawn a child for bind mount
-    pid_t pid = fork();
-    if (pid < 0) {
-        int _errno = errno;
-        umount2(netns_path, MNT_DETACH);
-        unlink(netns_path);
-        errno = _errno;
-        return log_errno_rf("fork for bind mount failed");
-    }
-
-    // inside child - bind mount the new file to a new netns
-    if (pid == 0) {
-        // create new netns
-        if (unshare(CLONE_NEWNET) < 0)  {
-            log_errno("unshare create new-netns failed ");
-            _exit(1);
-        }
-        // pin it bind
-        if (mount(HOST_NETNS_PATH, netns_path, "none", MS_BIND, NULL) != 0) {
-            log_errno("mount bind %s failed", netns_path);
-            _exit(2);
-        }
-        // done
-        _exit(0);
-    }
-
-    // parent 
-    int status; 
-    pid_t p = waitpid(pid, &status, 0);
-    if (p == -1) {
-        int _errno = errno;
-        umount2(netns_path, MNT_DETACH);
-        unlink(netns_path);
-        errno = _errno;
-        return log_errno_rf("waitpid failed");
-    }
-
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        int _errno = errno;
-        umount2(netns_path, MNT_DETACH);
-        unlink(netns_path);
-        errno = _errno;
-        return log_error_rf("failed to bind mount %s", netns_path);
-    }
-
-    // reopen netns 
-    int netns_fd = open(netns_path, O_RDONLY | O_CLOEXEC);
-    if (netns_fd == -1) {
-        int _errno = errno;
-        umount2(netns_path, MNT_DETACH);
-        unlink(netns_path);
-        errno = _errno;
-        return log_errno_rf("reopen %s failed", netns_path);
-    }
-
-    if (umount2(netns_path, MNT_DETACH) < 0) {
-        int _errno = errno;
-        unlink(netns_path);
-        errno = _errno;
-        return log_errno_rf("reopen %s failed", netns_path);
-    }
-
-    // finally all done
-    return netns_fd;
-}
-
-static int create_veth(const char *container, char *veth, int veth_len)
-{
-    uint32_t id = dbj2a_hash_str(container) & 0xffffffff;
-    int rc, salt = 10;
-    do {
-        rc = snprintf(veth, veth_len, "vth%08x%d", id, salt);
-        if (rc < 0)
-            return log_errno_rf("snprintf: veth name failed");
-
-        if (rc == 0 || rc >= veth_len)
-            return log_error_rf("snprintf: incorrct len %d", rc);
-
-        rc = run_cmd("ip link add %s type veth peer name %st 2>/dev/null", veth, veth);
-        if (rc == 0) return 0;
-    } while(--salt);
-
-    // give up
-    return -EEXIST;
-}
-
-int setup_veth(const char *cont_name, const char *netns)
-{
-    char veth[IFNAMSIZ];
-
-    RUN(create_veth(cont_name, veth, sizeof(veth)));
-
-    RUN_CMD("ip link set %st netns %s", veth, netns);
-    RUN_CMD("ip link set %s up", veth);
-
-    log_info("+", "Created veth %s", veth);
-
-    return 0;
-}
-
-static int set_identity(const char *name)
-{
-    int rc = sethostname(name, strlen(name));
-
-    if (rc == -1)
-        return log_errno_rf("sethostname %s failed", name);
-
-    return 0;
-}
-
-// - make mount space private 
-// - create new mount point
-// - change dir to new mount point
-// - pivot_root to new mount point (stack old_root)
-// - change root dir to new mount
-// - change curret dir to new root
-// - umount/remove old root
-static int set_rootfs(const char *rootfs)
-{
-    // - make mount space private 
-    if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0)
-        return log_errno_rf("private mount failed");
-
-    // - create new mount point
-    if (mount(rootfs, rootfs, NULL, MS_BIND | MS_REC, NULL) != 0)
-        return log_errno_rf("bind mount roofs %s failed", rootfs);
-
-    // - change dir to new mount point
-    if (chdir(rootfs) != 0)
-        return log_errno_rf("chdir rootfs %s", rootfs);
-
-    // pivot_root to new mount point (stack old_root)
-    if (syscall(SYS_pivot_root, ".", ".") == -1)
-        return log_errno_rf("pivot_root failed");
-
-    // - change root dir to new mount  task_struct (root ptr)
-    if (chroot(".") != 0)
-        return log_errno_rf("chroot failed");
-
-    // - change curret dir to new root - task_struct (cwd ptr)
-    if (chdir("/") != 0)
-        return log_errno_rf("chdir to / failed");
-
-    if (umount2("/", MNT_DETACH) != 0)
-        return log_errno_rf("unmount2 / failed");
-
-    // all done
-    return 0;
-}
-
-static int set_proc(void)
-{
-    // new PID namespace - create new /proc
-    if (create_dir("/proc", 0755, 1) != 0) {
-        return log_errno_rf("mkdir /proc failed");
-    }
-
-    if (mount("proc", "/proc", "proc", 0, NULL) != 0) {
-        return log_errno_rf("mount /proc faild");
-    }
-
-    return 0; 
-}
-
-// bring up child containers lo,eth0 and ip address
-int create_network(const char *veth_name, const char *ip_addr)
-{
-    RUN_CMD("ip link set %s name eth0", veth_name); 
-    RUN_CMD("ip addr add %s dev eth0", ip_addr);
-    RUN_CMD("ip link set lo up");
-    RUN_CMD("ip link set eth0 up");
-
-    return 0;
 }
 
 static ssize_t read_sync(int fd)
@@ -659,196 +307,10 @@ int create_pipes(struct myl_cnt *cnt)
     return 0;
 }
 
-int copy_file(const char *src, const char *dst) 
-{
-    int rc = -1;
-
-    int src_fd = open(src, O_RDONLY);
-    if (src_fd < 0)
-        return log_errno_rf("copy_file open src %s failed", src);
-
-    int dst_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0755);
-    if (dst_fd < 0) {
-        close(src_fd);
-        return log_errno_rf("copy_file open dst %s failed", dst);
-    }
-
-    struct stat stat_buf;
-    if (fstat(src_fd, &stat_buf) == -1) {
-        log_errno_rf("copy_file fstat src_fd %d failed", src_fd);
-        goto close_all;
-    }
-
-    if (!S_ISREG(stat_buf.st_mode)) {
-        log_errno_rf("copy_file src %s not a file", src);
-        goto close_all;
-    }   
-
-    // XXX file size can be 0
-    off_t offset = 0;
-    while (offset < stat_buf.st_size) {
-        ssize_t sent = sendfile(dst_fd, src_fd, &offset, stat_buf.st_size - offset);
-        if (sent < 0) {
-            if (errno == EINTR) continue; // Interrupted, try again
-            log_errno_rf("copy_file send %s failed", src);
-            goto close_all;
-        }
-        if (sent == 0) {
-            log_error_rf("copy_file send %s eof", src);
-            goto close_all;
-        }
-        // sendfile updates offset
-    }
-
-    // check all sent
-    rc = offset == stat_buf.st_size ? 0 : -1;
-
-close_all:
-    close(src_fd);
-    close(dst_fd);
-
-    // check all sent
-    return rc;
-}
-
-int mount_cmd_file(const char *host_path, const char *rootfs_path)
-{
-    // create an empty file - touch rootfs_path
-    int fd = open(rootfs_path, O_CREAT | O_WRONLY, 0755);
-    if (fd != -1) {
-        return log_errno_rf("mount_cmd touch %s failed", rootfs_path);
-    }
-    close(fd); 
-
-    // create a writable bind-mount
-    if (mount(host_path, rootfs_path, NULL, MS_BIND, NULL) < 0) {
-        int _errno = errno;
-        unlink(rootfs_path);
-        errno = _errno; 
-        return log_errno_rf("mount_cmd bind mount %s failed", rootfs_path);
-    }
-
-    // update bind-mount to read-only
-    if (mount(NULL, rootfs_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL) < 0) {
-        int _errno = errno;
-        log_errno_rf("mount_cmd remount read-only %s failed", rootfs_path);
-        umount2(rootfs_path, MNT_DETACH); 
-        unlink(rootfs_path);
-        errno = _errno; 
-        return log_errno_rf("mount_cmd bind mount %s failed", rootfs_path);
-    }
-
-    // all done
-    return 0;
-}
 
 static inline char *get_rootfs(struct myl_cnt *cnt)
 {
     return cnt->use_subdir ? cnt->rootfs_path : cnt->root_path;
-}
-
-
-int drop_bounding_set(void)
-{
-    for (int i = 0; i <= 63; i++) { 
-        if (prctl(PR_CAPBSET_DROP, i, 0, 0, 0) == -1) {
-            if (errno == EINVAL) break; 
-            if (errno == EPERM) return -1;
-        }
-    }
-
-    return 0;
-}
-
-int clear_all_caps(void)
-{
-    struct __user_cap_header_struct header = { _LINUX_CAPABILITY_VERSION_3, 0 };
-    struct __user_cap_data_struct data[2] = { {0} };
-
-    return syscall(SYS_capset, &header, data);
-}
-
-// samples/seccomp/bpf-direct.c
-// strace -c server
-int apply_seccomp(void)
-{
-    struct sock_filter filter[] = {
-
-        //  Arch check (Required for security to prevent 32-bit bypass)
-        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, arch))),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64 , 1, 0), 
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),
-
-        //  Load syscall number
-        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, nr))),
-
-        // Whitelist - Allow only what is strictly necessary
-        // generated by gen_seccomp 
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_accept4, 34, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_arch_prctl, 33, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_bind, 32, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_brk, 31, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_close, 30, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_connect, 29, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_create1, 28, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_ctl, 27, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_wait, 26, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_execve, 25, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_exit_group, 24, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_fcntl, 23, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_futex, 22, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_getpid, 21, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_getrandom, 20, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_ioctl, 19, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_listen, 18, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_lseek, 17, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_mprotect, 16, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_newfstatat, 15, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_openat, 14, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_prlimit64, 13, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_read, 12, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_readlink, 11, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_recvfrom, 10, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rseq, 9, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rt_sigaction, 8, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_rt_sigreturn, 7, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_set_robust_list, 6, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_set_tid_address, 5, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_setsockopt, 4, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_socket, 3, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_uname, 2, 0),
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_write, 1, 0),
-
-        // result
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),// if not matched
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)  // if matched
-    };
-
-    struct sock_fprog prog = {
-        .len = (unsigned short)(sizeof(filter)/sizeof(filter[0])),
-        .filter = filter,
-    };
-
-    return prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog);
-}
-
-static int drop_sudo(struct myl_cnt *cnt)
-{
-    /* needs musl-gcc or dynanic libs
-    if (initgroups(cnt->user_name, cnt->gid) != 0) {
-        return log_errno("initgroups %s failed", cnt->user_name);
-    }
-    */
-
-    if (setgid(cnt->gid) != 0) {
-        return log_errno_rf("setgid %d failed", cnt->gid);
-    }
-
-    if (setuid(cnt->uid) != 0) {
-        return log_errno_rf("setuid %d failed", cnt->uid);
-    }
-
-    return 0;
 }
 
 static int setup_priv(struct myl_cnt *cnt)
@@ -858,27 +320,11 @@ static int setup_priv(struct myl_cnt *cnt)
             cnt->name, cnt->child_pid, cnt->uid, cnt->gid);
     }
 
-    // drop all caps we can get
-    if (cnt->drop_caps && drop_bounding_set() != 0) {
-        return log_errno_rf("drop-boundin_set failed for container %s", cnt->name);
-    }
-
-    if (cnt->drop_sudo && drop_sudo(cnt) != 0) {
-        return 0;
-    }
-
-    // drops all caps we have
-    if (cnt->drop_caps && clear_all_caps() != 0)  {
-        return log_errno_rf("clear_all_caps failed for container %s", cnt->name);
-    }
-
-    if (cnt->drop_privs && prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1) {
-        return log_errno_rf("prctl set-nonnew_privs failed for container %s", cnt->name);
-    }
-
-    if (cnt->use_seccomp && apply_seccomp() != 0) {
-        return log_errno_rf("apply-seccomp failed for container %s", cnt->name);
-    }
+    if (cnt->drop_caps && drop_bounding_set(cnt->name)) return -1;
+    if (cnt->drop_sudo && drop_sudo(cnt->name, cnt->uid , cnt->gid)) return -1;
+    if (cnt->drop_caps && clear_all_caps(cnt->name)) return -1;
+    if (cnt->drop_privs && drop_new_privs(cnt->name))  return -1;
+    if (cnt->use_seccomp && apply_seccomp(cnt->name)) return -1;
 
     return 0; 
 }
@@ -1056,45 +502,6 @@ void myl_cnt_cleanup(struct myl_cnt *cnt)
     // all done
 }
 
-
-static char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc) 
-{
-    wordexp_t p = { 0 };
-
-    if (exec_args && wordexp(exec_args, &p, WRDE_NOCMD) != 0) {
-        log_error("wordexp failed");
-        if (argc) *argc = 0;
-        return NULL;
-    }
-
-    char **argv = malloc((p.we_wordc + 2) * sizeof(char *));
-    if (argv == NULL) {
-        log_errno("malloc failed");
-        return NULL;
-    }
-
-    argv[0] = strdup(exec_path);
-    if (!argv[0]) {
-        log_errno("strdup failed");
-        return NULL;
-    }
-
-    for (size_t i = 0; i < p.we_wordc; i++) {
-        argv[i+1] = strdup(p.we_wordv[i]);
-        if (!argv[i+1]) {
-            log_errno("strdup failed");
-            return NULL;
-        }
-    }
-
-    argv[p.we_wordc + 1] = NULL; 
-    if (argc) *argc = p.we_wordc + 1;
-
-    wordfree(&p); 
-
-    return argv;
-}
-
 int create_netns(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     // generate name e.g "name-ns"
@@ -1123,34 +530,6 @@ int create_netns(struct myl_lau *lau, struct myl_cnt *cnt)
     log_info("+", "Created network namespace: %s", cnt->netns_name);
 
     return 0;
-}
-
-static char *gen_id(char *buf, int len, const char *name)
-{
-    uint32_t id = dbj2a_hash_str(name) ^ (uint64_t) time(NULL);
-
-    int rc = snprintf(buf, len, "%08x", id);
-    if (rc < 0 || rc == 0 || rc >= len)  {
-        return log_error_rn("gen_id failed for %s", name);
-    }
-
-    return buf;
-}
-
-char *create_subdir(const char *dir, const char *subdir, mode_t mode)
-{
-    char *path = gen_path(dir, subdir);
-    if (!path) {
-        return log_errno_rn("create_subdir genpath %s failed", subdir);
-    }
-
-    int rc = create_path(path, mode);
-    if (rc != 0) {
-        free(path);
-        path = NULL;
-    }
-
-    return path;
 }
 
 int create_subdirs(struct myl_lau *lau, struct myl_cnt *cnt)
@@ -1333,7 +712,7 @@ int lau_check_reaped(struct myl_lau *lau, struct myl_cnt *cnt)
         int ec = WEXITSTATUS(cnt->status);
         snprintf(why, sizeof(why), "exit_code %d", ec);
         if (ec == 0) {
-            log_info("Container '%s' exit ok (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
+            log_info("+", "Container '%s' exit ok (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
             return EXIT_OK;
         }
         return log_error_rf("Container '%s' died (pid=%d why=%s)", cnt->name, cnt->child_pid, why);
@@ -1542,43 +921,6 @@ static struct myl_cnt *lau_find_child(struct myl_lau *lau, pid_t pid)
     return NULL;
 }
 
-char *validate_dir(const char *key, const char *dir)
-{
-    char *path = realpath(dir, NULL);
-    if (!path) {
-        return log_errno_rn("%s realpath %s failed", key, dir);
-    }
-
-    // Check if the path exists
-    int rc = -1;
-
-    struct stat st;
-    if (stat(path, &st) != 0) {
-       log_error("%s path %s does not exist", key, path);
-       goto done;
-    }
-
-    // check file is a directory
-    if (!S_ISDIR(st.st_mode)) {
-        log_error("%s path %s is not a dir", key, path);
-        goto done;
-    }
-
-    // check dir is accesible
-    if (access(path, R_OK | X_OK) != 0) {
-        log_error("%s path %s is not accesible", key, path);
-        goto done;
-    }
-
-    // okay
-    rc = 0;
-
-done:
-    if (rc != 0) free(path);
-    // all done
-    return path;
-}
-
 static int set_dir(char **dir, struct get_opt *opt, const char *val_str)
 {
     if (*dir) free(*dir);
@@ -1777,7 +1119,6 @@ int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
     return rc == GETOPT_EOF ? 0 : -1;
 }
 
-
 int lau_init(struct myl_lau *lau)
 {
     // set defaults
@@ -1877,7 +1218,7 @@ int main(int argc, char *argv[])
 
     // add containers
     struct myl_cnt *db  = lau_add(lau, "db", "db/server", "/bin/server", NULL, "10.0.0.1");
-    struct myl_cnt *cli = lau_add(lau, "client", "client/client", "/bin/client", "10.0.0.1", "10.0.0.2");
+    struct myl_cnt *cli = lau_add(lau, "client", "client/client", "/bin/client", "--hostname 10.0.0.1", "10.0.0.2");
     if (!db || !cli) goto done;
 
     // run containers
