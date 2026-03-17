@@ -510,6 +510,14 @@ int server_run(struct simple_server *server)
         if (server_poll(server) != 0) return -1;
     }
 
+    if (caught_signo) {
+        log_info("+","PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
+            server->pid, 
+            caught_signo, strsignal(caught_signo), 
+            sender_uid,
+            sender_pid);
+    }
+
     return 0;
 }
 
@@ -656,13 +664,6 @@ int main(int argc, char *argv[])
 
     if (server_run(server) != 0) { ec = 7; goto done; }
 
-    if (caught_signo) {
-        log_info("+","Server PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
-            server->pid, 
-            caught_signo, strsignal(caught_signo), 
-            sender_uid,
-            sender_pid);
-    }
 
     // all done
     ec = 0;
