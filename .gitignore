@@ -2,4 +2,9 @@
 *.o
 .gdb_history
 tags
-vmdir
+/server
+/client
+/launcher
+/build/
+/bin/
+/vmdir/
