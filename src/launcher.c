@@ -139,6 +139,7 @@ struct myl_lau {
     unsigned int num_run;
     int host_netns_fd;
     mode_t dir_mode;
+    pid_t pid;
     // security
     char *sudo_user;
     int sudo_uid;
@@ -1031,6 +1032,14 @@ int lau_wait(struct myl_lau *lau)
         }
     }
 
+    if (caught_signo) {
+        log_info("+","PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
+            lau->pid, 
+            caught_signo, strsignal(caught_signo), 
+            sender_uid,
+            sender_pid);
+    }
+
     return status == EXIT_OK ? 0 : -1;
 }
 
@@ -1127,6 +1136,7 @@ int lau_init(struct myl_lau *lau)
     lau->start_order = START_ORDER;
 
     // security
+    lau->pid = getpid();
     lau->drop_sudo = DROP_SUDO;
     lau->drop_caps = DROP_CAPS;
     lau->drop_privs = DROP_PRIVS;
