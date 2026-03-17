@@ -20,6 +20,7 @@ SCRIPTS_DIR = scripts
 CMDS = server client launcher
 
 # build tools
+# -----------
 INSTALL = install
 TAR = tar
 CC = gcc
@@ -27,10 +28,9 @@ LD = gcc
 CTAGS = ctags
 K3D = k3d
 
-DEBUG ?= 0
-VALGRIND ?= 0
 
 # verbosity - aka Kbuild/HAProxy style
+# -----------------------------------
 V ?= 0
 Q = @
 ifeq ($V,1)
@@ -51,6 +51,9 @@ endif
 # --------------
 NO_EXTRA = -Wno-missing-field-initializers
 CFLAGS += -D_GNU_SOURCE -Wall -Werror -Wextra $(NO_EXTRA) -O2 -Isrc -MMD -MP
+
+DEBUG ?= 0
+VALGRIND ?= 0
 
 # debug build
 ifeq ($(DEBUG), 1)
@@ -202,16 +205,7 @@ DOCKER_DONE=$(BUILD_DIR)/.docker_done
 CLUSTER_DONE=$(BUILD_DIR)/.cluster_done
 LOAD_DONE=$(BUILD_DIR)/.load_done
 DEPLOY_DONE=$(BUILD_DIR)/.deploy_done
-WAIT_DONE=$(BUILD_DIR)/.wait_done
 DONE_FILES = $(DOCKER_DONE) $(CLUSTER_DONE) $(LOAD_DONE) $(DEPLOY_DONE) $(WAIT_DONE)
-
-# hack to wait for cluster to come up
-# ----------------------------------
-.PHONY: test-wait
-test-wait: $(WAIT_DONE)
-$(WAIT_DONE):
-	sleep 2
-	touch $(WAIT_DONE)
 
 # create docker images
 # --------------------
@@ -281,30 +275,6 @@ show-log:
 # TEST SUITE MACROS & TARGETS
 # ###########################
 
-.PHONY: test
-test: test-cmds test-pod test-net
-
-# test cmds (client|server) TODO launcher - need VM)
-# -------------------------------------------------
-.PHONY: test-cmds
-test-cmds: test-server test-client
-
-REQ_START := $(subst ",,"[+] send req: ")
-RSP_START := $(subst ",," recv rsp: ")
-
-PASS_STR = "\033[32mPASS (Isolated)\033[0m\n"
-FAIL_STR = "\033[31mFAIL (Leaking!)\033[0m\n"
-
-TEST_POD_LOG = $(BUILD_DIR)/testpod.txt
-TEST_POD_RES = $(TEST_POD).result
-GET_APP    = kubectl get pods -l app=$(1) -o name | head -n 1
-SND_ATTACH = echo $(1) | kubectl attach -qi $(2)
-GET_LOGS   = kubectl logs $(1) --tail=20 > $(2) 2>/dev/null
-DO_CLEAN   = sed -e 's/^> //' -e '/^\[+\]/!d' $(1) | sed -z 's/\n\[+\] recv rsp:/ recv rsp:/g' > $(2)
-DO_SEARCH  = grep -Fq "$(REQ_START)$(1)$(RSP_START)$(2)" $(3)
-DO_REPORT  = && echo " => check $(1) [ PASS ]" || { echo " => check $(1) [ FAIL ] (Expected $(2))"; errors=$$((errors + 1)); }
-DO_MATCH =  $(call DO_SEARCH,$(1),$(2),$(3)) $(call DO_REPORT,$(1),$(2))
-
 TEST_REQ_FILE = tests/test_req.txt
 TEST_RSP_FILE = tests/test_rsp.txt
 TEST_PORT = 6379
@@ -334,6 +304,31 @@ TEST_REPORT = \
 BUILD_REQ_FILE = $(BUILD_DIR)/$(notdir $(TEST_REQ_FILE))
 BUILD_RSP_FILE = $(BUILD_DIR)/$(notdir $(TEST_RSP_FILE))
 SIMPLE_SERVER = scripts/simple_server.awk
+
+# pod macros
+PASS_STR = "\033[32mPASS (Isolated)\033[0m\n"
+FAIL_STR = "\033[31mFAIL (Leaking!)\033[0m\n"
+
+REQ_START := $(subst ",,"[+] send req: ")
+RSP_START := $(subst ",," recv rsp: ")
+
+TEST_POD_LOG = $(BUILD_DIR)/testpod.txt
+TEST_POD_RES = $(TEST_POD).result
+GET_APP    = kubectl get pods -l app=$(1) -o name | head -n 1
+SND_ATTACH = echo $(1) | kubectl attach -qi $(2)
+GET_LOGS   = kubectl logs $(1) --tail=20 > $(2) 2>/dev/null
+DO_CLEAN   = sed -e 's/^> //' -e '/^\[+\]/!d' $(1) | sed -z 's/\n\[+\] recv rsp:/ recv rsp:/g' > $(2)
+DO_SEARCH  = grep -Fq "$(REQ_START)$(1)$(RSP_START)$(2)" $(3)
+DO_REPORT  = && echo " => check $(1) [ PASS ]" || { echo " => check $(1) [ FAIL ] (Expected $(2))"; errors=$$((errors + 1)); }
+DO_MATCH =  $(call DO_SEARCH,$(1),$(2),$(3)) $(call DO_REPORT,$(1),$(2))
+
+.PHONY: test
+test: test-cmds test-wait test-pod test-net
+
+# test cmds (client|server) TODO launcher - need VM)
+# -------------------------------------------------
+.PHONY: test-cmds
+test-cmds: test-server test-client
 
 # test ./server
 # -----------------
@@ -386,11 +381,24 @@ test-client: client
 	$(call TEST_REPORT); \
 	if [ $$errors -gt 0 ]; then exit 1; fi
 
-# test SET|GET|DEL in client|server pods
-# --------------------------------------
+# tess wait
+# ---------------
+.PHONY:test-wait
+test-wait: deploy
+	$(Q)echo "[+] Waiting for cluster to be READY..."
+	$(Q)echo " => Waiting for db-pods ..."
+	$(Q)kubectl wait --for=condition=Ready pod -l app=db-pod --timeout=60s
+	$(Q)echo " => Waiting for client pods ..."
+	$(Q)kubectl wait --for=condition=Ready pod -l app=client-pod --timeout=60s
+
+# --- 2. The Dependency Chain ---
+# 'test' will FAIL and STOP if 'test-wait' fails (times out)
+
+# test SET|GET|DEL via client-pods
+# --------------------------------
 .PHONY: test-pod
 test-pod: deploy
-	$(Q)echo "[+] Runing $@"; \
+	$(Q)echo "[+] Running $@"; \
 	CLIENT_POD=$$($(call GET_APP,client-pod)); \
 	echo " => Using client-pod: $$CLIENT_POD"; \
 	RAND_STR=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30); \
