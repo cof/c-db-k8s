@@ -9,7 +9,8 @@ BEGIN {
     Service = "/inet/tcp/" Port "/0/0"
 
     print "Server starting on port " Port "..."
-    print "Logging to: " LogFile " | Responding with: " RespFile
+    print "Logging to: " LogFile
+    print "Responding with: " RespFile
 
     while (1) {
         if ((Service |& getline client_line) > 0) {

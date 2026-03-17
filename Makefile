@@ -1,12 +1,32 @@
+#
 # Makefile for c-db-k8s
 # 
-# - make all
-# - make test-all
-# - make spotless
+#  make all - build client|server|laucher
+#  make test - build and test everything
+#  make spotless
+# ------------------------------------
+# Deps
+# gcc build tools, awk, docker k3d,
+#
 
 
-# compiler,debug,dirs
-# ------------------
+# #######################
+#     Config
+# #######################
+BUILD_DIR = build
+SRC_DIR = src
+BIN_DIR = bin
+SCRIPTS_DIR = scripts
+CMDS = server client launcher
+
+# build tools
+INSTALL = install
+TAR = tar
+CC = gcc
+LD = gcc
+CTAGS = ctags
+K3D = k3d
+
 DEBUG ?= 0
 VALGRIND ?= 0
 
@@ -27,14 +47,8 @@ cmd_CC   = $(Q)echo "  CC    $@";$(CC)
 cmd_LD   = $(Q)echo "  LD    $@";$(CC)
 endif
 
-# build commmand
-INSTALL = install
-TAR = tar
-CC = gcc
-LD = gcc
-CTAGS = ctags
-
 # compiler flags
+# --------------
 NO_EXTRA = -Wno-missing-field-initializers
 CFLAGS += -D_GNU_SOURCE -Wall -Werror -Wextra $(NO_EXTRA) -O2 -Isrc -MMD -MP
 
@@ -48,14 +62,9 @@ ifeq ($(VALGRIND), 0)
 	LDFLAGS = -static
 endif
 
-# dirs
-BUILD_DIR = build
-SRC_DIR = src
-BIN_DIR = bin
-SCRIPTS_DIR = scripts
-CMDS = server client launcher
 
-# ----------
+# Default target - build cmds
+# --------------------------
 .PHONY: all
 all: $(CMDS) | $(BUILD_DIR)
 
@@ -97,80 +106,13 @@ launcher: $(LAUNCHER_OBJS)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@
 
-# tests
-.PHONY: test
-test: test-server test-client
-
-TEST_REQ_FILE = tests/test_req.txt
-TEST_RSP_FILE = tests/test_rsp.txt
-TEST_PORT = 6379
-TEST_ADDR = 127.0.0.1
-TEST_SERVER_LOG = $(BUILD_DIR)/test-server.log
-TEST_WAIT_RUN = 0.5
-
-RUN_TEST = echo "$$CMD" | nc -w 1 -N $(TEST_ADDR) $(TEST_PORT) | \
-	grep -q "$$EXPECT" && \
-    echo "TEST '$$CMD' PASSED" || \
-    (echo "TEST '$$CMD' FAILED"; exit 1)
-
-CHECK_ALIVE = \
-	 if ! kill -0 $(1) 2>/dev/null; then \
-		wait $(1); EXIT_CODE=$$?; \
-        echo "FAIL: $(2) exit_code $$EXIT_CODE). Check $(3)"; \
-		exit 1; \
-   	fi
-
-.PHONY: test-server
-test-server: server
-	$(Q)echo "[ TEST-START $@ ]"; \
-	echo "Running server at $(TEST_HOSTPORT)"; \
-	./server --hostname $(TEST_ADDR) --port $(TEST_PORT) 1> $(TEST_SERVER_LOG) 2>&1 & SERVER_PID=$$!; \
-	echo "Checking server at PID $$SERVER_PID"; \
-	sleep $(TEST_WAIT_RUN); \
-	$(call CHECK_ALIVE, $$SERVER_PID, "server", $(TEST_SERVER_LOG)); \
-	echo "Checking server at $(TEST_ADDR):$(TEST_PORT)"; \
-	timeout 3 bash -c 'until nc -z $(TEST_ADDR) $(TEST_PORT); do sleep 0.1; done' || \
-			(echo "FAIL: Server $$SERVER_PID at '$(TEST_ADDR):$(TEST_PORT)' failed to connect!"; kill $$SERVER_PID 2>/dev/null; exit 1); \
-	echo "Running tests..."; \
-	CMD="SET foo bar";  EXPECT="OK"; $(RUN_TEST); \
-	CMD="GET foo"; EXPECT="bar"; $(RUN_TEST); \
-	CMD="DEL foo"; EXPECT="OK"; $(RUN_TEST); \
-	CMD="GET foo"; EXPECT="FAIL"; $(RUN_TEST); \
-	CMD="SET key value1"; EXPECT="OK"; $(RUN_TEST); \
-	CMD="GET key"; EXPECT="value1"; $(RUN_TEST); \
-	CMD="SET key value2"; EXPECT="OK"; $(RUN_TEST); \
-	CMD="GET key"; EXPECT="value2"; $(RUN_TEST); \
-	echo "Stopping server at PID $$SERVER_PID"; \
-	kill $$SERVER_PID; \
-	echo "[ TEST-DONE $@ ]"
-
-
-BUILD_REQ_FILE = $(BUILD_DIR)/$(notdir $(TEST_REQ_FILE))
-BUILD_RSP_FILE = $(BUILD_DIR)/$(notdir $(TEST_RSP_FILE))
-SIMPLE_SERVER = scripts/simple_server.awk
-
-.PHONY: test-client
-test-client: client
-	$(Q)echo "[ TEST-START $@ ]"; \
-	rm -f $(BUILD_REQ_FILE) $(BUILD_RSP_FILE); \
-	echo "Running $(SIMPLE_SERVER)"; \
-	awk -f ./$(SIMPLE_SERVER) \
-		-v Port="$(TEST_PORT)" \
-		-v LogFile="$(BUILD_REQ_FILE)" \
-		-v RespFile="$(TEST_RSP_FILE)" \
-		& SERVER_PID=$$!; \
-	echo "Checking $(SIMPLE_SERVER) at PID $$SERVER_PID"; \
-	sleep $(TEST_WAIT_RUN); \
-	$(call CHECK_ALIVE,$$SERVER_PID, $(SIMPLE_SERVER)); \
-	echo "Sending $(TEST_REQ_FILE) via client" ; \
-	cat $(TEST_REQ_FILE) | timeout 2s ./client --hostname $(TEST_ADDR) --port $(TEST_PORT) > $(BUILD_RSP_FILE); \
-	sed -i -e 's/^> //' -e '/^\[+]/d' $(BUILD_RSP_FILE); \
-	echo "Stopping $(SIMPLE_SERVER) at PID $$SERVER_PID"; \
-	kill -9 $$SERVER_PID 2>/dev/null || true; \
-	diff -q $(TEST_REQ_FILE) $(BUILD_REQ_FILE) && echo "TEST $(TEST_REQ_FILE) PASSED" || (echo "TEST $(TEST_REQ_FILE) FAILED"; exit 1); \
-	diff -q $(TEST_RSP_FILE) $(BUILD_RSP_FILE) && echo "TEST $(TEST_RSP_FILE) PASSED" || (echo "TEST $(TEST_RSP_FILE) FAILED"; exit 1); \
-	echo "[ TEST-DONE $@ ]"
-		
+# tags file
+# ----------
+.PHONY: tags
+SOURCES = $(wildcard src/*.c src/*.h)
+tags: $(SOURCES)
+	@echo "Creating tags file"
+	$(Q)$(CTAGS) $(SOURCES)
 
 # generate seccomp
 # -----------------
@@ -247,33 +189,11 @@ $(INSTALL_DONE): $(CMDS) | $(BUILD_DIR) $(BIN_DIR)
 	$(INSTALL) -D -m 755 launcher $(BIN_DIR)
 	touch $(INSTALL_DONE)
 
-# create tags file
-# ----------------
-.PHONY: tags
-SOURCES = $(wildcard src/*.c src/*.h)
-tags: $(SOURCES)
-	@echo "Creating tags file"
-	$(Q)$(CTAGS) $(SOURCES)
 
-.PHONY: clean
-clean:
-	rm -rf $(BUILD_DIR) $(ROOTFS_DIR) $(CMDS) $(BIN_DIR) tags
+# ###########################
+# Kubernetes Deployment
+# ###########################
 
-.PHONY: clean-all
-clean-all: clean-k8s clean
-	@echo "Clean done"
-
-.PHONY: spotless
-spotless: clean-all
-	@echo "Wiping everthing"
-	docker system prune -af --volumes
-
-.PHONY: test-all
-test-all: test test-wait test-pod test-net
-
-# ---------
-# k8s stuff
-# ---------
 CLUSTER_NAME=db-k8s
 SERVER_IMG=db-k8s-server:v1
 CLIENT_IMG=db-k8s-client:v1
@@ -332,73 +252,6 @@ $(DEPLOY_DONE): $(LOAD_DONE) | $(BUILD_DIR)
 	kubectl rollout restart statefulset/server-pod
 	touch $(DEPLOY_DONE)
 
-TEST_POD_RES = $(BUILD_DIR)/testpod.txt
-TEST_POD_CHK = $(TEST_POD_RES).cleaned
-REQ_START = "[+] send req: "
-RSP_START = "[+] recv req: "
-ATTACH= echo $(1) | kubectl attach -qi $(2)
-
-SEARCH = grep -Fq "[+] send req: $(1) recv rsp: $(2)" $(TEST_POD_CHK)
-REPORT = && echo "[ PASS ] $(1)" || { echo "[ FAIL ] $(1) (Expected $(2))"; errors=$$((errors + 1)); }
-MATCH = $(call SEARCH,$(1),$(2)) $(call REPORT,$(1),$(2))
-
-# test SET|GET|DEL 
-# -----------------
-.PHONY: test-pod
-test-pod: deploy
-	$(Q)echo "Running SET|GET|DEL tests"; \
-	RAND_STR=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30); \
-	CLIENT_POD=$$(kubectl get pods -l app=client-pod -o name | head -n 1); \
-	echo "[ INFO ] Selected client $$CLIENT_POD"; \
-	CMD1="SET test-pod $$RAND_STR"; $(call ATTACH,  $$CMD1, $$CLIENT_POD); \
-	CMD2="GET test-pod"; $(call ATTACH,  $$CMD2, $$CLIENT_POD); \
-	CMD3="DEL test-pod"; $(call ATTACH,  $$CMD3, $$CLIENT_POD); \
-	echo "[ INFO ] Checking client logs"; \
-	kubectl logs $$CLIENT_POD --tail=20 > $(TEST_POD_RES) 2>/dev/null; \
-	sed -e 's/^> //' -e '/^\[+\]/!d' $(TEST_POD_RES) | sed -z 's/\n\[+\] recv rsp:/ recv rsp:/g' > $(TEST_POD_CHK); \
-	errors=0; \
-	$(call MATCH,$$CMD1,OK); \
-	$(call MATCH,$$CMD2,$$RAND_STR); \
-	$(call MATCH,$$CMD3,OK); \
-	if [ $$errors -gt 0 ]; then echo "!!! Total Failures: $$errors"; exit 1; fi; \
-	echo "System is up"
-
-PASS_STR = "\033[32mPASS (Isolated)\033[0m\n"
-FAIL_STR = "\033[31mFAIL (Leaking!)\033[0m\n"
-
-# Test: Network Policy
-# --------------------
-.PHONY: test-net
-test-net: deploy
-	$(Q)echo -n "Checking db-pod -> internet blocked "; \
-	MYPOD=$$(kubectl get pods -l app=db-pod -o name | head -n 1); \
-	kubectl exec $$MYPOD -- nc -w 3 -zv google.com 443 >/dev/null 2>&1; \
-	if [ $$? -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
-	echo -n "Checking client-pod -> internet blocked: "; \
-	MYPOD=$$(kubectl get pods -l app=client-pod -o name | head -n 1); \
-	kubectl exec $$MYPOD -- nc -w 3 -zv google.com 443 >/dev/null 2>&1; \
-	if [ $$? -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
-	echo -n "Checking client-pod -> db-pod allowd: "; \
-	MYPOD=$$(kubectl get pods -l app=client-pod -o name | head -n 1); \
-	kubectl exec $$MYPOD -- nc -w 3 -zv db-service 6379 >/dev/null 2>&1; \
-	if [ $$? -eq 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
-	echo -n "Checking random-pod to db-pod:6379: "; \
-	kubectl run random-pod --image=busybox -l app=stranger --restart=Never -- sleep 30 >/dev/null 2>&1; \
-	kubectl wait --for=condition=Ready pod/random-pod --timeout=15s >/dev/null 2>&1; \
-	kubectl exec random-pod -- nc -w 3 -zv db-service 6379 >/dev/null 2>&1; \
-	EXIT_CODE=$$?; \
-	kubectl delete pod random-pod --now >/dev/null 2>&1; \
-	if [ $$EXIT_CODE -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi
-
-
-# delete cluster and docker images
-# -------------------------------
-clean-k8s:
-	@echo "Cleaning k8s config"
-	k3d cluster delete $(CLUSTER_NAME) || true
-	docker rmi $(SERVER_IMG) $(CLIENT_IMG) || true
-	rm -f $(DONE_FILES)
-
 # misc k8s commands
 # -----------------
 .PHONY: apply
@@ -407,9 +260,10 @@ apply:
 
 .PHONY: list-pod
 list-pod:
-	kubectl get statefulset/server-pod 
-	kubectl get deployment/client-app
-	kubectl get pods -l 'app in (client-pod, server-db)'
+	@printf '%66s\n' | tr ' ' '-'
+	@kubectl get statefulset/server-pod deployment/client-app
+	@printf '%66s\n' | tr ' ' '-'
+	@kubectl get pods -l 'app in (client-pod,db-pod)'
 
 .PHONY: list-all
 list-all:
@@ -423,11 +277,171 @@ show-log:
 # kubectl logs -l app=client-pod -f --prefix
 # kubectl logs -l app=server-db -f --prefix
 
-# -----------------------
-# VM for testing lanucher
-# -----------------------
+# ###########################
+# TEST SUITE MACROS & TARGETS
+# ###########################
 
-# alpine linux
+.PHONY: test
+test: test-cmds test-pod test-net
+
+# test cmds (client|server) TODO launcher - need VM)
+# -------------------------------------------------
+.PHONY: test-cmds
+test-cmds: test-server test-client
+
+REQ_START := $(subst ",,"[+] send req: ")
+RSP_START := $(subst ",," recv rsp: ")
+
+PASS_STR = "\033[32mPASS (Isolated)\033[0m\n"
+FAIL_STR = "\033[31mFAIL (Leaking!)\033[0m\n"
+
+TEST_POD_LOG = $(BUILD_DIR)/testpod.txt
+TEST_POD_RES = $(TEST_POD).result
+GET_APP    = kubectl get pods -l app=$(1) -o name | head -n 1
+SND_ATTACH = echo $(1) | kubectl attach -qi $(2)
+GET_LOGS   = kubectl logs $(1) --tail=20 > $(2) 2>/dev/null
+DO_CLEAN   = sed -e 's/^> //' -e '/^\[+\]/!d' $(1) | sed -z 's/\n\[+\] recv rsp:/ recv rsp:/g' > $(2)
+DO_SEARCH  = grep -Fq "$(REQ_START)$(1)$(RSP_START)$(2)" $(3)
+DO_REPORT  = && echo " => check $(1) [ PASS ]" || { echo " => check $(1) [ FAIL ] (Expected $(2))"; errors=$$((errors + 1)); }
+DO_MATCH =  $(call DO_SEARCH,$(1),$(2),$(3)) $(call DO_REPORT,$(1),$(2))
+
+TEST_REQ_FILE = tests/test_req.txt
+TEST_RSP_FILE = tests/test_rsp.txt
+TEST_PORT = 6379
+TEST_ADDR = 127.0.0.1
+TEST_SERVER_LOG = $(BUILD_DIR)/test-server.log
+TEST_WAIT_RUN = 0.5
+
+WAIT_UP = timeout $(1) bash -c 'until nc -z $(2) $(3) 2>/dev/null; do sleep 0.1; done'
+KILL_WAIT = kill $(1) 2>/dev/null;  wait $(1) 2>/dev/null || true
+
+TEST_CMD = \
+	total=$$((total + 1));  \
+	echo "$(1)" | nc -w 1 -N $(TEST_ADDR) $(TEST_PORT) | \
+	grep -q "$$EXPECT" && \
+    echo " => TEST '$(1)' PASSED" || \
+    (echo " => TEST '$(1)' FAILED"; errors=$$((errors + 1));  )
+
+TEST_FILE = \
+	total=$$((total + 1));  \
+	diff -q $(1) $(2) && echo " => TEST $(1) PASSED" || (echo " => TEST '$(1)' FAILED"; errors=$$((errors + 1)); )
+
+TEST_REPORT = \
+	passed=$$((total - errors)); \
+	[ $$total -eq 0 ] && percent=100 || percent=$$(( (total - errs) * 100 / total )); \
+	echo " => Ran $$total tests: $$passed passed, $$errors failed ($$percent% success)"
+
+BUILD_REQ_FILE = $(BUILD_DIR)/$(notdir $(TEST_REQ_FILE))
+BUILD_RSP_FILE = $(BUILD_DIR)/$(notdir $(TEST_RSP_FILE))
+SIMPLE_SERVER = scripts/simple_server.awk
+
+# test ./server
+# -----------------
+.PHONY: test-server
+test-server: server
+	$(Q)echo "[+] Running $@"; \
+	./server --hostname $(TEST_ADDR) --port $(TEST_PORT) 1> $(TEST_SERVER_LOG) 2>&1 & SRV_PID=$$!; \
+	echo " => Starting server PID $$SRV_PID"; \
+	sleep $(TEST_WAIT_RUN); \
+	kill -0 $$SRV_PID || { echo " => server died - check log"; exit 1; }; \
+	echo " => Waiting for $(TEST_ADDR):$(TEST_PORT)"; \
+	$(call WAIT_UP,3,$(TEST_ADDR),$(TEST_PORT)) || { echo " => Wait failed";i $(call KILL_WAIT,$$SRV_PID); exit 1; }; \
+	echo " => Server is UP Running tests..."; \
+	total=0; errors=0; \
+	$(call TEST_CMD,SET foo bar,OK); \
+	$(call TEST_CMD,GET foo,bar); \
+	$(call TEST_CMD,DEL foo,OK); \
+	$(call TEST_CMD,GET foo,FAIL); \
+	$(call TEST_CMD,SET key value1,OK); \
+	$(call TEST_CMD,GET key,value1); \
+	$(call TEST_CMD,SET key value2, OK); \
+	$(call TEST_CMD,GET key,value2); \
+	echo " => Shutting down server PID $$SRV_PID"; \
+	$(call KILL_WAIT,$$SRV_PID); \
+	$(call TEST_REPORT); \
+	if [ $$errors -gt 0 ]; then exit 1; fi
+
+# test ./client 
+# ----------------
+.PHONY: test-client
+test-client: client
+	$(Q)echo "[+] Running $@"; \
+	rm -f $(BUILD_REQ_FILE) $(BUILD_RSP_FILE); \
+	awk -f ./$(SIMPLE_SERVER) -v Port="$(TEST_PORT)" \
+		 -v LogFile="$(BUILD_REQ_FILE)" -v RespFile="$(TEST_RSP_FILE)" \
+		 1>$(TEST_SERVER_LOG) 2>&1 & SRV_PID=$$!; \
+	echo " => Starting simple-server PID $$SRV_PID"; \
+	sleep $(TEST_WAIT_RUN); \
+	kill -0 $$SRV_PID || { echo " => simple-server died - check log"; exit 1; }; \
+	echo " => Waiting for $(TEST_ADDR):$(TEST_PORT)"; \
+	$(call WAIT_UP,3,$(TEST_ADDR),$(TEST_PORT)) || { echo " => Wait failed";i $(call KILL_WAIT,$$SRV_PID); exit 1; }; \
+	echo " => Server is UP send $(TEST_REQ_FILE) via client"; \
+	cat $(TEST_REQ_FILE) | timeout 2s ./client --hostname $(TEST_ADDR) --port $(TEST_PORT) > $(BUILD_RSP_FILE); \
+	sed -i -e 's/^> //' -e '/^\[+]/d' $(BUILD_RSP_FILE); \
+	echo " => Shutting down simple-server PID $$SRV_PID"; \
+	$(call KILL_WAIT,$$SRV_PID); \
+	total=0; errors=0; \
+	$(call TEST_FILE,$(TEST_REQ_FILE),$(BUILD_REQ_FILE)); \
+	$(call TEST_FILE,$(TEST_RSP_FILE),$(BUILD_RSP_FILE)); \
+	$(call TEST_REPORT); \
+	if [ $$errors -gt 0 ]; then exit 1; fi
+
+# test SET|GET|DEL in client|server pods
+# --------------------------------------
+.PHONY: test-pod
+test-pod: deploy
+	$(Q)echo "[+] Runing $@"; \
+	CLIENT_POD=$$($(call GET_APP,client-pod)); \
+	echo " => Using client-pod: $$CLIENT_POD"; \
+	RAND_STR=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30); \
+	CMD1="SET test-pod $$RAND_STR"; \
+	CMD2="GET test-pod"; \
+	CMD3="DEL test-pod"; \
+	echo " => Sending cmds"; \
+	$(call SND_ATTACH,$$CMD1,$$CLIENT_POD); \
+	$(call SND_ATTACH,$$CMD2,$$CLIENT_POD); \
+	$(call SND_ATTACH,$$CMD3,$$CLIENT_POD); \
+	echo " => Fetching logs"; \
+	$(call GET_LOGS, $$CLIENT_POD, $TEST_POD_LOG); \
+	$(call DO_CLEAN, $TEST_POD_LOG, $TEST_POD_RES); \
+	echo " => Checking results"; \
+	errors=0; \
+	$(call DO_MATCH,$$CMD1,OK,$TEST_POD_RES); \
+	$(call DO_MATCH,$$CMD2,$$RAND_STR,$TEST_POD_RES); \
+	$(call DO_MATCH,$$CMD3,OK,$TEST_POD_RES); \
+	if [ $$errors -gt 0 ]; then echo "!!! Total Failures: $$errors"; exit 1; fi; \
+
+# test k8s Network Policy
+# -----------------------
+.PHONY: test-net
+test-net: deploy
+	$(Q)echo "[+] Runing $@"; \
+	MYPOD=$$($(call GET_APP,db-pod)); \
+	echo -n " => Checking db-pod -> internet "; \
+	kubectl exec $$MYPOD -- nc -w 3 -zv google.com 443 >/dev/null 2>&1; \
+	if [ $$? -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
+	echo -n " => Checking client-pod -> internet "; \
+	MYPOD=$$($(call GET_APP,client-pod)); \
+	kubectl exec $$MYPOD -- nc -w 3 -zv google.com 443 >/dev/null 2>&1; \
+	if [ $$? -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
+	echo -n " => Checking client-pod -> db-pod "; \
+	MYPOD=$$($(call GET_APP,client-pod)); \
+	kubectl exec $$MYPOD -- nc -w 3 -zv db-service $(TEST_PORT) >/dev/null 2>&1; \
+	if [ $$? -eq 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
+	echo -n " => Checking random-pod -> db-pod:$(TEST_PORT) "; \
+	kubectl run random-pod --image=busybox -l app=random --restart=Never -- sleep 30 >/dev/null 2>&1; \
+	kubectl wait --for=condition=Ready pod/random-pod --timeout=15s >/dev/null 2>&1; \
+	kubectl exec random-pod -- nc -w 3 -zv db-service $(TEST_PORT) >/dev/null 2>&1; \
+	EXIT_CODE=$$?; \
+	kubectl delete pod random-pod --now >/dev/null 2>&1; \
+	if [ $$EXIT_CODE -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi
+
+# #######################
+# VM for testing launcher
+# #######################
+
+# alpine linux image
+# ------------------
 OS_VARIANT= alpinelinux3.21
 OS_NAME=alpine
 REL_VER= 3.21
@@ -452,6 +466,9 @@ RUN_IMAGE = $(VMDIR)/$(VM_FILE)
 VM_MAC := 52:54:00:12:34:56
 VM_IP  := 192.168.122.243
 
+# alpine VMs  use user-data.yaml to autoconfigure
+USER_DATA = tests/user-data.yaml
+
 .PHONY: show-config
 show-config:
 	@echo "MIRROR=$(MIRROR)"
@@ -461,7 +478,6 @@ show-config:
 	@echo "CACHE_DIR=$(CACHE_DIR)"
 	@echo "BASE_IMAGE=$(BASE_IMAGE)"
 	@echo "RUN_IMAGE=$(RUN_IMAGE)"
-
 
 $(CACHE_DIR):
 	mkdir -p $@
@@ -493,8 +509,6 @@ $(RUN_IMAGE): | $(BASE_IMAGE) $(VMDIR)
 list-cache: $(CACHE_DIR)
 	ls -lh $(CACHE_DIR)
 
-# XXX alpline vms will use user-data.yaml to autoconfigure
-USER_DATA = tests/user-data.yaml
 .PHONY:install-vm
 install-vm: $(RUN_IMAGE)
 	virt-install \
@@ -524,3 +538,28 @@ wipe-vm:
 	 virsh destroy $(VM_NAME)  || true
 	 virsh undefine $(VM_NAME) || true
 	 rm -fr vmdir
+
+# #######################
+# 		Cleanup
+# #######################
+
+# delete cluster and docker images
+# -------------------------------
+clean-k8s:
+	@echo "Cleaning k8s config"
+	k3d cluster delete $(CLUSTER_NAME) || true
+	docker rmi $(SERVER_IMG) $(CLIENT_IMG) || true
+	rm -f $(DONE_FILES)
+
+.PHONY: clean
+clean:
+	rm -rf $(BUILD_DIR) $(ROOTFS_DIR) $(CMDS) $(BIN_DIR) tags
+
+.PHONY: clean-all
+clean-all: clean-k8s clean
+	@echo "Clean done"
+
+.PHONY: spotless
+spotless: clean-all
+	@echo "Wiping everthing"
+	docker system prune -af --volumes
