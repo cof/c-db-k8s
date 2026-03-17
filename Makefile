@@ -55,10 +55,10 @@ BIN_DIR = bin
 SCRIPTS_DIR = scripts
 CMDS = server client launcher
 
+# ----------
 .PHONY: all
 all: $(CMDS) | $(BUILD_DIR)
 
-# object files
 $(BUILD_DIR):
 	@mkdir -p $@
 
@@ -85,7 +85,7 @@ client: $(CLIENT_OBJS)
 	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(CLIENT_OBJS) -o $@
 
 # launcher
-# ------
+# --------
 LAUNCHER_LIBS = $(SECURITY_LIBS)
 LAUNCHER_SRCS = src/util.c src/log.c src/ns_util.c src/launcher.c
 LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
@@ -172,7 +172,8 @@ test-client: client
 	echo "[ TEST-DONE $@ ]"
 		
 
-# generate new security rules
+# generate seccomp
+# -----------------
 .PHONY: gen-seccomp
 CMD_FILE   = tests/test_req.txt
 GEN_SECCOMP = $(SCRIPTS_DIR)/gen_seccomp.awk
@@ -197,10 +198,8 @@ gen-seccomp: client server
 	@awk -f $(GEN_SECCOMP) $(STRACE_RAW) > $(SECCOMP_H)
 	@echo "SUCCESS: $(SECCOMP_H)"
 
-# 
-# roofs
-# ======
-# build the container rootfs
+# Build a roofs for OverlayFS
+# ---------------------------
 .PHONY: rootfs
 OUR_CMDS = client server
 AUX_CMDS = bash ls ip ping hostname
@@ -272,7 +271,6 @@ spotless: clean-all
 .PHONY: test-all
 test-all: test test-wait test-pod test-net
 
-
 # ---------
 # k8s stuff
 # ---------
@@ -334,28 +332,42 @@ $(DEPLOY_DONE): $(LOAD_DONE) | $(BUILD_DIR)
 	kubectl rollout restart statefulset/server-pod
 	touch $(DEPLOY_DONE)
 
+TEST_POD_RES = $(BUILD_DIR)/testpod.txt
+TEST_POD_CHK = $(TEST_POD_RES).cleaned
+REQ_START = "[+] send req: "
+RSP_START = "[+] recv req: "
+ATTACH= echo $(1) | kubectl attach -qi $(2)
 
-# test set|get works
-# ------------------
+SEARCH = grep -Fq "[+] send req: $(1) recv rsp: $(2)" $(TEST_POD_CHK)
+REPORT = && echo "[ PASS ] $(1)" || { echo "[ FAIL ] $(1) (Expected $(2))"; errors=$$((errors + 1)); }
+MATCH = $(call SEARCH,$(1),$(2)) $(call REPORT,$(1),$(2))
+
+# test SET|GET|DEL 
+# -----------------
 .PHONY: test-pod
-TEST_POD_RESULT = $(BUILD_DIR)/test_pod.txt
 test-pod: deploy
-	$(Q)echo "[INFO] Staring test-pod"; \
+	$(Q)echo "Running SET|GET|DEL tests"; \
 	RAND_STR=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30); \
 	CLIENT_POD=$$(kubectl get pods -l app=client-pod -o name | head -n 1); \
-	echo "- Sending SET|GET cmds to client $$CLIENT_POD"; \
-	echo "SET test-pod $$RAND_STR" | kubectl attach -qi $$CLIENT_POD; \
-	echo "GET test-pod" | kubectl attach -qi $$CLIENT_POD; \
-	echo "- Checking client logs for $$RAND_STR"; \
-	kubectl logs $$CLIENT_POD --tail=20 > $(TEST_POD_RESULT) 2>/dev/null; \
-	grep -q "recv rsp: $$RAND_STR" $(TEST_POD_RESULT) || ( echo "ERROR: Missing $$RAND_STR"; exit 1); \
-	echo "- TEST passed"
+	echo "[ INFO ] Selected client $$CLIENT_POD"; \
+	CMD1="SET test-pod $$RAND_STR"; $(call ATTACH,  $$CMD1, $$CLIENT_POD); \
+	CMD2="GET test-pod"; $(call ATTACH,  $$CMD2, $$CLIENT_POD); \
+	CMD3="DEL test-pod"; $(call ATTACH,  $$CMD3, $$CLIENT_POD); \
+	echo "[ INFO ] Checking client logs"; \
+	kubectl logs $$CLIENT_POD --tail=20 > $(TEST_POD_RES) 2>/dev/null; \
+	sed -e 's/^> //' -e '/^\[+\]/!d' $(TEST_POD_RES) | sed -z 's/\n\[+\] recv rsp:/ recv rsp:/g' > $(TEST_POD_CHK); \
+	errors=0; \
+	$(call MATCH,$$CMD1,OK); \
+	$(call MATCH,$$CMD2,$$RAND_STR); \
+	$(call MATCH,$$CMD3,OK); \
+	if [ $$errors -gt 0 ]; then echo "!!! Total Failures: $$errors"; exit 1; fi; \
+	echo "System is up"
 
 PASS_STR = "\033[32mPASS (Isolated)\033[0m\n"
 FAIL_STR = "\033[31mFAIL (Leaking!)\033[0m\n"
 
 # Test: Network Policy
-# ------------------
+# --------------------
 .PHONY: test-net
 test-net: deploy
 	$(Q)echo -n "Checking db-pod -> internet blocked "; \
@@ -388,7 +400,7 @@ clean-k8s:
 	rm -f $(DONE_FILES)
 
 # misc k8s commands
-# --------------
+# -----------------
 .PHONY: apply
 apply:
 	kubectl apply -k k8s/
