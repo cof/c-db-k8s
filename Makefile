@@ -337,7 +337,7 @@ FAIL_STR = "\033[31mFAIL (Leaking!)\033[0m\n"
 
 REQ_START := $(subst ",,"[+] send req: ")
 RSP_START := $(subst ",," recv rsp: ")
-CLIENT_OK := $(subst ",,"[+] Connectivity test: OK")
+CLIENT_OK := $(subst ",,"Connectivity test: OK")
 
 TEST_POD_LOG = $(BUILD_DIR)/testpod.txt
 TEST_POD_RES = $(TEST_POD_LOG).result
@@ -424,7 +424,9 @@ wait-pods: deploy
 	$(Q)kubectl wait --for=condition=Ready pod -l app=client-pod --timeout=30s | sed 's/^/ => /'
 	$(Q)echo "[+] Waiting for $(CLIENT_OK)"; \
 	count=0; \
-	until kubectl logs -l app=client-pod --tail=10 2>/dev/null | grep -Fq "$(CLIENT_OK)"; do \
+	until kubectl logs -l app=client-pod --tail=10 2>/dev/null | \
+			grep -Fq "$(CLIENT_OK)"; \
+	do \
 		if [ $$count -eq 3 ]; then \
 			echo " => [ERROR} timeout waitiig for $(CLIENT_OK) in logs"; \
 			exit 1; \
@@ -432,7 +434,8 @@ wait-pods: deploy
 		printf "."; \
 		sleep 1; \
 		count=$$((count + 1)); \
-	done; echo "[+} Pods ready"
+	done; \
+	echo "[+} Pods ready"
 
 
 # test SET|GET|DEL via client-pods
