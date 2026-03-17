@@ -424,8 +424,7 @@ wait-pods: deploy
 	$(Q)kubectl wait --for=condition=Ready pod -l app=client-pod --timeout=30s | sed 's/^/ => /'
 	$(Q)echo "[+] Waiting for $(CLIENT_OK)"; \
 	count=0; \
-	until kubectl logs -l app=client-pod --tail=10 2>/dev/null | \
-			grep -Fq "$(CLIENT_OK)"; \
+	until kubectl logs -l app=client-pod --tail=10 2>/dev/null | grep -Fq "$(CLIENT_OK)"; \
 	do \
 		if [ $$count -eq 3 ]; then \
 			echo " => [ERROR} timeout waitiig for $(CLIENT_OK) in logs"; \
@@ -591,9 +590,9 @@ wipe-vm:
 	 virsh undefine $(VM_NAME) || true
 	 rm -fr vmdir
 
-# #######################
-# 		Cleanup
-# #######################
+# ################
+# --- Cleanup ----
+# ################
 
 # delete cluster and docker images
 # -------------------------------
