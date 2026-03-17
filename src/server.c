@@ -67,6 +67,7 @@ static void client_close(struct simple_client *client, int force);
 static int send_str(struct simple_client *client, struct str_slice str)
 {
     char *dst = make_space(&client->write_buf, str.len + 2);
+
     if (!dst) {
         return log_error_rf("make space for %zu bytes failed", str.len + 2);
     }
@@ -155,21 +156,23 @@ static struct {
     size_t len;
     int (*func)(struct simple_client *client, struct str_slice args);
 } cmds[] = {
-    { STR_LIT("SET"), cmd_set },
-    { STR_LIT("GET"), cmd_get },
-    { STR_LIT("DEL"), cmd_del },
+    { 0, 0,  cmd_unsupp },
+    { STR_LIT("SET"),  cmd_set },
+    { STR_LIT("GET"),  cmd_get },
+    { STR_LIT("DEL"),  cmd_del },
     { STR_LIT("QUIT"), cmd_quit },
 };
 
 static int find_cmd(struct str_slice cmd)
 {
-    for (size_t i = 0; i < ARR_LEN(cmds); i++) {
+    for (size_t i = 1; i < ARR_LEN(cmds); i++) {
         if (slice_cmp_cstr(cmd, cmds[i].name, cmds[i].len)) {
             return i;
         }
     }
 
-    return -1;
+    // unsupp
+    return 0;
 }
 
 int process_cmd(struct simple_client *client, struct str_slice cmd)
@@ -181,14 +184,7 @@ int process_cmd(struct simple_client *client, struct str_slice cmd)
     slice_trim(&args);
 
     int cmd_idx = find_cmd(name);
-    int rc;
-
-    if (cmd_idx != -1) {
-        rc = cmds[cmd_idx].func(client, args);
-    }
-    else {
-        rc = cmd_unsupp(client, args); 
-    }
+    int rc = cmds[cmd_idx].func(client, args);
 
     return rc;
 }
@@ -240,8 +236,6 @@ struct simple_client *client_create(int fd, struct sockaddr_in6 *addr)
 
     return client;
 }
-
-
 
 #define RDWR_EVENTS (EPOLLOUT | EPOLLIN | EPOLLRDHUP)
 #define RD_EVENTS (EPOLLIN | EPOLLRDHUP)
@@ -599,25 +593,12 @@ void server_free(struct simple_server *server)
         client_destroy(client, 0);
     }
 
-    if (server->sock.fd != -1) {
-        close(server->sock.fd);
-    }
+    if (server->sock.fd  != -1) close(server->sock.fd);
+    if (server->epoll_fd != -1) close(server->epoll_fd);
 
-    if (server->epoll_fd != -1) {
-        close(server->epoll_fd);
-    }
-
-    if (server->hostname) {
-        free(server->hostname);
-    }
-
-    if (server->port) {
-        free(server->port);
-    }
-
-    if (server->database) {
-        free(server->database);
-    }
+    if (server->hostname) free(server->hostname);
+    if (server->port)     free(server->port);
+    if (server->database) free(server->database);
 
     free(server);
 }
