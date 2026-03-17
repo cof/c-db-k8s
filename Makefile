@@ -1,13 +1,37 @@
 #
 # Makefile for c-db-k8s
-# 
-#  make all - build client|server|laucher
-#  make test - build and test everything
-#  make spotless
-# ------------------------------------
-# Deps
-# gcc build tools, awk, docker k3d,
 #
+# First run just do:
+#
+#  	make test
+#
+# Important targets
+# 
+#  all         : build cmds (client|server|launcher)
+#  install     : put all cmds into bin folder
+#  deploy      : builds images|create cluster|load images|deploy pods
+# 
+#  test        : build and test everything
+#  test-cmds   : build and test cmds (client|server)
+#  test-server : build and test ./server
+#  test-client : build and test ./client
+#  wait-pods   : wait for all pods to be ready
+#  test-pod    : test SET|GET|DEL cmds on pods
+#  test-net    : test k8s network policy
+#
+#  clean       : Remove compiled binaries, object files, and test logs
+#  clean-k8s   : Remove cluster and docker images
+#  spotless    : wipe everthing
+#  
+# ------------------------------------
+#
+# Deps
+# ====
+# - gcc build tools
+# - awk for tests
+# - docker - images
+# - k3d - cluster
+# 
 
 
 # #######################
@@ -311,19 +335,20 @@ FAIL_STR = "\033[31mFAIL (Leaking!)\033[0m\n"
 
 REQ_START := $(subst ",,"[+] send req: ")
 RSP_START := $(subst ",," recv rsp: ")
+CLIENT_OK := $(subst ",,"[+] Connectivity test: OK")
 
 TEST_POD_LOG = $(BUILD_DIR)/testpod.txt
-TEST_POD_RES = $(TEST_POD).result
+TEST_POD_RES = $(TEST_POD_LOG).result
 GET_APP    = kubectl get pods -l app=$(1) -o name | head -n 1
 SND_ATTACH = echo $(1) | kubectl attach -qi $(2)
-GET_LOGS   = kubectl logs $(1) --tail=20 > $(2) 2>/dev/null
+GET_LOGS   = kubectl logs $(1) --tail=20 >$(2) 2>/dev/null
 DO_CLEAN   = sed -e 's/^> //' -e '/^\[+\]/!d' $(1) | sed -z 's/\n\[+\] recv rsp:/ recv rsp:/g' > $(2)
 DO_SEARCH  = grep -Fq "$(REQ_START)$(1)$(RSP_START)$(2)" $(3)
 DO_REPORT  = && echo " => check $(1) [ PASS ]" || { echo " => check $(1) [ FAIL ] (Expected $(2))"; errors=$$((errors + 1)); }
 DO_MATCH =  $(call DO_SEARCH,$(1),$(2),$(3)) $(call DO_REPORT,$(1),$(2))
 
 .PHONY: test
-test: test-cmds test-wait test-pod test-net
+test: test-cmds wait-pods test-pod test-net
 
 # test cmds (client|server) TODO launcher - need VM)
 # -------------------------------------------------
@@ -381,18 +406,27 @@ test-client: client
 	$(call TEST_REPORT); \
 	if [ $$errors -gt 0 ]; then exit 1; fi
 
-# tess wait
-# ---------------
-.PHONY:test-wait
-test-wait: deploy
+# wait for all pods to be ready
+# ----------------------------
+.PHONY:wait-pods
+wait-pods: deploy
 	$(Q)echo "[+] Waiting for cluster to be READY..."
 	$(Q)echo " => Waiting for db-pods ..."
-	$(Q)kubectl wait --for=condition=Ready pod -l app=db-pod --timeout=60s
+	$(Q)kubectl wait --for=condition=Ready pod -l app=db-pod --timeout=30s | sed 's/^/ => /'
 	$(Q)echo " => Waiting for client pods ..."
-	$(Q)kubectl wait --for=condition=Ready pod -l app=client-pod --timeout=60s
+	$(Q)kubectl wait --for=condition=Ready pod -l app=client-pod --timeout=30s | sed 's/^/ => /'
+	$(Q)echo "[+] Waiting for $(CLIENT_OK)"; \
+	count=0; \
+	until kubectl logs -l app=client-pod --tail=10 2>/dev/null | grep -Fq "$(CLIENT_OK)"; do \
+		if [ $$count -eq 3 ]; then \
+			echo " => [ERROR} timeout waitiig for $(CLIENT_OK) in logs"; \
+			exit 1; \
+		fi; \
+		printf "."; \
+		sleep 1; \
+		count=$$((count + 1)); \
+	done; echo "[+} Pods ready"
 
-# --- 2. The Dependency Chain ---
-# 'test' will FAIL and STOP if 'test-wait' fails (times out)
 
 # test SET|GET|DEL via client-pods
 # --------------------------------
@@ -410,13 +444,13 @@ test-pod: deploy
 	$(call SND_ATTACH,$$CMD2,$$CLIENT_POD); \
 	$(call SND_ATTACH,$$CMD3,$$CLIENT_POD); \
 	echo " => Fetching logs"; \
-	$(call GET_LOGS, $$CLIENT_POD, $TEST_POD_LOG); \
-	$(call DO_CLEAN, $TEST_POD_LOG, $TEST_POD_RES); \
+	$(call GET_LOGS,$$CLIENT_POD,$(TEST_POD_LOG)); \
+	$(call DO_CLEAN,$(TEST_POD_LOG),$(TEST_POD_RES)); \
 	echo " => Checking results"; \
 	errors=0; \
-	$(call DO_MATCH,$$CMD1,OK,$TEST_POD_RES); \
-	$(call DO_MATCH,$$CMD2,$$RAND_STR,$TEST_POD_RES); \
-	$(call DO_MATCH,$$CMD3,OK,$TEST_POD_RES); \
+	$(call DO_MATCH,$$CMD1,OK,$(TEST_POD_RES)); \
+	$(call DO_MATCH,$$CMD2,$$RAND_STR,$(TEST_POD_RES)); \
+	$(call DO_MATCH,$$CMD3,OK,$(TEST_POD_RES)); \
 	if [ $$errors -gt 0 ]; then echo "!!! Total Failures: $$errors"; exit 1; fi; \
 
 # test k8s Network Policy
