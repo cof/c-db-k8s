@@ -192,7 +192,8 @@ $(ROOTFS_DONE): $(OUR_CMDS) | $(BUILD_DIR)
 	@ldd $(ROOTFS_DIR)/bin/* | grep "=> /" | awk '{print $$3}' | sort -u | \
 			xargs -I '{}' install -D '{}' $(ROOTFS_DIR)/lib/
 	@echo "  + Dynamic Linker"
-	@LOADER_PATH=$$(readelf -l $(ROOTFS_DIR)/bin/bash | grep "program interpreter" | awk '{print $$NF}' | tr -d '[]') ; \
+	@LOADER_PATH=$$(readelf -l $(ROOTFS_DIR)/bin/bash |
+		grep "program interpreter" | awk '{print $$NF}' | tr -d '[]') ; \
 		install -D $$LOADER_PATH $(ROOTFS_DIR)/lib/$${LOADER_PATH}
 	@echo "  + created $(ROOTFS_DIR)"
 	@touch $@
@@ -318,7 +319,8 @@ TEST_CMD = \
 
 TEST_FILE = \
 	total=$$((total + 1));  \
-	diff -q $(1) $(2) && echo " => TEST $(1) PASSED" || (echo " => TEST '$(1)' FAILED"; errors=$$((errors + 1)); )
+	diff -q $(1) $(2) && echo " => TEST $(1) PASSED" || \
+	(echo " => TEST '$(1)' FAILED"; errors=$$((errors + 1)); )
 
 TEST_REPORT = \
 	passed=$$((total - errors)); \
@@ -341,10 +343,13 @@ TEST_POD_LOG = $(BUILD_DIR)/testpod.txt
 TEST_POD_RES = $(TEST_POD_LOG).result
 GET_APP    = kubectl get pods -l app=$(1) -o name | head -n 1
 SND_ATTACH = echo $(1) | kubectl attach -qi $(2)
-GET_LOGS   = kubectl logs $(1) --tail=20 >$(2) 2>/dev/null
-DO_CLEAN   = sed -e 's/^> //' -e '/^\[+\]/!d' $(1) | sed -z 's/\n\[+\] recv rsp:/ recv rsp:/g' > $(2)
+GET_LOGS = kubectl logs $(1) --tail=20 >$(2) 2>/dev/null
+DO_CLEAN = sed -e 's/^> //' -e '/^\[+\]/!d' $(1) | \
+	sed -z 's/\n\[+\] recv rsp:/ recv rsp:/g' > $(2)
+
 DO_SEARCH  = grep -Fq "$(REQ_START)$(1)$(RSP_START)$(2)" $(3)
-DO_REPORT  = && echo " => check $(1) [ PASS ]" || { echo " => check $(1) [ FAIL ] (Expected $(2))"; errors=$$((errors + 1)); }
+DO_REPORT  = && echo " => check $(1) [ PASS ]" || \
+	{ echo " => check $(1) [ FAIL ] (Expected $(2))"; errors=$$((errors + 1)); }
 DO_MATCH =  $(call DO_SEARCH,$(1),$(2),$(3)) $(call DO_REPORT,$(1),$(2))
 
 .PHONY: test
@@ -365,7 +370,8 @@ test-server: server
 	sleep $(TEST_WAIT_RUN); \
 	kill -0 $$SRV_PID || { echo " => server died - check log"; exit 1; }; \
 	echo " => Waiting for $(TEST_ADDR):$(TEST_PORT)"; \
-	$(call WAIT_UP,3,$(TEST_ADDR),$(TEST_PORT)) || { echo " => Wait failed";i $(call KILL_WAIT,$$SRV_PID); exit 1; }; \
+	$(call WAIT_UP,3,$(TEST_ADDR),$(TEST_PORT)) || \
+		{ echo " => Wait failed";i $(call KILL_WAIT,$$SRV_PID); exit 1; }; \
 	echo " => Server is UP Running tests..."; \
 	total=0; errors=0; \
 	$(call TEST_CMD,SET foo bar,OK); \
@@ -394,7 +400,8 @@ test-client: client
 	sleep $(TEST_WAIT_RUN); \
 	kill -0 $$SRV_PID || { echo " => simple-server died - check log"; exit 1; }; \
 	echo " => Waiting for $(TEST_ADDR):$(TEST_PORT)"; \
-	$(call WAIT_UP,3,$(TEST_ADDR),$(TEST_PORT)) || { echo " => Wait failed";i $(call KILL_WAIT,$$SRV_PID); exit 1; }; \
+	$(call WAIT_UP,3,$(TEST_ADDR),$(TEST_PORT)) || \
+		{ echo " => Wait failed";i $(call KILL_WAIT,$$SRV_PID); exit 1; }; \
 	echo " => Server is UP send $(TEST_REQ_FILE) via client"; \
 	cat $(TEST_REQ_FILE) | timeout 2s ./client --hostname $(TEST_ADDR) --port $(TEST_PORT) > $(BUILD_RSP_FILE); \
 	sed -i -e 's/^> //' -e '/^\[+]/d' $(BUILD_RSP_FILE); \
