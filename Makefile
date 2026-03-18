@@ -53,6 +53,7 @@ CTAGS = ctags
 K3D = k3d
 
 
+
 # verbosity - aka Kbuild/HAProxy style
 # -----------------------------------
 V ?= 0
@@ -300,6 +301,23 @@ show-log:
 # TEST SUITE MACROS & TARGETS
 # ###########################
 
+# colors
+ifneq ($(MAKE_TERMOUT),)
+    # Standard Pro approach: Use tput to get the real escape characters
+    GREEN  := $(shell tput setaf 2)
+    RED    := $(shell tput setaf 1)
+    RESET  := $(shell tput sgr0)
+else
+    # If redirected to a file, leave variables empty (no colors)
+    GREEN  :=
+    RED    :=
+    RESET  :=
+endif
+
+PASS_STR := [$(GREEN) PASS $(RESET)]
+FAIL_STR := [$(RED) FAIL $(RESET)]
+
+
 TEST_PORT = 6379
 TEST_ADDR = 127.0.0.1
 TEST_ARGS = --hostname $(TEST_ADDR) --port $(TEST_PORT)
@@ -313,16 +331,24 @@ WAIT_UP = timeout $(1) bash -c 'until nc -z $(2) $(3) 2>/dev/null; do sleep 0.1;
 KILL_WAIT = kill $(1) 2>/dev/null;  wait $(1) 2>/dev/null || true
 
 TEST_CMD = \
-	total=$$((total + 1));  \
-	echo "$(1)" | nc -w 1 -N $(TEST_ADDR) $(TEST_PORT) | \
-	grep -q "$$EXPECT" && \
-    echo " => TEST '$(1)' PASSED" || \
-    (echo " => TEST '$(1)' FAILED"; errors=$$((errors + 1));  )
+    total=$$((total + 1)); \
+    echo "$(1)" | nc -w 1 -N $(TEST_ADDR) $(TEST_PORT) | grep -q "$$EXPECT"; \
+    if [ $$? -eq 0 ]; then \
+        printf " => TEST '%s' %s\n" "$(1)" "$(PASS_STR)"; \
+    else \
+        printf " => TEST '%s' %s\n" "$(1)" "$(FAIL_STR)"; \
+        errors=$$((errors + 1)); \
+    fi
 
 TEST_FILE = \
 	total=$$((total + 1));  \
-	diff -q $(1) $(2) && echo " => TEST $(1) PASSED" || \
-	(echo " => TEST '$(1)' FAILED"; errors=$$((errors + 1)); )
+	diff -q $(1) $(2); \
+    if [ $$? -eq 0 ]; then \
+        printf " => TEST %s %s\n" "$(1)" "$(PASS_STR)"; \
+    else \
+        printf " => TEST '%s' %s\n" "$(1)" "$(FAIL_STR)"; \
+        errors=$$((errors + 1)); \
+    fi
 
 TEST_REPORT = \
 	passed=$$((total - errors)); \
@@ -332,10 +358,6 @@ TEST_REPORT = \
 BUILD_REQ_FILE = $(BUILD_DIR)/$(notdir $(TEST_REQ_FILE))
 BUILD_RSP_FILE = $(BUILD_DIR)/$(notdir $(TEST_RSP_FILE))
 SIMPLE_SERVER = scripts/simple_server.awk
-
-# pod macros
-PASS_STR = "\033[32mPASS (Isolated)\033[0m\n"
-FAIL_STR = "\033[31mFAIL (Leaking!)\033[0m\n"
 
 # TODO parse k8s/yaml files to get names
 CLIENT_POD := client-pod
@@ -360,6 +382,17 @@ DO_MATCH = \
 	total=$$((total + 1));  \
 	$(call DO_SEARCH,$(1),$(2),$(3)) \
 	$(call DO_REPORT,$(1),$(2))
+
+TEST_CONNECT = \
+	total=$$((total + 1));  \
+	kubectl exec $(2) -- nc -w 3 -zv $(3) $(4) >/dev/null 2>&1; \
+	exit_code=$$?; [ $$exit_code -ne 0 ] && exit_code=1; \
+	if [ $$exit_code -eq $(1) ]; then \
+		printf "%b\n" "$(PASS_STR)"; \
+	else \
+		printf "%b\n" "$(FAIL_STR)"; \
+		errors=$$((errors + 1)); \
+	fi
 
 .PHONY: test
 test: test-cmds wait-pods test-pod test-net
@@ -477,25 +510,23 @@ test-pod: deploy
 .PHONY: test-net
 test-net: deploy
 	$(Q)echo "[+] Runing $@"; \
-	MYPOD=$$($(call GET_APP,$(DB_POD))); \
-	echo -n " => Checking db-pod -> internet "; \
-	kubectl exec $$MYPOD -- nc -w 3 -zv google.com 443 >/dev/null 2>&1; \
-	if [ $$? -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
+	total=0; errors=0; \
+	echo -n " => Checking $(DB_POD) -> internet "; \
+	POD=$$($(call GET_APP,$(DB_POD))); \
+	$(call TEST_CONNECT,1,$$POD,google.com,443); \
 	echo -n " => Checking $(CLIENT_POD) -> internet "; \
-	MYPOD=$$($(call GET_APP,$(CLIENT_POD))); \
-	kubectl exec $$MYPOD -- nc -w 3 -zv google.com 443 >/dev/null 2>&1; \
-	if [ $$? -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
+	POD=$$($(call GET_APP,$(CLIENT_POD))); \
+	$(call TEST_CONNECT,1, $$POD,google.com,443); \
 	echo -n " => Checking $(CLIENT_POD) -> $(DB_POD) "; \
-	MYPOD=$$($(call GET_APP,$(CLIENT_POD))); \
-	kubectl exec $$MYPOD -- nc -w 3 -zv db-service $(TEST_PORT) >/dev/null 2>&1; \
-	if [ $$? -eq 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
+	POD=$$($(call GET_APP,$(CLIENT_POD))); \
+	$(call TEST_CONNECT,0,$$POD,db-service,$(TEST_PORT)); \
 	echo -n " => Checking random-pod -> $(DB_POD):$(TEST_PORT) "; \
 	kubectl run random-pod --image=busybox -l app=random --restart=Never -- sleep 30 >/dev/null 2>&1; \
 	kubectl wait --for=condition=Ready pod/random-pod --timeout=15s >/dev/null 2>&1; \
-	kubectl exec random-pod -- nc -w 3 -zv db-service $(TEST_PORT) >/dev/null 2>&1; \
-	EXIT_CODE=$$?; \
+	$(call TEST_CONNECT,1,random-pod,db-service,$(TEST_PORT)); \
 	kubectl delete pod random-pod --now >/dev/null 2>&1; \
-	if [ $$EXIT_CODE -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi
+	$(call TEST_REPORT); \
+	if [ $$errors -gt 0 ]; then exit 1; fi
 
 # #######################
 # VM for testing launcher
