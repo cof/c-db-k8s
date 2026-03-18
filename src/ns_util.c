@@ -642,6 +642,7 @@ int drop_new_privs(const char *name)
 
 // samples/seccomp/bpf-direct.c
 // strace -c server
+// See: man seccomp
 int apply_seccomp(const char *name)
 {
     struct sock_filter filter[] = {
@@ -692,8 +693,8 @@ int apply_seccomp(const char *name)
     BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_write, 1, 0),
 
         // result
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),// if not matched
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)  // if matched
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL), // default if no match
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW) // syscall allowed
     };
 
     struct sock_fprog prog = {

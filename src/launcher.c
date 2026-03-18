@@ -743,7 +743,7 @@ int lau_check_wait(struct myl_lau *lau, struct myl_cnt *cnt)
     return 0;
 }
 
-int lau_wake_sync(struct myl_lau *lau, struct myl_cnt *cnt)
+int lau_sync_send(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     // check if chlld still running
     if (lau_check_wait(lau, cnt) != 0) {
@@ -771,7 +771,7 @@ int lau_wake_sync(struct myl_lau *lau, struct myl_cnt *cnt)
     return 0;
 }
 
-int lau_wait_sync(struct myl_lau *lau, struct myl_cnt *cnt)
+int lau_sync_wait(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     // check if chlld still running
     if (lau_check_wait(lau, cnt) != 0) {
@@ -799,7 +799,7 @@ int lau_wait_sync(struct myl_lau *lau, struct myl_cnt *cnt)
     return 0;
 }
 
-int lau_sync(struct myl_lau *lau)
+static int lau_await_ready(struct myl_lau *lau)
 {
     if (verbose) {
         log_info("LOG", "Launcher sync %d containers %s", 
@@ -810,18 +810,18 @@ int lau_sync(struct myl_lau *lau)
     if (lau->start_order) {
         // sequential sync
         for (size_t i = 0; i < lau->num_config; i++) {
-            RUN(lau_wake_sync(lau, &lau->configs[i]));
-            RUN(lau_wait_sync(lau, &lau->configs[i]));
+            RUN(lau_sync_send(lau, &lau->configs[i]));
+            RUN(lau_sync_wait(lau, &lau->configs[i]));
             sleep(lau->start_delay);
         }
     }
     else {
         // parallel sync
         for (size_t i = 0; i < lau->num_config; i++) {
-            RUN(lau_wake_sync(lau, &lau->configs[i]));
+            RUN(lau_sync_send(lau, &lau->configs[i]));
         }
         for (size_t i = 0; i < lau->num_config; i++) {
-            RUN(lau_wait_sync(lau, &lau->configs[i]));
+            RUN(lau_sync_wait(lau, &lau->configs[i]));
         }
     }
 
@@ -841,7 +841,7 @@ int lau_open_def_netns(struct myl_lau *lau)
 }
 
 // cable two containers together
-int lau_cable(struct myl_lau *lau, struct myl_cnt *x, struct myl_cnt *y)
+static int lau_link_veths(struct myl_lau *lau, struct myl_cnt *x, struct myl_cnt *y)
 {
     if (verbose) {
         log_info("LOG", "Launcher create-cable (left=%s, right=%s)", x->name, y->name);
@@ -870,21 +870,22 @@ int lau_cable(struct myl_lau *lau, struct myl_cnt *x, struct myl_cnt *y)
     return 0;
 }
 
-int lau_run(struct myl_lau *lau)
+static int lau_start_all(struct myl_lau *lau)
 {
     if (verbose) {
-        log_info("LOG", "Launcher starting %d containers", lau->num_config);
+        log_info("LOG", "Starting %d containers", lau->num_config);
     }
 
     for (size_t i = 0; i < lau->num_config; i++) {
-        RUN(lau_run_cnt(lau, &lau->configs[i]));
+        int rc = lau_run_cnt(lau, &lau->configs[i]);
+        if (rc) return rc;
     }
 
     return 0;
 }
 
 // setup infrastucture
-int lau_setup(struct myl_lau *lau)
+static int lau_setup(struct myl_lau *lau)
 {
     if (verbose) {
         log_info("LOG", "Launcher setup infrastucture");
@@ -998,7 +999,7 @@ volatile sig_atomic_t caught_signo = 0;
 volatile sig_atomic_t sender_pid = 0; 
 volatile sig_atomic_t sender_uid = 0; 
 
-int lau_wait(struct myl_lau *lau)
+int lau_wait_pids(struct myl_lau *lau)
 {
     int status = 0;
 
@@ -1221,7 +1222,7 @@ int main(int argc, char *argv[])
 
     // create state
     struct myl_lau *lau = lau_create();
-    if (!lau) fatal_error("Failed to create launher state");
+    if (!lau) fatal_error("Failed to create launcher state");
     if (lau_init(lau) != 0) goto done;
     if (lau_parse_argv(lau, argc, argv) != 0) goto done;
     if (lau_setup_signals() != 0) goto done;
@@ -1233,10 +1234,11 @@ int main(int argc, char *argv[])
 
     // run containers
     if (lau_setup(lau) != 0) goto done;
-    if (lau_run(lau) != 0) goto done;
-    if (lau_cable(lau, cli, db) != 0) goto done;
-    if (lau_sync(lau) != 0) goto done;
-    if (lau_wait(lau) != 0) goto done;
+    if (lau_start_all(lau) != 0) goto done;
+    if (lau_link_veths(lau, cli, db) != 0) goto done;
+
+    if (lau_await_ready(lau) != 0) goto done;
+    if (lau_wait_pids(lau) != 0) goto done;
 
     // no errors
     ec = 0;

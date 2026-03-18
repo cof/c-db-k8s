@@ -152,11 +152,11 @@ STRACE_RAW = $(BUILD_DIR)/strace_raw.txt
 SECCOMP_H  = $(BUILD_DIR)/seccomp_rules.h
 gen-seccomp: client server
 	@echo "Generating seccomp rules..."
-	@strace -c -f -o $(STRACE_SRV) ./server localhost:$(TEST_PORT) & STRACE_PID=$$!; \
+	@strace -c -f -o $(STRACE_SRV) ./server $(TEST_ARGS) & STRACE_PID=$$!; \
 	SERV_PID=$$(pgrep -P $$STRACE_PID); \
 	echo "Profiling Server (PID: $$SERV_PID) via Strace (PID: $$STRACE_PID)"; \
 	sleep 1; \
-	strace -c -f -o $(STRACE_CLI) ./client localhost:$(TEST_PORT) < $(CMD_FILE) 1>/dev/null || true; \
+	strace -c -f -o $(STRACE_CLI) ./client $(TEST_ARGS) < $(CMD_FILE) 1>/dev/null || true; \
 	sleep 1; \
 	pgrep -ax server || true; \
 	kill $$SERV_PID  2>/dev/null || true; \
@@ -300,12 +300,14 @@ show-log:
 # TEST SUITE MACROS & TARGETS
 # ###########################
 
-TEST_REQ_FILE = tests/test_req.txt
-TEST_RSP_FILE = tests/test_rsp.txt
 TEST_PORT = 6379
 TEST_ADDR = 127.0.0.1
+TEST_ARGS = --hostname $(TEST_ADDR) --port $(TEST_PORT)
 TEST_SERVER_LOG = $(BUILD_DIR)/test-server.log
 TEST_WAIT_RUN = 0.5
+
+TEST_REQ_FILE = tests/test_req.txt
+TEST_RSP_FILE = tests/test_rsp.txt
 
 WAIT_UP = timeout $(1) bash -c 'until nc -z $(2) $(3) 2>/dev/null; do sleep 0.1; done'
 KILL_WAIT = kill $(1) 2>/dev/null;  wait $(1) 2>/dev/null || true
