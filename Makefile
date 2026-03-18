@@ -337,6 +337,10 @@ SIMPLE_SERVER = scripts/simple_server.awk
 PASS_STR = "\033[32mPASS (Isolated)\033[0m\n"
 FAIL_STR = "\033[31mFAIL (Leaking!)\033[0m\n"
 
+# TODO parse k8s/yaml files to get names
+CLIENT_POD := client-pod
+DB_POD := db-pod
+
 REQ_START := $(subst ",,"[+] send req: ")
 RSP_START := $(subst ",," recv rsp: ")
 CLIENT_OK := $(subst ",,"Connectivity test: OK")
@@ -352,7 +356,10 @@ DO_CLEAN = sed -e 's/^> //' -e '/^\[+\]/!d' $(1) | \
 DO_SEARCH  = grep -Fq "$(REQ_START)$(1)$(RSP_START)$(2)" $(3)
 DO_REPORT  = && echo " => check $(1) [ PASS ]" || \
 	{ echo " => check $(1) [ FAIL ] (Expected $(2))"; errors=$$((errors + 1)); }
-DO_MATCH =  $(call DO_SEARCH,$(1),$(2),$(3)) $(call DO_REPORT,$(1),$(2))
+DO_MATCH = \
+	total=$$((total + 1));  \
+	$(call DO_SEARCH,$(1),$(2),$(3)) \
+	$(call DO_REPORT,$(1),$(2))
 
 .PHONY: test
 test: test-cmds wait-pods test-pod test-net
@@ -367,7 +374,7 @@ test-cmds: test-server test-client
 .PHONY: test-server
 test-server: server
 	$(Q)echo "[+] Running $@"; \
-	./server --hostname $(TEST_ADDR) --port $(TEST_PORT) 1> $(TEST_SERVER_LOG) 2>&1 & SRV_PID=$$!; \
+	./server $(TEST_ARGS) 1> $(TEST_SERVER_LOG) 2>&1 & SRV_PID=$$!; \
 	echo " => Starting server PID $$SRV_PID"; \
 	sleep $(TEST_WAIT_RUN); \
 	kill -0 $$SRV_PID || { echo " => server died - check log"; exit 1; }; \
@@ -405,7 +412,7 @@ test-client: client
 	$(call WAIT_UP,3,$(TEST_ADDR),$(TEST_PORT)) || \
 		{ echo " => Wait failed";i $(call KILL_WAIT,$$SRV_PID); exit 1; }; \
 	echo " => Server is UP send $(TEST_REQ_FILE) via client"; \
-	cat $(TEST_REQ_FILE) | timeout 2s ./client --hostname $(TEST_ADDR) --port $(TEST_PORT) > $(BUILD_RSP_FILE); \
+	cat $(TEST_REQ_FILE) | timeout 2s ./client $(TEST_ARGS) > $(BUILD_RSP_FILE); \
 	sed -i -e 's/^> //' -e '/^\[+]/d' $(BUILD_RSP_FILE); \
 	echo " => Shutting down simple-server PID $$SRV_PID"; \
 	$(call KILL_WAIT,$$SRV_PID); \
@@ -420,10 +427,10 @@ test-client: client
 .PHONY:wait-pods
 wait-pods: deploy
 	$(Q)echo "[+] Waiting for cluster to be READY..."
-	$(Q)echo " => Waiting for db-pods ..."
-	$(Q)kubectl wait --for=condition=Ready pod -l app=db-pod --timeout=30s | sed 's/^/ => /'
-	$(Q)echo " => Waiting for client pods ..."
-	$(Q)kubectl wait --for=condition=Ready pod -l app=client-pod --timeout=30s | sed 's/^/ => /'
+	$(Q)echo " => kubectl waiting for $(DB_POD) ..."
+	$(Q)kubectl wait --for=condition=Ready pod -l app=$(DB_POD) --timeout=30s | sed 's/^/ => /'
+	$(Q)echo " => kubectl waiting for $(CLIENT_POD)s ..."
+	$(Q)kubectl wait --for=condition=Ready pod -l app=$(CLIENT_POD) --timeout=30s | sed 's/^/ => /'
 	$(Q)echo "[+] Waiting for $(CLIENT_OK)"; \
 	count=0; \
 	until kubectl logs -l app=client-pod --tail=10 2>/dev/null | grep -Fq "$(CLIENT_OK)"; \
@@ -444,8 +451,8 @@ wait-pods: deploy
 .PHONY: test-pod
 test-pod: deploy
 	$(Q)echo "[+] Running $@"; \
-	CLIENT_POD=$$($(call GET_APP,client-pod)); \
-	echo " => Using client-pod: $$CLIENT_POD"; \
+	CLIENT_POD=$$($(call GET_APP,$(CLIENT_POD))); \
+	echo " => Using $(CLIENT_POD): $$CLIENT_POD"; \
 	RAND_STR=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30); \
 	CMD1="SET test-pod $$RAND_STR"; \
 	CMD2="GET test-pod"; \
@@ -458,30 +465,31 @@ test-pod: deploy
 	$(call GET_LOGS,$$CLIENT_POD,$(TEST_POD_LOG)); \
 	$(call DO_CLEAN,$(TEST_POD_LOG),$(TEST_POD_RES)); \
 	echo " => Checking results"; \
-	errors=0; \
+	total=0; errors=0; \
 	$(call DO_MATCH,$$CMD1,OK,$(TEST_POD_RES)); \
 	$(call DO_MATCH,$$CMD2,$$RAND_STR,$(TEST_POD_RES)); \
 	$(call DO_MATCH,$$CMD3,OK,$(TEST_POD_RES)); \
-	if [ $$errors -gt 0 ]; then echo "!!! Total Failures: $$errors"; exit 1; fi; \
+	$(call TEST_REPORT); \
+	if [ $$errors -gt 0 ]; then exit 1; fi
 
 # test k8s Network Policy
 # -----------------------
 .PHONY: test-net
 test-net: deploy
 	$(Q)echo "[+] Runing $@"; \
-	MYPOD=$$($(call GET_APP,db-pod)); \
+	MYPOD=$$($(call GET_APP,$(DB_POD))); \
 	echo -n " => Checking db-pod -> internet "; \
 	kubectl exec $$MYPOD -- nc -w 3 -zv google.com 443 >/dev/null 2>&1; \
 	if [ $$? -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
-	echo -n " => Checking client-pod -> internet "; \
-	MYPOD=$$($(call GET_APP,client-pod)); \
+	echo -n " => Checking $(CLIENT_POD) -> internet "; \
+	MYPOD=$$($(call GET_APP,$(CLIENT_POD))); \
 	kubectl exec $$MYPOD -- nc -w 3 -zv google.com 443 >/dev/null 2>&1; \
 	if [ $$? -ne 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
-	echo -n " => Checking client-pod -> db-pod "; \
-	MYPOD=$$($(call GET_APP,client-pod)); \
+	echo -n " => Checking $(CLIENT_POD) -> $(DB_POD) "; \
+	MYPOD=$$($(call GET_APP,$(CLIENT_POD))); \
 	kubectl exec $$MYPOD -- nc -w 3 -zv db-service $(TEST_PORT) >/dev/null 2>&1; \
 	if [ $$? -eq 0 ]; then printf $(PASS_STR); else printf $(FAIL_STR); exit 1; fi; \
-	echo -n " => Checking random-pod -> db-pod:$(TEST_PORT) "; \
+	echo -n " => Checking random-pod -> $(DB_POD):$(TEST_PORT) "; \
 	kubectl run random-pod --image=busybox -l app=random --restart=Never -- sleep 30 >/dev/null 2>&1; \
 	kubectl wait --for=condition=Ready pod/random-pod --timeout=15s >/dev/null 2>&1; \
 	kubectl exec random-pod -- nc -w 3 -zv db-service $(TEST_PORT) >/dev/null 2>&1; \
