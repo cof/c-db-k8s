@@ -21,6 +21,25 @@
 
 #define STANDARD_MODE 0755
 
+static inline int is_reaped(int status)
+{
+    return WIFEXITED(status) | WIFSIGNALED(status) ? 1 : 0;
+}
+
+static inline int close_fd(int *fd)
+{
+    int rc = 0;
+
+    if (*fd != -1) {
+        if (close(*fd) != 0) rc = -1;
+        *fd = -1;
+    }
+
+    return rc;
+}
+
+void shutdown_pid(int pid, int wait);
+
 int run_cmd(const char *fmt, ...)
     __attribute__((format(printf, 1, 2)));
 

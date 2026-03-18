@@ -6,6 +6,7 @@
  * - man 2 clone
  * - man 2 pivot_root
  * - man 2 wait
+ * - man 2 seccomp
  * - Kerrisk - TLPI - The Linux Progamming Interface
  *
  */
@@ -47,6 +48,21 @@
 #include "util.h"
 #include "log.h"
 #include "ns_util.h"
+
+void shutdown_pid(int pid, int wait)
+{
+    int status;
+
+    kill(pid, SIGTERM);
+
+    if (waitpid(pid, &status, WNOHANG) == 0) {
+        usleep(wait);
+        if (waitpid(pid, &status, WNOHANG) == 0) {
+            kill(pid, SIGKILL);
+            waitpid(pid, &status, 0);
+        }
+    }
+}
 
 int run_cmd(const char *fmt, ...)
 {
@@ -640,9 +656,13 @@ int drop_new_privs(const char *name)
     return 0;
 }
 
-// samples/seccomp/bpf-direct.c
-// strace -c server
-// See: man seccomp
+/* 
+ * Apply syscall security filters
+ *
+ * Refs:
+ * - man 2 seccomp and code example
+ * - linux.git samples/seccomp/bpf-direct.c
+ */
 int apply_seccomp(const char *name)
 {
     struct sock_filter filter[] = {
