@@ -65,6 +65,8 @@
 #define USE_SECCOMP 1
 
 #define EXIT_OK 1
+#define LAU_OK   0
+#define LAU_INTR 1
 
 // container config
 struct myl_cnt {
@@ -159,34 +161,15 @@ struct myl_lau {
     unsigned int child_add_ip : 1; // child sets up network
 };
 
+// signal handling
+volatile sig_atomic_t keep_running = 1;
+volatile sig_atomic_t caught_signo = 0; 
+volatile sig_atomic_t sender_pid = 0; 
+volatile sig_atomic_t sender_uid = 0; 
 
 static inline int child_reaped(int status)
 {
     return WIFEXITED(status) | WIFSIGNALED(status) ? 1 : 0;
-}
-
-static ssize_t read_sync(int fd)
-{
-    char buf;
-    ssize_t nr;
-
-    // block until parent writes to us
-    do {
-        nr = read(fd, &buf, 1);
-    } while (nr == -1 && errno == EINTR);
-
-    return nr;
-}
-
-static int write_sync(int fd)
-{
-    ssize_t nw;
-
-    do {
-        nw = write(fd, "!", 1);
-    } while (nw == -1 && errno == EINTR);
-
-    return nw == 1 ? 1 : -1;
 }
 
 static inline int close_fd(int *fd)
@@ -200,6 +183,7 @@ static inline int close_fd(int *fd)
 
     return rc;
 }
+
 
 static void shutdown_pid(int pid, int wait)
 {
@@ -216,7 +200,7 @@ static void shutdown_pid(int pid, int wait)
     }
 }
 
-static int child_wait_sync(struct myl_cnt *cnt)
+static int child_wait_go(struct myl_cnt *cnt)
 {
     // close the pipe ends we don't need
     if (close_fd(&cnt->go_write_fd) != 0) {
@@ -226,13 +210,20 @@ static int child_wait_sync(struct myl_cnt *cnt)
         return log_errno_rf("close ready_read for %s failed", cnt->name);
     }
 
-    // read 1 byte from parent
-    ssize_t nr = read_sync(cnt->go_read_fd);
-    if (nr == -1) {
-        return log_errno_rf("read-sync for %s failed", cnt->name);
+    // wait for parent
+    ssize_t nr;
+    char ch;
+    while ((nr = read(cnt->go_read_fd, &ch, 1)) == -1) {
+        if (errno == EINTR) {
+            if (!keep_running) return LAU_INTR;
+            continue;
+        }
+        return log_errno_rf("lau wait-go %s failed", cnt->name);
     }
-    if (nr != 1) {
-        return log_error_rf("read-wait for %s got zero", cnt->name);
+
+    // release pipe
+    if (close_fd(&cnt->go_read_fd) != 0) {
+        return log_errno_rf("close send-go for %s failed", cnt->name);
     }
 
     if (verbose) {
@@ -242,27 +233,24 @@ static int child_wait_sync(struct myl_cnt *cnt)
     return 0;;
 }
 
-static int child_wake_sync(struct myl_cnt *cnt)
+static int child_send_ready(struct myl_cnt *cnt)
 {
     if (verbose)  {
         log_info("LOG", "Container (name=%s pid=%d) send-ready", cnt->name, cnt->child_pid);
     }
 
-    ssize_t nw = write_sync(cnt->ready_write_fd);
-
-    if (nw == -1) {
-        return log_errno_rf("write-ready_fd for %s failed", cnt->name);
-    }
-    if (nw != 1) {
-        return log_error_rf("write-ready_fd for %s got zero", cnt->name);
+    // wake up parent
+    while (write(cnt->ready_write_fd, "!", 1) == -1)  {
+        if (errno == EINTR) {
+            if (!keep_running) return LAU_INTR;
+            continue;
+        }
+        return log_errno_rf("lau send-ready %s failed", cnt->name);
     }
 
     // close pipe ends we no longer need
     if (close_fd(&cnt->ready_write_fd) != 0) {
-        return log_errno_rf("close ready_write_fd for %s failed", cnt->name);
-    }
-    if (close_fd(&cnt->go_read_fd) != 0) {
-        return log_errno_rf("close go_read_fd for %s failed", cnt->name);
+        return log_errno_rf("close send-ready for %s failed", cnt->name);
     }
 
     return 0;;
@@ -341,11 +329,11 @@ static int lau_cnt_start(void *arg)
     }
 
     if (set_identity(cnt->name) != 0) _exit(1);
-    if (child_wait_sync(cnt) != 0) _exit(2);
+    if (child_wait_go(cnt) != 0) _exit(2);
     if (set_rootfs(get_rootfs(cnt)) !=0) _exit(3);
     if (set_proc() != 0) _exit(4);
     if (cnt->need_network && create_network(cnt->veth_name, cnt->ip_addr) != 0) _exit(5);
-    if (child_wake_sync(cnt) != 0) _exit(6);
+    if (child_send_ready(cnt) != 0) _exit(6);
 
     // XXX close remaing fds other than stdio,stdout,stderr
     if (syscall(SYS_close_range, 3, ~0U, 0) == -1) {
@@ -743,7 +731,7 @@ int lau_check_wait(struct myl_lau *lau, struct myl_cnt *cnt)
     return 0;
 }
 
-int lau_sync_send(struct myl_lau *lau, struct myl_cnt *cnt)
+int lau_send_go(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     // check if chlld still running
     if (lau_check_wait(lau, cnt) != 0) {
@@ -755,23 +743,23 @@ int lau_sync_send(struct myl_lau *lau, struct myl_cnt *cnt)
     }
 
     // wake up child
-    ssize_t nw = write_sync(cnt->go_write_fd);
-    if (nw != 1) {
-        int _errno = errno;
-        close_fd(&cnt->go_write_fd);
-        errno = _errno;
-        return log_errno_rf("write wake-sync for %s failed", cnt->name);
+    while (write(cnt->go_write_fd, "!", 1) == -1)  {
+        if (errno == EINTR) {
+            if (!keep_running) return LAU_INTR;
+            continue;
+        }
+        return log_errno_rf("lau send-go %s failed", cnt->name);
     }
 
-    // relese pipe
+    // release pipe
     if (close_fd(&cnt->go_write_fd) != 0) {
-        return log_errno_rf("close wait-sync for %s failed", cnt->name);
+        return log_errno_rf("close send-go for %s failed", cnt->name);
     }
 
     return 0;
 }
 
-int lau_sync_wait(struct myl_lau *lau, struct myl_cnt *cnt)
+int lau_wait_ready(struct myl_lau *lau, struct myl_cnt *cnt)
 {
     // check if chlld still running
     if (lau_check_wait(lau, cnt) != 0) {
@@ -779,27 +767,29 @@ int lau_sync_wait(struct myl_lau *lau, struct myl_cnt *cnt)
     }
 
     // wait for child
-    ssize_t nr = read_sync(cnt->ready_read_fd);
-    if (nr == -1)  {
-        int _errno = errno;
-        close_fd(&cnt->ready_read_fd);
-        errno = _errno;
-        return log_errno_rf("read wait-sync for %s failed", cnt->name);
+    ssize_t nr;
+    char ch;
+    while ((nr = read(cnt->ready_read_fd, &ch, 1)) == -1) {
+        if (errno == EINTR) {
+            if (!keep_running) return LAU_INTR;
+            continue;
+        }
+        return log_errno_rf("lau wait-ready %s failed", cnt->name);
     }
 
     // relese pipe
     if (close_fd(&cnt->ready_read_fd) != 0) {
-        return log_errno_rf("close wait-sync %s failed", cnt->name);
+        return log_errno_rf("close wait-ready %s failed", cnt->name);
     }
 
     if (verbose) {
-        log_info("LOG", "Launcher (name=%s pid=%d) recv-ready", cnt->name, cnt->child_pid);
+        log_info("LOG", "Launcher (name=%s pid=%d) wait-ready", cnt->name, cnt->child_pid);
     }
 
     return 0;
 }
 
-static int lau_await_ready(struct myl_lau *lau)
+static int lau_sync_all(struct myl_lau *lau)
 {
     if (verbose) {
         log_info("LOG", "Launcher sync %d containers %s", 
@@ -807,21 +797,27 @@ static int lau_await_ready(struct myl_lau *lau)
             lau->start_order ? "sequential" : "parallel");
     }
 
+    int rc;
+
     if (lau->start_order) {
         // sequential sync
         for (size_t i = 0; i < lau->num_config; i++) {
-            RUN(lau_sync_send(lau, &lau->configs[i]));
-            RUN(lau_sync_wait(lau, &lau->configs[i]));
+            rc = lau_send_go(lau, &lau->configs[i]);
+            if (rc) return rc;
+            rc = lau_wait_ready(lau, &lau->configs[i]);
+            if (rc) return rc;
             sleep(lau->start_delay);
         }
     }
     else {
         // parallel sync
         for (size_t i = 0; i < lau->num_config; i++) {
-            RUN(lau_sync_send(lau, &lau->configs[i]));
+            rc = lau_send_go(lau, &lau->configs[i]);
+            if (rc) return rc;
         }
         for (size_t i = 0; i < lau->num_config; i++) {
-            RUN(lau_sync_wait(lau, &lau->configs[i]));
+            rc = lau_wait_ready(lau, &lau->configs[i]);
+            if (rc) return rc;
         }
     }
 
@@ -923,25 +919,6 @@ static struct myl_cnt *lau_find_child(struct myl_lau *lau, pid_t pid)
     return NULL;
 }
 
-static int set_dir(char **dir, struct get_opt *opt, const char *val_str)
-{
-    if (*dir) free(*dir);
-    *dir = validate_dir(opt->name, val_str);
-    if (!*dir) return -1;
-
-    return 0;
-}
-
-static int set_int(int *ival, struct get_opt *opt, const char *val_str)
-{
-    int val = atoi(val_str);
-    if (val < 0) {
-        return log_error_rf("%s cannot be negative", opt->name);
-    }
-    *ival = val;
-
-    return 0;
-}
 
 static struct myl_cnt *lau_add(
     struct myl_lau *lau,
@@ -958,7 +935,7 @@ static struct myl_cnt *lau_add(
     if (!exec_path) return log_error_rn("Missing exec_path");
 
     if (lau->num_config >= lau->max_config) { 
-        return log_error_rn("Too many containers - num %d >= max %d", lau->num_config, lau->max_config);
+        return log_error_rn("Too many containers. num-config %d >= max %d", lau->num_config, lau->max_config);
     }
 
     cnt = &lau->configs[lau->num_config++];
@@ -992,12 +969,6 @@ static struct myl_cnt *lau_add(
 
     return cnt;
 }
-
-// signal handling
-volatile sig_atomic_t keep_running = 1;
-volatile sig_atomic_t caught_signo = 0; 
-volatile sig_atomic_t sender_pid = 0; 
-volatile sig_atomic_t sender_uid = 0; 
 
 int lau_wait_pids(struct myl_lau *lau)
 {
@@ -1033,18 +1004,10 @@ int lau_wait_pids(struct myl_lau *lau)
         }
     }
 
-    if (caught_signo) {
-        log_info("+","PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
-            lau->pid, 
-            caught_signo, strsignal(caught_signo), 
-            sender_uid,
-            sender_pid);
-    }
-
     return status == EXIT_OK ? 0 : -1;
 }
 
-void lau_handle_signal(int signo, siginfo_t *info, void *ucontext)
+static void lau_handle_signal(int signo, siginfo_t *info, void *ucontext)
 {
     (void) ucontext;
     caught_signo = signo;
@@ -1060,7 +1023,7 @@ void lau_handle_signal(int signo, siginfo_t *info, void *ucontext)
     keep_running = 0;
 }
 
-int lau_setup_signals(void)
+static int lau_setup_signals(void)
 {
     struct sigaction sa = { 0 };
 
@@ -1084,6 +1047,28 @@ int lau_setup_signals(void)
     return 0;
 }
 
+// cmd-line parser helpers
+static int set_dir(char **dir, struct get_opt *opt, const char *val_str)
+{
+    if (*dir) free(*dir);
+    *dir = validate_dir(opt->name, val_str);
+    if (!*dir) return -1;
+
+    return 0;
+}
+
+static int set_int(int *ival, struct get_opt *opt, const char *val_str)
+{
+    int val = atoi(val_str);
+    if (val < 0) {
+        return log_error_rf("%s cannot be negative", opt->name);
+    }
+    *ival = val;
+
+    return 0;
+}
+
+// cmd-line parser
 int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
 {
     struct get_opt opts[] = {
@@ -1204,13 +1189,10 @@ struct myl_lau *lau_create(void)
 {
     struct myl_lau *lau;
 
-    lau = malloc(sizeof(*lau));
-    if (!lau) {
-        return NULL;
-    }
+    lau = calloc(1, sizeof(*lau));
+    if (!lau) return log_errno_rn("malloc lau-state failed");
 
     // init
-    memset(lau, 0, sizeof(*lau));
     lau->host_netns_fd = -1;
 
     return lau;
@@ -1223,6 +1205,7 @@ int main(int argc, char *argv[])
     // create state
     struct myl_lau *lau = lau_create();
     if (!lau) fatal_error("Failed to create launcher state");
+
     if (lau_init(lau) != 0) goto done;
     if (lau_parse_argv(lau, argc, argv) != 0) goto done;
     if (lau_setup_signals() != 0) goto done;
@@ -1237,7 +1220,7 @@ int main(int argc, char *argv[])
     if (lau_start_all(lau) != 0) goto done;
     if (lau_link_veths(lau, cli, db) != 0) goto done;
 
-    if (lau_await_ready(lau) != 0) goto done;
+    if (lau_sync_all(lau) != 0) goto done;
     if (lau_wait_pids(lau) != 0) goto done;
 
     // no errors
