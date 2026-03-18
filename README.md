@@ -8,7 +8,7 @@ Run a database client and server application inside containers.
 ## Prerequisites
 
 - **GCC**: Version 9.0 or higher.
-- **make**: Version 4.0 or higher.
+- **make**: Version 4.1 or higher.
 - **Bash**: Version 4.0+ for running tests
 - **awk**: Version 4.0+ for running tests
 - **Docker**: for building container images

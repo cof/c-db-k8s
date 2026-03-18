@@ -303,12 +303,12 @@ show-log:
 
 # colors
 ifneq ($(MAKE_TERMOUT),)
-    # Standard Pro approach: Use tput to get the real escape characters
+    # safe to use colors escape codes
     GREEN  := $(shell tput setaf 2)
     RED    := $(shell tput setaf 1)
     RESET  := $(shell tput sgr0)
 else
-    # If redirected to a file, leave variables empty (no colors)
+    # not safe (redirected to a file)
     GREEN  :=
     RED    :=
     RESET  :=
