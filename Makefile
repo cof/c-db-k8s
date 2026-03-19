@@ -274,6 +274,10 @@ $(DEPLOY_DONE): $(LOAD_DONE) | $(BUILD_DIR)
 
 # misc k8s commands
 # -----------------
+.PHONY: list-cluster
+list-cluster:
+	k3d cluster list
+
 .PHONY: apply
 apply:
 	kubectl apply -k k8s/
@@ -285,8 +289,16 @@ list-pod:
 	@printf '%66s\n' | tr ' ' '-'
 	@kubectl get pods -l 'app in (client-pod,db-pod)'
 
+.PHONY: list-net
+list-net:
+	@printf '%66s\n' | tr ' ' '-'
+	kubectl describe networkpolicy server-protection
+	@printf '%66s\n' | tr ' ' '-'
+	kubectl describe networkpolicy client-protection
+
 .PHONY: list-all
 list-all:
+	@printf '%66s\n' | tr ' ' '-'
 	kubectl get all
 
 .PHONY: show-log
@@ -307,15 +319,29 @@ ifneq ($(MAKE_TERMOUT),)
     GREEN  := $(shell tput setaf 2)
     RED    := $(shell tput setaf 1)
     RESET  := $(shell tput sgr0)
+	CHECK  :=  $(shell printf "\342\234\223")
+	CROSS  :=  $(shell printf "\342\234\227")
 else
     # not safe (redirected to a file)
     GREEN  :=
     RED    :=
     RESET  :=
+	CHECK  :=
+	CROSS  :=
 endif
 
 PASS_STR := [$(GREEN) PASS $(RESET)]
 FAIL_STR := [$(RED) FAIL $(RESET)]
+
+ALLOW_STR := $(CHECK) ALLOWED
+DENY_STR  := $(CROSS) DENIED
+
+# Use %b to interpret the escaped string
+test-foo:
+	@perm1_str="$(CHECK) ALLOWED"; \
+	perm2_str="$(CROSS) DENIED"; \
+	printf "perm1=%b\n" "$$perm1_str"; \
+	printf "perm2=%b\n" "$$perm2_str"
 
 
 TEST_PORT = 6379
@@ -375,22 +401,25 @@ GET_LOGS = kubectl logs $(1) --tail=20 >$(2) 2>/dev/null
 DO_CLEAN = sed -e 's/^> //' -e '/^\[+\]/!d' $(1) | \
 	sed -z 's/\n\[+\] recv rsp:/ recv rsp:/g' > $(2)
 
-DO_SEARCH  = grep -Fq "$(REQ_START)$(1)$(RSP_START)$(2)" $(3)
-DO_REPORT  = && echo " => check $(1) [ PASS ]" || \
-	{ echo " => check $(1) [ FAIL ] (Expected $(2))"; errors=$$((errors + 1)); }
-DO_MATCH = \
+TEST_RESULT = \
 	total=$$((total + 1));  \
-	$(call DO_SEARCH,$(1),$(2),$(3)) \
-	$(call DO_REPORT,$(1),$(2))
+	grep -Fq "$(REQ_START)$(1)$(RSP_START)$(2)" $(3); \
+	if [ $$? -eq 0 ]; then \
+		printf " => check %s %b\n" "$(1)" "$(PASS_STR)"; \
+	else \
+		printf " => check %s %b\n" $(1) "$(FAIL_STR)"; \
+		errors=$$((errors + 1)); \
+	fi
 
 TEST_CONNECT = \
 	total=$$((total + 1));  \
 	kubectl exec $(2) -- nc -w 3 -zv $(3) $(4) >/dev/null 2>&1; \
 	exit_code=$$?; [ $$exit_code -ne 0 ] && exit_code=1; \
+	perm_str="$(ALLOW_STR)"; [ $(1) -ne 0 ] && perm_str="$(DENY_STR)"; \
 	if [ $$exit_code -eq $(1) ]; then \
-		printf "%b\n" "$(PASS_STR)"; \
+		printf "%b %b\n" "$$perm_str" "$(PASS_STR)"; \
 	else \
-		printf "%b\n" "$(FAIL_STR)"; \
+		printf "%b %b\n" "$$perm_str" "$(FAIL_STR)"; \
 		errors=$$((errors + 1)); \
 	fi
 
@@ -499,9 +528,9 @@ test-pod: deploy
 	$(call DO_CLEAN,$(TEST_POD_LOG),$(TEST_POD_RES)); \
 	echo " => Checking results"; \
 	total=0; errors=0; \
-	$(call DO_MATCH,$$CMD1,OK,$(TEST_POD_RES)); \
-	$(call DO_MATCH,$$CMD2,$$RAND_STR,$(TEST_POD_RES)); \
-	$(call DO_MATCH,$$CMD3,OK,$(TEST_POD_RES)); \
+	$(call TEST_RESULT,$$CMD1,OK,$(TEST_POD_RES)); \
+	$(call TEST_RESULT,$$CMD2,$$RAND_STR,$(TEST_POD_RES)); \
+	$(call TEST_RESULT,$$CMD3,OK,$(TEST_POD_RES)); \
 	$(call TEST_REPORT); \
 	if [ $$errors -gt 0 ]; then exit 1; fi
 
@@ -637,11 +666,12 @@ wipe-vm:
 
 # delete cluster and docker images
 # -------------------------------
+.PHONY: clean-k8s
 clean-k8s:
 	@echo "Cleaning k8s config"
-	k3d cluster delete $(CLUSTER_NAME) || true
-	docker rmi $(SERVER_IMG) $(CLIENT_IMG) || true
-	rm -f $(DONE_FILES)
+	-k3d cluster delete $(CLUSTER_NAME)
+	-docker rmi $(SERVER_IMG) $(CLIENT_IMG)
+	-rm -f $(DONE_FILES)
 
 .PHONY: clean
 clean:
@@ -654,4 +684,5 @@ clean-all: clean-k8s clean
 .PHONY: spotless
 spotless: clean-all
 	@echo "Wiping everthing"
-	docker system prune -af --volumes
+	-docker system prune -af --volumes
+
