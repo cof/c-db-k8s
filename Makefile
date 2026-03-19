@@ -319,8 +319,8 @@ ifneq ($(MAKE_TERMOUT),)
     GREEN  := $(shell tput setaf 2)
     RED    := $(shell tput setaf 1)
     RESET  := $(shell tput sgr0)
-	CHECK  :=  $(shell printf "\342\234\223")
-	CROSS  :=  $(shell printf "\342\234\227")
+	CHECK  := $(shell printf "\342\234\223")
+	CROSS  := $(shell printf "\342\234\227")
 else
     # not safe (redirected to a file)
     GREEN  :=

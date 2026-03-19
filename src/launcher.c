@@ -151,6 +151,7 @@ struct myl_lau {
     int sudo_gid;
     int euid;
     // flags - bit fields
+    unsigned int need_basedir : 1; // create base dir
     unsigned int start_order  : 1; // start container in order
     unsigned int sudo_active  : 1; // launcher is run with sudo
     unsigned int drop_sudo    : 1; // drop sudo on containers
@@ -570,43 +571,43 @@ int mount_overlay(struct myl_lau *lau, struct myl_child *child)
     return rc;
 }
 
-// copy files from host into container filesystem
-int copy_files(struct myl_lau *lau, struct myl_child *child)
+// copy cmd file from host into container filesystem
+int copy_cmd(struct myl_lau *lau, struct myl_child *child)
 {
     if (verbose) {
         log_info("LOG", "Launcher copy-files (name=%s, cmd=%s)", child->name, child->cmd_path);
     }
 
-    char *cmd_path = NULL, *dst_path = NULL, *dst_dir = NULL;
-    int rc = 0;
+    int rc = 1;
+    char *src_path, *dst_path, *dst_dir;
+    src_path = dst_path = dst_dir = NULL;
 
-    // check src path exists
-    cmd_path = realpath(child->cmd_path, NULL);
+    // cmd-path
+    char *cmd_path = child->cmd_path;
     if (!cmd_path) {
-        log_errno("realpath %s failed", child->cmd_path);
-        rc = -1;
-        goto done;
+        return log_error_rf("copy-cmd %s missing cmd_path", child->name);
+    }
+    if (*cmd_path != '/') {
+        // need full path
+        src_path = gen_path(lau->src_dir, child->cmd_path);
+        if (!src_path) goto done;
+        cmd_path = src_path;
     }
 
-    // generate dst path - rootfs/exec_path
+    // dst-path - rootfs/exec_path
     dst_path = gen_path(child_get_rootfs(child), child->exec_path);
-    if (!dst_path) {
-        log_errno("gen_path %s failed", child->exec_path);
-        rc = -1;
-        goto done;
-    }
+    if (!dst_path) goto done;
 
     // need a copy of dst_path to parse
     dst_dir = strdup(dst_path);
     if (!dst_dir) {
-        log_errno("strdup %s failed", dst_path);
-        rc = -1;
+        log_errno("copy-cmd %s strdup dst_path failed", child->name);
         goto done;
     }
 
     // mkdir -p dst_dir
     rc = create_path_nocopy(dirname(dst_dir), lau->dir_mode);
-    if (rc != 0) goto done;
+    if (rc) goto done;
 
     // finally copy or mount file 
     if (lau->mount_cmds) {
@@ -623,8 +624,8 @@ int copy_files(struct myl_lau *lau, struct myl_child *child)
     }
 
 done:
-    if (cmd_path) free(cmd_path);
-    if (dst_dir) free(dst_dir);
+    if (src_path) free(src_path);
+    if (dst_dir)  free(dst_dir);
     if (dst_path) free(dst_path);
 
     return rc;
@@ -870,18 +871,22 @@ static int lau_setup(struct myl_lau *lau)
     }
 
     RUN(lau_open_host_netns(lau));
+    
+    if (lau->need_basedir) {
+        RUN(create_path(lau->base_dir, lau->dir_mode));
+    }
 
     // create dirs
-    RUN(create_path(lau->netns_dir, lau->dir_mode));
-    RUN(create_path(lau->store_dir, lau->dir_mode));
-    RUN(create_path(lau->run_dir, lau->dir_mode));
+    RUN(create_dir(lau->netns_dir, lau->dir_mode, 1));
+    RUN(create_dir(lau->store_dir, lau->dir_mode, 1));
+    RUN(create_dir(lau->run_dir, lau->dir_mode, 1));
 
     for (int i = 0; i < lau->num_config; i++) {
         struct myl_child *cnt = &lau->configs[i];
         RUN(create_root(lau, cnt));
         RUN(create_subdirs(lau, cnt));
         RUN(mount_overlay(lau, cnt));
-        RUN(copy_files(lau, cnt));
+        RUN(copy_cmd(lau, cnt));
         RUN(check_network(lau, cnt));
         RUN(create_netns(lau, cnt));
     }
@@ -1025,11 +1030,14 @@ static int lau_setup_signals(void)
 }
 
 // cmd-line parser helpers
-static int set_dir(char **dir, struct get_opt *opt, const char *val_str)
+static int set_str(char **dir, struct get_opt *opt, const char *val_str)
 {
     if (*dir) free(*dir);
-    *dir = validate_dir(opt->name, val_str);
-    if (!*dir) return -1;
+    //*dir = validate_dir(opt->name, val_str);
+    *dir = strdup(val_str);
+    if (!*dir) {
+        return log_errno_rf("%s strdup failed", opt->name);
+    }
 
     return 0;
 }
@@ -1065,9 +1073,10 @@ int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
     struct get_opt opts[] = {
         { "help",   "This help",  0, 'h' },
         { "log",    "debug mode", 0, 'l' },
-        { "srcdir",  "Path where containers binarys live (default=cwd)",  1, 's' },
-        { "netnsdir","Network namespace dir",  1, 'n' },
-        { "rootfs",  "rootfs dir to mount into container using OverlayFS", 1, 'r' },
+        { "base-dir", "Path for all run-time state (default=cwd)", 1, 'b' },
+        { "src-dir",  "Path where cmd binarys live (default=cwd)",  1, 's' },
+        { "netns-dir","Network namespace dir",  1, 'n' },
+        { "rootfs-dir",  "Folder to mount into container using OverlayFS", 1, 'r' },
         { "start-order", "Start order (0=parallel,1=sequential)",  1, 'o', GETOPT_DEFINT(lau->start_order)  },
         { "start-delay", "Start delay order in secs",  1, 'd', GETOPT_DEFINT(lau->start_delay) },
         { "drop-sudo",  "Drop sudo privilge", 0, 'u', GETOPT_DEFINT(lau->drop_sudo) },
@@ -1089,9 +1098,10 @@ int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
         switch(rc) {
         case 'h': print_usage(argv[0], ARRAY(opts), ARRAY(examples)); return -1;
         case 'l': verbose = 1; break;
-        case 's': rc = set_dir(&lau->src_dir, opt, getopt_str(&parse)); break;
-        case 'n': rc = set_dir(&lau->netns_dir, opt, getopt_str(&parse)); break;
-        case 'r': rc = set_dir(&lau->rootfs_dir, opt, getopt_str(&parse)); break;
+        case 'b': rc = set_str(&lau->base_dir, opt, getopt_str(&parse)); break;
+        case 's': rc = set_str(&lau->src_dir, opt, getopt_str(&parse)); break;
+        case 'n': rc = set_str(&lau->netns_dir, opt, getopt_str(&parse)); break;
+        case 'r': rc = set_str(&lau->rootfs_dir, opt, getopt_str(&parse)); break;
         case 'o': rc = set_start_order(lau, opt, getopt_str(&parse)); break;
         case 'd': rc = set_int(&lau->start_delay, opt, getopt_str(&parse)); break;
         case 'u': lau->drop_sudo = atoi(getopt_str(&parse)) != 0; break;
@@ -1102,7 +1112,27 @@ int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
         if (rc < 0) break;
     }
 
-    return rc == GETOPT_EOF ? 0 : -1;
+    if (rc != GETOPT_EOF) return rc;
+
+    // final checks
+    if (!lau->run_dir) {
+        lau->run_dir = gen_path(lau->base_dir, "run_dir");
+        if (!lau->run_dir) return -1;
+        lau->need_basedir = 1;
+    }
+    if (!lau->netns_dir) {
+        lau->netns_dir = gen_path(lau->base_dir, "netns_dir");
+        if (!lau->netns_dir) return -1;
+        lau->need_basedir = 1;
+    }
+    if (!lau->store_dir) {
+        lau->store_dir = gen_path(lau->base_dir, "store_dir");
+        if (!lau->store_dir) return -1;
+        lau->need_basedir = 1;
+    }
+
+    // all done
+    return 0;
 }
 
 // set defaults
@@ -1129,11 +1159,13 @@ int lau_init(struct myl_lau *lau)
     // setup default dirs
     lau->base_dir = gen_path(lau->cur_dir, BASE_DIR);
     if (!lau->base_dir) {
-        return log_errno_rf("gen_path mylaucher");
+        return log_error_rf("gen-path base_dir failed");
     }
-    lau->run_dir   = gen_path(lau->base_dir, "run_dir");
-    lau->netns_dir = gen_path(lau->base_dir, "netns_dir");
-    lau->store_dir = gen_path(lau->base_dir, "store_dir");
+
+    lau->src_dir = strdup(lau->cur_dir);
+    if (!lau->src_dir) {
+        return log_errno_rf("strdup cur_dir failed");
+    }
 
     lau->netns_suffix = strdup("-ns");
     lau->cable_prefix = strdup("veth-");

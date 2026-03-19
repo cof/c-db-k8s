@@ -163,7 +163,7 @@ char *gen_path(const char *dir, const char *name)
 
     if (rc == -1) {
         // out of memory ?
-        return NULL;
+        return log_errno_rn("gen_path failed for %s", name);
     }
 
     return path;
