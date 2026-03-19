@@ -100,8 +100,6 @@ $(BUILD_DIR):
 	@mkdir -p $@
 
 # where cmds are installed
-$(BIN_DIR):
-	@mkdir -p $@
 
 # server
 # ------
@@ -170,53 +168,54 @@ gen-seccomp: client server
 
 # Build a roofs for OverlayFS
 # ---------------------------
-.PHONY: rootfs
-OUR_CMDS = client server
-AUX_CMDS = bash ls ip ping hostname
-ROOTFS_DIR = rootfs
+ROOTFS_DIR  = $(BUILD_DIR)/rootfs
 ROOTFS_DONE = $(BUILD_DIR)/.rootfs_done
+OUR_CMDS =
+AUX_CMDS = bash ls ip ping hostname
+.PHONY: rootfs
 rootfs: $(ROOTFS_DONE)
-
 $(ROOTFS_DONE): $(OUR_CMDS) | $(BUILD_DIR)
-	@echo "  BUILD $(ROOTFS_DIR)"
-	@mkdir -p $(ROOTFS_DIR)  $(ROOTFS_DIR)/bin $(ROOTFS_DIR)/lib
-	@echo "  + binaries - $(OUR_CMDS)"
-	@for cmd in $^; do \
+	@echo "[+] Building rootfs"
+	@mkdir -p $(ROOTFS_DIR) $(ROOTFS_DIR)/bin $(ROOTFS_DIR)/lib
+	@echo " => Add binaries - $(OUR_CMDS)"
+	$(Q)for cmd in $^; do \
 		install -D $$cmd $(ROOTFS_DIR)/bin; \
 	done
-	@echo "  + helpers - $(AUX_CMDS)"
-	@for cmd in $(AUX_CMDS); do \
+	@echo " => Add helpers - $(AUX_CMDS)"
+	$(Q)for cmd in $(AUX_CMDS); do \
 		CMD_PATH=$$(command -v $$cmd) || { echo "Error: $$cmd not found"; exit 1; }; \
 	    install -D $$CMD_PATH $(ROOTFS_DIR)/bin/; \
 	done 
-	@echo "  + Shared libraires"
-	@ldd $(ROOTFS_DIR)/bin/* | grep "=> /" | awk '{print $$3}' | sort -u | \
+	@echo " => Add Shared libraires"
+	$(Q)ldd $(ROOTFS_DIR)/bin/* 2>/dev/null | grep "=> /" | awk '{print $$3}' | sort -u | \
 			xargs -I '{}' install -D '{}' $(ROOTFS_DIR)/lib/
-	@echo "  + Dynamic Linker"
-	@LOADER_PATH=$$(readelf -l $(ROOTFS_DIR)/bin/bash |
+	@echo " => Add Dynamic Linker"
+	$(Q)LOADER_PATH=$$(readelf -l $(ROOTFS_DIR)/bin/bash | \
 		grep "program interpreter" | awk '{print $$NF}' | tr -d '[]') ; \
-		install -D $$LOADER_PATH $(ROOTFS_DIR)/lib/$${LOADER_PATH}
-	@echo "  + created $(ROOTFS_DIR)"
+		install -D $$LOADER_PATH $(ROOTFS_DIR)/$${LOADER_PATH}
+	@echo " => Created rootfs $(ROOTFS_DIR)"
+	@rm -f $(INSTALL_DONE)
 	@touch $@
 
-# package rootfs
-$(ROOTFS_TAR) : $(ROOTFS_DONE)
-	$(cmd_TAR) -czf $@ $(ROOTFS_DIR)
-
-# install cmds into bin
-# ---------------------
+# install cmds (and rootfs) into bin
+# ----------------------------------
 .PHONY: install
 INSTALL_DONE=$(BUILD_DIR)/.install_done
 BIN_SERVER=$(BIN_DIR)/db/server
 BIN_CLIENT=$(BIN_DIR)/client/client
 BIN_CMDS= $(BIN_CLIENT) $(BIN_SERVER)
 install: $(INSTALL_DONE)
-$(INSTALL_DONE): $(CMDS) | $(BUILD_DIR) $(BIN_DIR) 
+$(INSTALL_DONE): $(CMDS) | $(BUILD_DIR)
 	@echo "[Installing files]"
+	@mkdir -p $(BIN_DIR)
 	$(INSTALL) -D -m 755 server $(BIN_DIR)/db/server
 	$(INSTALL) -D -m 755 client $(BIN_DIR)/client/client
 	$(INSTALL) -D -m 755 launcher $(BIN_DIR)
-	touch $(INSTALL_DONE)
+	$(Q)if [ -d $(ROOTFS_DIR) ]; then  \
+		echo "Install $(ROOTFS_DIR) to $(BIN_DIR)"; \
+		cp -a $(ROOTFS_DIR) $(BIN_DIR)/; \
+	fi
+	@touch $(INSTALL_DONE)
 
 
 # ###########################
@@ -588,10 +587,11 @@ VM_MAC := 52:54:00:12:34:56
 VM_IP  := 192.168.122.243
 
 # alpine VMs  use user-data.yaml to autoconfigure
-USER_DATA = tests/user-data.yaml
+USER_DATA = $(BUILD_DIR)/user-data.yaml
 
-.PHONY: show-config
-show-config:
+
+.PHONY: vm-config
+vm-config:
 	@echo "MIRROR=$(MIRROR)"
 	@echo "REL_URL=$(REL_URL)"
 	@echo "REL_FILE=$(REL_FILE)"
@@ -625,13 +625,24 @@ $(BASE_IMAGE) : | $(CACHE_DIR)
 
 $(RUN_IMAGE): | $(BASE_IMAGE) $(VMDIR)
 	cp $(BASE_IMAGE) $@
+	chmod 644 $@
+	qemu-img resize $@  +100M
+	chmod 444 $@
 
-.PHONY:list-cache
-list-cache: $(CACHE_DIR)
+SSH_PUB_KEY := $(shell cat ~/.ssh/id_rsa.pub 2>/dev/null || echo "NO_KEY_FOUND")
+$(USER_DATA): tests/user-data.yaml | $(BUILD_DIR)
+	$(Q)if [ "$(SSH_PUB_KEY)" = "NO_KEY_FOUND" ]; then \
+		echo "Error: No public key found in ~/.ssh/id_rsa.pub"; \
+		exit 1; \
+	fi
+	$(Q)sed "s|{{SSH_PUBLIC_KEY}}|$(SSH_PUB_KEY)|g" $< > $@
+
+.PHONY:vm-cache
+vm-cache: $(CACHE_DIR)
 	ls -lh $(CACHE_DIR)
 
-.PHONY:install-vm
-install-vm: $(RUN_IMAGE)
+.PHONY:vm-install
+vm-install: $(RUN_IMAGE) $(USER_DATA)
 	virt-install \
 	--name $(VM_NAME) \
 	--virt-type kvm \
@@ -646,19 +657,19 @@ install-vm: $(RUN_IMAGE)
 	--noautoconsole \
 	--import
 
-.PHONY: start-vm
-start-vm:
+.PHONY: vm-start
+vm-start:
 	virsh start $(VM_NAME)
 
-.PHONY: list-vm
-list-vm:
+.PHONY: vm-list
+vm-list:
 	virsh dominfo $(VM_NAME) || true
 	virsh domifaddr $(VM_NAME) || true
 
-wipe-vm:
-	 virsh destroy $(VM_NAME)  || true
-	 virsh undefine $(VM_NAME) || true
-	 rm -fr vmdir
+vm-wipe:
+	 - virsh destroy $(VM_NAME)
+	 - virsh undefine $(VM_NAME)
+	 - rm -fr vmdir
 
 # ################
 # --- Cleanup ----
@@ -673,12 +684,16 @@ clean-k8s:
 	-docker rmi $(SERVER_IMG) $(CLIENT_IMG)
 	-rm -f $(DONE_FILES)
 
+.PHONY: clean-rootfs
+clean-rootfs:
+	rm -rf $(ROOTFS_DIR) $(ROOTFS_DONE)
+
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR) $(ROOTFS_DIR) $(CMDS) $(BIN_DIR) tags
+	rm -rf $(BUILD_DIR) $(CMDS) $(BIN_DIR) tags
 
 .PHONY: clean-all
-clean-all: clean-k8s clean
+clean-all: clean-k8s clean-rootfs vm-wipe clean
 	@echo "Clean done"
 
 .PHONY: spotless

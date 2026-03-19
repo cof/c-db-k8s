@@ -4,6 +4,7 @@ datasource_list: [ NoCloud ]
 
 packages:
   - sudo
+  - util-linux
 
 # XXX alpine is ignore this
 ssh_pwauth: true
@@ -12,6 +13,12 @@ write_files:
     permissions: '0600'
     content: |
       PasswordAuthentication yes
+
+users:
+  - name: alpine
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - "{{SSH_PUBLIC_KEY}}"
 
 bootcmd:
   - echo "root:alpine" | chpasswd
@@ -22,3 +29,6 @@ runcmd:
   - mkdir -p /home/alpine/.ssh
   - chmod 700 /home/alpine/.ssh
   - chown -R alpine:alpine /home/alpine/.ssh
+  - echo 'alias ll="ls -l"' >> /home/alpine/.profile
+  - chown alpine:alpine /home/alpine/.profile
+  - truncate -s 0 /etc/motd
