@@ -57,7 +57,7 @@ char *validate_dir(const char *key, const char *dir);
 int create_netns_file(const char *netns_path);
 int mount_netns(const char *netns_path);
 int mount_file(const char *path);
-int mount_cmd_file(const char *host_path, const char *rootfs_path);
+int mount_cmd(const char *host_path, const char *rootfs_path);
 
 int create_veth(const char *container, char *veth, int veth_len);
 int setup_veth(const char *cont_name, const char *netns);
@@ -73,7 +73,5 @@ int clear_all_caps(const char *name);
 int drop_sudo(const char *name, uid_t uid, uid_t gid);
 int drop_new_privs(const char *name);
 int apply_seccomp(const char *name);
-
-// parent
 
 #endif

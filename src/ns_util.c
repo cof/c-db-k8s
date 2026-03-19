@@ -158,6 +158,8 @@ char *gen_path(const char *dir, const char *name)
 {
     if (!dir || !name) return NULL;
 
+    if (*name == '/') name++;
+
     char *path = NULL;
     int rc = asprintf(&path, "%s/%s", dir, name);
 
@@ -219,6 +221,7 @@ int create_dir(const char *path, mode_t mode, bool can_exist)
     return 0;
 }
 
+// aka mkdir -p - modifies path
 int create_path_nocopy(char *path, mode_t mode)
 {
     if (!path) return -1;
@@ -245,8 +248,9 @@ int create_path_nocopy(char *path, mode_t mode)
 int create_path(const char *path, mode_t mode)
 {
     char *tmp = strdup(path);
-    if (!tmp)
+    if (!tmp) {
         return log_errno_rf("create_path strdup %s failed", path);
+    }
 
     int rc = create_path_nocopy(tmp, mode);
     free(tmp);
@@ -378,17 +382,22 @@ int mount_file(const char *path)
     return 0;
 }
 
-int mount_cmd_file(const char *host_path, const char *rootfs_path)
+int mount_cmd(const char *host_path, const char *rootfs_path)
 {
+    if (verbose) {
+        log_info("LOG", "mount_cmd (host=%s, rootfs=%s)", host_path, rootfs_path);
+    }
+
     // create an empty file - touch rootfs_path
     int fd = open(rootfs_path, O_CREAT | O_WRONLY, 0755);
-    if (fd != -1) {
-        return log_errno_rf("mount_cmd touch %s failed", rootfs_path);
+    if (fd == -1) {
+        return log_errno_rf("mount_cmd open(%s) failed", rootfs_path);
     }
     close(fd); 
 
     // create a writable bind-mount
     if (mount(host_path, rootfs_path, NULL, MS_BIND, NULL) < 0) {
+        // failed - unlink
         int _errno = errno;
         unlink(rootfs_path);
         errno = _errno; 
@@ -397,6 +406,7 @@ int mount_cmd_file(const char *host_path, const char *rootfs_path)
 
     // update bind-mount to read-only
     if (mount(NULL, rootfs_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL) < 0) {
+        // failed - unmount|unlink
         int _errno = errno;
         log_errno_rf("mount_cmd remount read-only %s failed", rootfs_path);
         umount2(rootfs_path, MNT_DETACH); 
