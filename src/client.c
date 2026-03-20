@@ -99,11 +99,10 @@ int main(int argc, char *argv[])
     
     // loop until user hits ctrl-d or server closes
     // TODO replace this with simple_sock
+    // prompt
+    fprintf(stdout, "> "); fflush(stdout);
     char buf[4096];
     while (1) {
-        // prompt
-        fprintf(stdout, "> "); fflush(stdout);
-        
         int rc = poll(fds, 2, -1);
         if (rc == 0) continue;
         if (rc < 0) {
@@ -122,9 +121,12 @@ int main(int argc, char *argv[])
             line[strcspn(line, "\r\n")] = '\0';
             if (log) log_info("+", "recv rsp: %s", line);
             fprintf(stdout, "%s\n", line);
+            // prompt
+            fprintf(stdout, "> "); fflush(stdout);
         }
 
         if (fds[0].revents & POLLIN) {
+        
             // read request line
             char *line = fgets(buf, sizeof(buf), stdin);
             if (!line) {
