@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <unistd.h>
 
+#include <poll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -88,53 +89,54 @@ int main(int argc, char *argv[])
 
     // at this stage safe to proceed
     log_info("+", "Connectivity test: OK");
+
+
+    struct pollfd fds[2];
+    fds[0].fd = fileno(stdin);
+    fds[0].events = POLLIN;
+    fds[1].fd = fileno(server); 
+    fds[1].events = POLLIN;
     
     // loop until user hits ctrl-d or server closes
     // TODO replace this with simple_sock
     char buf[4096];
     while (1) {
         // prompt
-        fprintf(stdout, "> "); 
-        fflush(stdout);
-
-
-        // read request-line 
-        char *line = fgets(buf, sizeof(buf), stdin);
-        if (!line) {
-            log_info("+", "stdin closed");
+        fprintf(stdout, "> "); fflush(stdout);
+        
+        int rc = poll(fds, 2, -1);
+        if (rc == 0) continue;
+        if (rc < 0) {
+            if (errno != EINTR) log_error("client poll failed");
             break;
         }
 
-        line[strcspn(line, "\r\n")] = '\0';
-        if (log) log_info("+", "send req: %s", line);
-
-        // send request to server
-        fprintf(server, "%s\n", line);
-        //fflush(server);
-
-        // recv response from server
-        line = fgets(buf, sizeof(buf), server);
-        if (!line) {
-            // error or close
-            log_info("+", "Connection closed by server");
-            break;
+        if (fds[1].revents & (POLLIN | POLLHUP | POLLERR)) {
+            // recv response from server
+            char *line = fgets(buf, sizeof(buf), server);
+            if (!line) {
+                // error or close
+                log_info("+", "Connection closed by server");
+                break;
+            }
+            line[strcspn(line, "\r\n")] = '\0';
+            if (log) log_info("+", "recv rsp: %s", line);
+            fprintf(stdout, "%s\n", line);
         }
 
-        line[strcspn(line, "\r\n")] = '\0';
-        if (log) log_info("+", "recv rsp: %s", line);
-        fprintf(stdout, "%s\n", line);
-        //fflush(stdout);
+        if (fds[0].revents & POLLIN) {
+            // read request line
+            char *line = fgets(buf, sizeof(buf), stdin);
+            if (!line) {
+                log_info("+", "stdin closed");
+                break;
+            }
+            line[strcspn(line, "\r\n")] = '\0';
+            if (log) log_info("+", "send req: %s", line);
 
-        // check for server eof
-        char ch;
-        int rc = recv(fileno(server), &ch, 1, MSG_PEEK | MSG_DONTWAIT);
-        if (rc == 0) {
-            log_info("+", "Connection closed by server");
-            break;
-        }
-        if (rc < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-            log_errno("connecton(%s) failed", addr_str);
-            fatal_error("Lost connection");
+            // send request to server
+            fprintf(server, "%s\n", line);
+            fflush(server);
         }
     }
 
