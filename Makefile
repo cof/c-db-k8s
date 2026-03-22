@@ -227,6 +227,7 @@ $(INSTALL_DONE): $(CMDS) | $(BUILD_DIR)
 # #######################
 
 # alpine linux image file
+# -----------------------
 OS_VARIANT= alpinelinux3.21
 OS_NAME=alpine
 REL_VER= 3.21
@@ -238,6 +239,7 @@ MIRROR = https://dl-cdn.alpinelinux.org
 REL_URL = $(MIRROR_URL)/$(REL_DIR)/$(REL_FILE)
 
 # our vm
+# ------
 VM_NAME := test-lau
 VM_FILE := myalpine.qcow2
 VM_DIR  := vmdir
@@ -246,6 +248,7 @@ VM_HOME := /home/$(VM_USER)
 VM_BIN_DIR  := $(VM_HOME)/bin
 
 # where we store downloads
+# ------------------------
 ifeq ($(origin VM_CACHE_DIR), undefined)
   VM_CACHE_DIR := $(shell echo $${XDG_CACHE_HOME:-$$HOME/.cache}/my-vm-project)
 endif
@@ -255,14 +258,17 @@ VM_DISK = $(VM_DIR)/$(VM_FILE)
 #VM_MAC := 52:54:00:12:34:56
 #VM_IP  := 192.168.122.243
 
-# alpine VMs  use user-data.yaml to autoconfigure
+# autoconfigure using user-data.yaml
+# ---------------------------------
 USER_DATA = $(BUILD_DIR)/user-data.yaml
 VM_DONE   = $(BUILD_DIR)/.vm_done
 
 # get public key
+# --------------
 SSH_PUB_KEY := $(shell cat ~/.ssh/id_rsa.pub 2>/dev/null || echo "NO_KEY_FOUND")
 
 # create cloud-init user-data
+# ---------------------------
 $(USER_DATA): tests/user-data.yaml | $(BUILD_DIR)
 	$(Q)if [ "$(SSH_PUB_KEY)" = "NO_KEY_FOUND" ]; then \
 		echo "Error: No public key found in ~/.ssh/id_rsa.pub"; \
@@ -277,13 +283,15 @@ $(VM_DIR):
 	$(Q)mkdir -p $@
 
 # download image file
+# -------------------
 $(VM_CACHE_FILE) : | $(VM_CACHE_DIR)
 	$(Q)echo "[+] Downloading VM-DISK: $(REL_URL)"
 	$(Q)wget -nv --no-verbose --show-progress -O $@.tmp $(REL_URL)
 	$(Q)mv $@.tmp $@
 	$(Q)chmod 444 $@
 
-# create renamed|resized copy
+# copy disk image, rename and resize
+# ----------------------------------
 $(VM_DISK): | $(VM_CACHE_FILE) $(VM_DIR)
 	$(Q)echo "[+] Creating VM-DISK: $@"
 	$(Q)cp $(VM_CACHE_FILE) $@
@@ -305,6 +313,8 @@ vm-config:
 vm-cache:
 	ls -lh $(VM_CACHE_DIR)
 
+# install vm image
+# ----------------
 .PHONY:vm-install
 vm-install: $(VM_DISK) $(USER_DATA)
 	$(Q)echo "[+] Installing VM: $(VM_NAME)"
@@ -465,6 +475,7 @@ show-log:
 # ###########################
 
 # colors
+# ------
 ifneq ($(MAKE_TERMOUT),)
     # safe to use colors escape codes
     GREEN  := $(shell tput setaf 2)
@@ -572,8 +583,8 @@ TEST_CONNECT = \
 .PHONY: test
 test: test-cmds test-k8s
 
-# test cmds (client|server) TODO launcher - need VM)
-# -------------------------------------------------
+# test cmds (client|server)
+# ------------------------
 .PHONY: test-cmds
 test-cmds: test-server test-client
 
@@ -630,8 +641,8 @@ test-client: client
 	$(call TEST_REPORT); \
 	if [ $$errors -gt 0 ]; then exit 1; fi
 
-# test-lau
-# --------------
+# run launcher tests
+# ------------------
 .PHONY: test-lau
 test-lau: $(INSTALL_DONE) vm-create
 	$(Q)echo "Running $@"; \
@@ -644,6 +655,8 @@ test-lau: $(INSTALL_DONE) vm-create
 	echo "=> Verifying loader..."; \
 	ssh $(SSH_OPTS) -tt $$VM_SSH_ADDR "stty -echo; sudo $(VM_BIN_DIR)/launcher --base-dir $(VM_HOME)/$@ --src-dir $(VM_BIN_DIR)" < ./$(TEST_REQ_FILE)
 
+# run all k8s tests
+# -----------------
 .PHONY: test-k8s 
 test-k8s:wait-pods test-pod test-net
 
