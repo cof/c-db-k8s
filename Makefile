@@ -399,7 +399,7 @@ $(DOCKER_DONE) : $(INSTALL_DONE) | $(BUILD_DIR)
 .PHONY: create-cluster
 create-cluster: $(CLUSTER_DONE)
 $(CLUSTER_DONE): | $(BUILD_DIR)
-	k3d cluster list | grep -qx $(CLUSTER_NAME) || k3d cluster create $(CLUSTER_NAME)
+	k3d cluster list --no-headers | awk '{print $$1}' | grep -qx "db-k8s" || k3d cluster create db-k8s
 	touch $(CLUSTER_DONE)
 
 # load docker images
@@ -542,7 +542,7 @@ CLIENT_OK := $(subst ",,"Connectivity test: OK")
 TEST_POD_LOG = $(BUILD_DIR)/testpod.txt
 TEST_POD_RES = $(TEST_POD_LOG).result
 GET_APP    = kubectl get pods -l app=$(1) -o name | head -n 1
-SND_ATTACH = echo $(1) | kubectl attach -qi $(2)
+SND_ATTACH = echo $(1) | kubectl attach -qi $(2) 2>/dev/null
 GET_LOGS = kubectl logs $(1) --tail=20 >$(2) 2>/dev/null
 DO_CLEAN = sed -e 's/^> //' -e '/^\[LOG\]/!d' $(1) | \
 	sed -z 's/\n\[LOG\] recv rsp:/ recv rsp:/g' > $(2)
