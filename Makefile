@@ -325,7 +325,7 @@ vm-install: $(VM_DISK) $(USER_DATA)
 # ensure vm exists
 # ----------------
 $(VM_DONE): | $(BUILD_DIR)
-	$(Q)virsh dominfo -q $(VM_NAME) >/dev/null 2>&1 || $(MAKE) vm-install
+	$(Q)virsh -q dominfo $(VM_NAME) >/dev/null 2>&1 || $(MAKE) vm-install
 	$(Q)touch $@
 
 .PHONY:vm-create
