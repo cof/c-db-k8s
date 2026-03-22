@@ -28,7 +28,6 @@
 // big enough for "[" host "]" :" port + null
 #define MAX_HOSTPORT (4 + NI_MAXHOST + NI_MAXSERV)
 
-
 // buffer code
 int resize_cap(struct rwbuf *buf, size_t cap)
 {
@@ -336,14 +335,14 @@ int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr)
 
 int sock_set_noblock(struct simple_sock *sock)
 {
-	int flags = fcntl(sock->fd, F_GETFL, 0);
+    int flags = fcntl(sock->fd, F_GETFL, 0);
     if (flags == -1) {
         return log_errno_rf("fcntl %d getfl failed", sock->fd);
     }
 
     flags |= O_NONBLOCK;
 
-	int rc = fcntl(sock->fd, F_SETFL, flags);
+    int rc = fcntl(sock->fd, F_SETFL, flags);
     if (rc == -1) {
         return log_errno_rf("fcntl %d setfl %d failed", sock->fd, flags);
     }
@@ -494,11 +493,11 @@ static int sock_writev(struct simple_sock *sock, int nbuf,  struct iovec iovs[nb
     int ec = SOCK_OK;
 
     // calc total-length
-	size_t write_len = 0;
+    size_t write_len = 0;
     for (int i = 0; i < nbuf; i++)  {
-		write_len += iovs[i].iov_len;
+        write_len += iovs[i].iov_len;
     }
-	struct iovec *iov = iovs;
+    struct iovec *iov = iovs;
 
     while (write_len) {
 
@@ -527,20 +526,20 @@ static int sock_writev(struct simple_sock *sock, int nbuf,  struct iovec iovs[nb
         // wrote data
         rc = SOCK_DATA;
         write_len -= nw;
-		
-	   	// update vectors for next write
-    	while (nbuf > 0 && (size_t) nw >= iov->iov_len) {
-        	nw -= iov->iov_len;
+        
+        // update vectors for next write
+        while (nbuf > 0 && (size_t) nw >= iov->iov_len) {
+            nw -= iov->iov_len;
             iov->iov_len = 0;
-        	iov++;
-			nbuf--;
-    	}
+            iov++;
+            nbuf--;
+        }
 
-    	// check for partial write
-    	if (nbuf > 0 && nw > 0) {
-        	iov->iov_base = (char *) iov->iov_base + nw;
-        	iov->iov_len -= nw;
-    	}
+        // check for partial write
+        if (nbuf > 0 && nw > 0) {
+            iov->iov_base = (char *) iov->iov_base + nw;
+            iov->iov_len -= nw;
+        }
     }
 
     // data written  or error
@@ -604,7 +603,8 @@ int sock_write_line(struct simple_sock *sock, struct rwbuf *backlog, struct str_
     return 0;
 }
 
-int sock_sendfin(struct simple_sock *sock)
+// shutdown writes on socket
+int sock_sendfin(struct simple_sock *sock) 
 {
     if (sock->fin_sent) return 0;
 
@@ -619,6 +619,7 @@ int sock_sendfin(struct simple_sock *sock)
     return 0;
 }
 
+// close the socket fd
 int sock_close(struct simple_sock *sock, int can_log)
 {
     if (sock->fd != -1) {
