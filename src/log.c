@@ -9,36 +9,37 @@
 #include "util.h"
 #include "log.h"
 
+
 void log_msg(const char *msg)
 {
-    fputs(msg, stdout);
-    fflush(stdout);
+    fputs(msg, stderr);
+    fflush(stderr);
 }
 
 void log_info(const char *what, const char *fmt, ...)
 {
-    va_list args;  
+    va_list args;
 
-    fprintf(stdout, "[%s] ", what);
+    fprintf(stderr, "[%s] ", what);
 
     va_start(args, fmt);
-    vfprintf(stdout, fmt, args);
+    vfprintf(stderr, fmt, args);
     va_end(args);
 
-    fprintf(stdout, "\n");
+    fprintf(stderr, "\n");
 }
 
 int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
 {
     va_list args;  
 
-    fprintf(stdout, "[ERROR] %s: %s: ", cmd, opt);
+    fprintf(stderr, "[ERROR] %s: %s: ", cmd, opt);
 
     va_start(args, fmt);
-    vfprintf(stdout, fmt, args);
+    vfprintf(stderr, fmt, args);
     va_end(args);
 
-    fprintf(stdout, "\n");
+    fprintf(stderr, "\n");
     
     return -1;
 }

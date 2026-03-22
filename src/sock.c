@@ -9,12 +9,14 @@
 #include <signal.h>
 #include <sys/types.h> 
 #include <sys/socket.h>
+#include <sys/epoll.h>
+#include <sys/uio.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netdb.h> 
 #include <unistd.h>
-#include <sys/epoll.h>
 #include <errno.h>
+#include <fcntl.h>
 
 #include "config.h"
 #include "util.h"
@@ -46,13 +48,14 @@ int resize_cap(struct rwbuf *buf, size_t cap)
     return 1;
 }
 
-char *make_space(struct rwbuf *buf, size_t len)
+void *make_space(struct rwbuf *buf, size_t len)
 {
     char *wptr = buf->rptr + buf->len;
     size_t rem = buf->data + buf->cap - wptr;
 
     if (rem < len) {
         // not enough space
+        if (buf->no_resize) return NULL;
         if (!resize_cap(buf, len + buf->len)) {
             return NULL;
         }
@@ -62,6 +65,16 @@ char *make_space(struct rwbuf *buf, size_t len)
     buf->len += len;
 
     return wptr;
+}
+
+int rwbuf_write(struct rwbuf *buf, void *data, size_t len)
+{
+    void *space = make_space(buf, len);
+    if (!space) return -1;
+
+    memcpy(space, data, len); 
+
+    return 0;
 }
 
 void init_rwbuf(struct rwbuf *buf, size_t cap)
@@ -84,7 +97,7 @@ void deinit_rwbuf(struct rwbuf *buf)
     }
 }
 
-int read_line(struct rwbuf *buf, struct str_slice *line)
+int read_line(struct rwbuf *buf, struct str_slice *line, int eof)
 {
     char *eol = memchr(buf->rptr, '\n', buf->len);
 
@@ -94,7 +107,7 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
         char *str = buf->rptr;
         // remove from buffer
         int len = rlen;
-        buf->len -= len ;
+        buf->len -= len;
         buf->rptr += len;
 
         // chop cr/lf - TODO remove this ?
@@ -117,6 +130,16 @@ int read_line(struct rwbuf *buf, struct str_slice *line)
     // incomplete line
     if (buf->len > MAX_LINE) {
         return log_error_rf("line too big - len %zu > max %d", buf->len, MAX_LINE);
+    }
+
+    if (eof) {
+        // store line
+        line->ptr = buf->rptr;
+        line->len =  buf->len;
+        // clear buffer
+        buf->len = 0;
+        buf->rptr = buf->data;
+        return line->len;
     }
 
     if (buf->rptr > buf->data) {
@@ -202,13 +225,14 @@ int sockfd_get_addr(int sockfd, char *buf, int len)
 
 static struct addrinfo *resolve_addr(const char *host, const char *port)
 {
-    struct addrinfo hints, *res = NULL;
+    struct addrinfo hints, *res;
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET6; // want dual stack
     hints.ai_socktype = SOCK_STREAM; 
     hints.ai_protocol = IPPROTO_TCP;
     hints.ai_flags = AI_PASSIVE | AI_NUMERICSERV | AI_V4MAPPED | AI_ALL;
+    res = NULL;
 
     int rc = getaddrinfo(host, port, &hints, &res);
     if (rc != 0) {
@@ -310,11 +334,61 @@ int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr)
     return fd;
 }
 
+int sock_set_noblock(struct simple_sock *sock)
+{
+	int flags = fcntl(sock->fd, F_GETFL, 0);
+    if (flags == -1) {
+        return log_errno_rf("fcntl %d getfl failed", sock->fd);
+    }
+
+    flags |= O_NONBLOCK;
+
+	int rc = fcntl(sock->fd, F_SETFL, flags);
+    if (rc == -1) {
+        return log_errno_rf("fcntl %d setfl %d failed", sock->fd, flags);
+    }
+
+    return 0;
+}
+
+int sock_connect_hostport(struct simple_sock *sock, const char *host, const char *port)
+{
+    struct addrinfo *addr_list = resolve_addr(host, port);
+    if (!addr_list) return -1;
+
+    // loop over addr list for working connection
+    int sock_fd =-1;
+    for (struct addrinfo *ai = addr_list; ai; ai = ai->ai_next) {
+        sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (sock_fd == -1) continue;
+        int rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
+        if (rc != -1) {
+            // connected
+            *sock  = (struct simple_sock) { 0 };
+            sock->fd = sock_fd;
+            memcpy(&sock->addr, ai->ai_addr, sizeof(sock->addr));
+            break;
+        }
+        close(sock_fd);
+        sock_fd = -1;
+    }
+    freeaddrinfo(addr_list);
+    if (sock_fd == -1) return -1;
+
+    int rc = sock_set_noblock(sock);
+    if (rc) {
+        close(sock_fd);
+        sock->fd = -1;
+        return rc;
+    }
+
+    return 0;
+}
+
 int sock_read(struct simple_sock *sock, struct rwbuf *buf)
 {
-    if (sock->sys_err) {
-        return SOCK_ERROR;
-    }
+    if (sock->sys_err) return SOCK_ERROR;
+    if (sock->recv_fin) return SOCK_CLOSED;
     
     int rc = SOCK_OK;
     int ec = SOCK_OK;
@@ -334,7 +408,7 @@ int sock_read(struct simple_sock *sock, struct rwbuf *buf)
                 ec = SOCK_AGAIN;
             }
             else if (errno != EINTR) {
-               log_errno("sock_read fd=%d len=%zu", sock->fd, rem);
+               log_errno("sock_read fd=%d", sock->fd);
                sock->sys_err = 1;
             }
             // stop read
@@ -343,7 +417,7 @@ int sock_read(struct simple_sock *sock, struct rwbuf *buf)
 
         if (nr == 0) {
             // peer closed
-            sock->recv_close = 1;
+            sock->recv_fin = 1;
             ec = SOCK_CLOSED;
             // stop read
             break;
@@ -401,6 +475,148 @@ int sock_write(struct simple_sock *sock, struct rwbuf *buf)
 
     // data or error
     return rc == SOCK_DATA ? rc : ec;
+}
+
+// super-duper buffering
+static inline void load_iov(struct iovec *iov, void *data, size_t len)
+{
+    iov->iov_base = data;
+    iov->iov_len = len;
+}
+
+static int sock_writev(struct simple_sock *sock, int nbuf,  struct iovec iovs[nbuf])
+{
+    if (sock->sys_err) {
+        return SOCK_ERROR;
+    }
+
+    int rc = SOCK_OK;
+    int ec = SOCK_OK;
+
+    // calc total-length
+	size_t write_len = 0;
+    for (int i = 0; i < nbuf; i++)  {
+		write_len += iovs[i].iov_len;
+    }
+	struct iovec *iov = iovs;
+
+    while (write_len) {
+
+        ssize_t nw = writev(sock->fd, iov, nbuf);
+
+        if (nw == -1) {
+            // write failed
+            ec = SOCK_ERROR;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // buffer full
+                ec = SOCK_AGAIN;
+            }
+            else if (errno != EINTR) {
+               log_errno("sock_write fd=%d len=%zu", sock->fd,  iov->iov_len);
+               sock->sys_err = 1;
+            }
+            // stop write
+            break;
+        }
+
+        if (nw == 0)  {
+            // should not happen
+            break;
+        }
+
+        // wrote data
+        rc = SOCK_DATA;
+        write_len -= nw;
+		
+	   	// update vectors for next write
+    	while (nbuf > 0 && (size_t) nw >= iov->iov_len) {
+        	nw -= iov->iov_len;
+            iov->iov_len = 0;
+        	iov++;
+			nbuf--;
+    	}
+
+    	// check for partial write
+    	if (nbuf > 0 && nw > 0) {
+        	iov->iov_base = (char *) iov->iov_base + nw;
+        	iov->iov_len -= nw;
+    	}
+    }
+
+    // data written  or error
+    return rc == SOCK_DATA ? rc : ec;
+}
+
+int sock_write_data(struct simple_sock *sock, struct rwbuf *backlog, struct str_slice data)
+{
+    struct iovec iovs[2];
+
+    // load backlog + data 
+    load_iov(iovs + 0, backlog->rptr, backlog->len);
+    load_iov(iovs + 1, data.ptr, data.len);
+
+    // write backlog + data
+    int rc = sock_writev(sock, 2, iovs);
+    if (rc < 0) return rc;
+
+    // update backlog
+    rc = rwbuf_update(backlog, backlog->len - iovs[0].iov_len);
+    if (rc) return rc;
+
+    // add partial data
+    if (iovs[1].iov_len) {
+        rc = rwbuf_write(backlog, iovs[1].iov_base, iovs[1].iov_len);
+        if (rc) return rc;
+    }
+
+    return 0;
+}
+
+int sock_write_line(struct simple_sock *sock, struct rwbuf *backlog, struct str_slice line)
+{
+    struct iovec iovs[3];
+
+    // load backlog + data + CRLF
+    load_iov(iovs + 0, backlog->rptr, backlog->len);
+    load_iov(iovs + 1, line.ptr, line.len);
+    load_iov(iovs + 2, STR_LIT("\r\n"));
+
+    // write it
+    int rc = sock_writev(sock, 3, iovs);
+    if (rc < 0) return rc;
+
+    // update backlog
+    rc = rwbuf_update(backlog, backlog->len - iovs[0].iov_len);
+    if (rc) return rc;
+
+    // add partial data
+    if (iovs[1].iov_len) {
+        rc = rwbuf_write(backlog, iovs[1].iov_base, iovs[1].iov_len);
+        if (rc) return rc;
+    }
+
+    // add partial CFLF
+    if (iovs[2].iov_len) {
+        rc = rwbuf_write(backlog, iovs[2].iov_base, iovs[2].iov_len);
+        if (rc) return rc;
+    }
+
+    return 0;
+}
+
+int sock_sendfin(struct simple_sock *sock)
+{
+    if (sock->fin_sent) return 0;
+
+    int rc = shutdown(sock->fd, SHUT_WR);
+    if (rc != 0 && errno != ENOTSOCK) {
+        sock->sys_err = 1;
+        return log_errno_rf("shutdown write fd=%d failed", sock->fd);
+    }
+
+    sock->fin_sent = 1;
+
+    return 0;
 }
 
 int sock_close(struct simple_sock *sock, int can_log)

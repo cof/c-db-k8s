@@ -45,6 +45,8 @@ struct simple_client {
     struct simple_server *parent;
     struct rwbuf read_buf;
     struct rwbuf write_buf;
+    unsigned int log_req : 1; // log request
+    unsigned int log_rsp : 1; // log response
 };
 
 struct simple_server {
@@ -57,6 +59,7 @@ struct simple_server {
     char *database;
     //  state
     int epoll_fd; // epoll_create1
+    unsigned int log_line : 1; // log request, response
 };
 
 
@@ -64,27 +67,31 @@ static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uin
 static void client_destroy(struct simple_client *client, int can_log);
 static void client_close(struct simple_client *client, int force);
 
-static int send_str(struct simple_client *client, struct str_slice str)
+static int send_line(struct simple_client *client, struct str_slice line)
 {
-    char *dst = make_space(&client->write_buf, str.len + 2);
+    char *dst = make_space(&client->write_buf, line.len + 2);
 
     if (!dst) {
-        return log_error_rf("make space for %zu bytes failed", str.len + 2);
+        return log_error_rf("make space for %zu bytes failed", line.len + 2);
     }
 
-    memcpy(dst, str.ptr, str.len);
-    dst += str.len;
+    memcpy(dst, line.ptr, line.len);
+    dst += line.len;
     *dst++ = '\r';
     *dst++ = '\n';
 
-    // XXX do_client_write needs to be called ...
+    // note do_client_write needs to be called ...
 
     return 0;
 }
 
 static int send_rsp(struct simple_client *client, struct str_slice rsp)
 {
-    return send_str(client, rsp);
+    if (client->log_rsp) {
+        log_info("LOG", "send-rsp: %.*s", SLICE(rsp));
+    }
+
+    return send_line(client, rsp);
 }
 
 static int cmd_set(struct simple_client *client, struct str_slice args)
@@ -191,11 +198,7 @@ int process_cmd(struct simple_client *client, struct str_slice cmd)
 
 static void client_close(struct simple_client *client, int force)
 {
-    client->sock.send_close = 1;
-
-    if (force) {
-        client->sock.force_close = 1;
-    }
+    sock_wrclose(&client->sock, force);
 }
 
 static void client_destroy(struct simple_client *client, int can_log)
@@ -250,7 +253,7 @@ static void do_client_write(struct simple_client *client)
     }
 
     if (client->write_buf.len) {
-        // write pending
+        // write pending/send_r
         if (!client->sock.wait_write && poll_ctrl(client->parent, &client->sock, RDWR_EVENTS) == 0) {
             client->sock.wait_write = 1;
         }
@@ -266,21 +269,22 @@ static void do_client_write(struct simple_client *client)
 
 void do_client_read(struct simple_client *client)
 {
+    int eof = 0;
     int rc = sock_read(&client->sock, &client->read_buf);
 
     if (rc < 0) {
-        // read failed
-        if (rc == SOCK_CLOSED) {
-            // client closed its end
-            log_info("+", "client-disconnect %s", sock_tostr(&client->sock));
-            client_close(client, 0);
-        }
-        return;
+        // read error
+        if (rc != SOCK_CLOSED) return;
+         // client closed its end
+         log_info("+", "client-disconnect %s", sock_tostr(&client->sock));
+         client_close(client, 0);
+         eof = 1;
     }
 
     // loop until no more lines or error
     struct str_slice line;
-    while ((rc = read_line(&client->read_buf, &line)) > 0) {
+    while ((rc = read_line(&client->read_buf, &line, eof)) > 0) {
+        if (client->log_req) log_info("LOG", "recv-req: %.*s", SLICE(line));
         rc = process_cmd(client, line);
         if (rc != 0) break;
     }
@@ -295,8 +299,8 @@ static int client_must_close(struct simple_client *client)
 {
     if (client->sock.sys_err) return 1;
 
-    if (client->sock.send_close) {
-        if (client->sock.force_close) return 1;
+    if (client->sock.send_fin) {
+        if (client->sock.close_now) return 1;
         if (client->write_buf.len == 0) return 1;
     }
 
@@ -366,8 +370,11 @@ struct simple_client *server_accept(struct simple_server *server)
         return NULL;
     }
 
-    // register with epoll - XXX readable events only
     client->parent = server;
+    client->log_req = server->log_line;
+    client->log_rsp = server->log_line;
+
+    // register with epoll - XXX readable events only
     if (poll_ctrl(server, &client->sock, RD_EVENTS) != 0) { 
         // register failed ?
         client_destroy(client, 1);
@@ -559,13 +566,14 @@ static int set_str(char **str, struct get_opt *opt, const char *val_str)
     return 0;
 }
 
-int server_parse_argv(struct simple_server *server, int argc, char *argv[])
+static int server_parse_argv(struct simple_server *server, int argc, char *argv[])
 {
     struct get_opt opts[] = {
         { "help",   "This help", 0, 'e' },
         { "hostname",  "hostname to listen on", 1, 'h' },
         { "port",     "port to listen on",      1, 'p', GETOPT_DEFSTR(server->port) },
         { "database", "Path to database file",  1, 'd' },
+        { "log",      "log request/response",   0, 'l' },
         { "argv",     "Dump argv to stdout",    0, 'a' }
     };
 
@@ -584,6 +592,7 @@ int server_parse_argv(struct simple_server *server, int argc, char *argv[])
         case 'h': rc = set_str(&server->hostname, opt, getopt_str(&parse)); break;
         case 'p': rc = set_str(&server->port, opt, getopt_str(&parse)); break;
         case 'd': rc = set_str(&server->database, opt, getopt_str(&parse)); break;
+        case 'l': server->log_line = 1; break;
         case 'a': log_argv("+", argc, argv); break;
         }
         if (rc < 0) break;
@@ -663,7 +672,6 @@ int main(int argc, char *argv[])
     if (setup_listener(server)) { ec = 6; goto done; }
 
     if (server_run(server) != 0) { ec = 7; goto done; }
-
 
     // all done
     ec = 0;

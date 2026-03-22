@@ -15,7 +15,7 @@ spec:
       initContainers:
       - name: "wait-db-service"
         image: "alpine"
-        command: ["sh", "-c", "until nc -zv db-service 6379; do echo 'Waiting for db-service...'; sleep 2; done"]
+        command: ["sh", "-c", "until nc -w 1 db-service 6379 < /dev/null; do echo 'Waiting for db-service...'; sleep 2; done"]
       containers:
       - name: "client-pod"
         image: db-k8s-client:v1

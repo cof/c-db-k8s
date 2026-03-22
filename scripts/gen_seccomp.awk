@@ -26,14 +26,18 @@ END {
     }
     asort(names)
 
+    # indent 8 spaces
+    n = 8
+
     #  gen list of allowed syscalls
     for (i = 1; i <= count; i++) {
         offset = count - i + 1
-        printf "BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_%s, %d, 0),\n", syscalls[i], offset
+        printf "%*sBPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_%s, %d, 0),\n", 
+            n, "", syscalls[i], offset
     }
 
     if (count > 1) {
-        print "BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),"
-        print "BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)"
+        printf "%*s%s\n", n, "", "BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),"
+        printf "%*s%s\n", n, "", "BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)"
     }
 }
