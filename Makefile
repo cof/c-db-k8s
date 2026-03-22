@@ -245,7 +245,7 @@ VM_FILE := myalpine.qcow2
 VM_DIR  := vmdir
 VM_USER := alpine
 VM_HOME := /home/$(VM_USER)
-VM_BIN_DIR  := $(VM_HOME)/bin
+VM_BIN_DIR := /home/$(VM_USER)/bin
 
 # where we store downloads
 # ------------------------
@@ -650,8 +650,8 @@ test-lau: $(INSTALL_DONE) vm-create
 	VM_IP=$$($(GET_VM_IP)); \
 	if [ -z "$$VM_IP" ]; then echo "[ERROR] No VM ip address"; exit 1; fi; \
 	VM_SSH_ADDR="$(VM_USER)@$$VM_IP"; \
-	echo "Copying $(BIN_DIR) to $$VM_SSH_ADDR:$(VM_BIN_DIR)"; \
-	scp $(SSH_OPTS) -r $(BIN_DIR)/* $$VM_SSH_ADDR:$(VM_BIN_DIR); \
+	echo "Copying $(BIN_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
+	scp $(SSH_OPTS) -r $(BIN_DIR) $$VM_SSH_ADDR:$(VM_HOME); \
 	echo "=> Verifying loader..."; \
 	ssh $(SSH_OPTS) -tt $$VM_SSH_ADDR "stty -echo; sudo $(VM_BIN_DIR)/launcher --base-dir $(VM_HOME)/$@ --src-dir $(VM_BIN_DIR)" < ./$(TEST_REQ_FILE)
 
