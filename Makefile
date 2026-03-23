@@ -260,21 +260,23 @@ VM_DISK = $(VM_DIR)/$(VM_FILE)
 
 # autoconfigure using user-data.yaml
 # ---------------------------------
-USER_DATA = $(BUILD_DIR)/user-data.yaml
-VM_DONE   = $(BUILD_DIR)/.vm_done
+VM_USER_DATA = $(BUILD_DIR)/user-data.yaml
+VM_DONE      = $(BUILD_DIR)/.vm_done
 
 # get public key
 # --------------
-SSH_PUB_KEY := $(shell cat ~/.ssh/id_rsa.pub 2>/dev/null || echo "NO_KEY_FOUND")
+VM_SSH_KEYFILE := ~/.ssh/id_rsa
+VM_PUB_KEYFILE := $(VM_SSH_KEYFILE).pub
+VM_SSH_PUBKEY  := $(shell cat $(VM_PUB_KEYFILE) 2>/dev/null || echo "NO_KEY_FOUND")
 
 # create cloud-init user-data
 # ---------------------------
-$(USER_DATA): tests/user-data.yaml | $(BUILD_DIR)
-	$(Q)if [ "$(SSH_PUB_KEY)" = "NO_KEY_FOUND" ]; then \
+$(VM_USER_DATA): tests/user-data.yaml | $(BUILD_DIR)
+	$(Q)if [ "$(VM_SSH_PUBKEY)" = "NO_KEY_FOUND" ]; then \
 		echo "Error: No public key found in ~/.ssh/id_rsa.pub"; \
 		exit 1; \
 	fi
-	$(Q)sed "s|{{SSH_PUBLIC_KEY}}|$(SSH_PUB_KEY)|g" $< > $@
+	$(Q)sed "s|{{SSH_PUBLIC_KEY}}|$(VM_SSH_PUBKEY)|g" $< > $@
 
 $(VM_CACHE_DIR):
 	$(Q)mkdir -p $@
@@ -308,6 +310,8 @@ vm-config:
 	@echo "CACHE_DIR=$(VM_CACHE_DIR)"
 	@echo "BASE_IMAGE=$(VM_CACHE_FILE)"
 	@echo "RUN_IMAGE=$(VM_DISK)"
+	@echo "VM_USER_DATA=$(VM_USER_DATA)"
+	@echo "VM_PUB_KEYFILE=$(VM_PUB_KEYFILE)"
 
 .PHONY:vm-cache
 vm-cache:
@@ -316,7 +320,7 @@ vm-cache:
 # install vm image
 # ----------------
 .PHONY:vm-install
-vm-install: $(VM_DISK) $(USER_DATA)
+vm-install: $(VM_DISK) $(VM_USER_DATA)
 	$(Q)echo "[+] Installing VM: $(VM_NAME)"
 	$(Q)virt-install --quiet --noautoconsole --noreboot \
 	--name $(VM_NAME) \
@@ -325,7 +329,7 @@ vm-install: $(VM_DISK) $(USER_DATA)
 	--vcpus 1 \
 	--disk path=$(VM_DISK),format=qcow2,bus=virtio \
 	--network network=default,model=virtio \
-	--cloud-init user-data=$(USER_DATA) \
+	--cloud-init user-data=$(VM_USER_DATA) \
 	--os-variant $(OS_VARIANT) \
 	--graphics vnc \
 	--rng /dev/urandom \
@@ -378,7 +382,7 @@ vm-list:
 vm-clean:
 	 - virsh -q destroy $(VM_NAME)
 	 - virsh -q undefine $(VM_NAME)
-	 - rm -rf $(VM_DIR) $(VM_DONE)
+	 - rm -rf $(VM_DIR) $(VM_DONE) $(VM_USER_DATA)
 
 # ###########################
 # Kubernetes Deployment
@@ -508,7 +512,17 @@ TEST_WAIT_RUN = 0.5
 TEST_REQ_FILE = tests/test_req.txt
 TEST_RSP_FILE = tests/test_rsp.txt
 
-SSH_OPTS = -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+# ssh,scp overrides
+# -----------------
+SSH_OPTS = \
+	-o StrictHostKeyChecking=no \
+	-o UserKnownHostsFile=/dev/null \
+	-o LogLevel=ERROR \
+	-o IdentitiesOnly=yes -i $(VM_SSH_KEYFILE)
+ifeq ($(V),1)
+  SSH_OPTS += -v
+endif
+
 GET_VM_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
 WAIT_UP   = timeout $(1) bash -c 'until nc -z $(2) $(3) 2>/dev/null; do sleep 0.1; done'
 KILL_WAIT = kill $(1) 2>/dev/null;  wait $(1) 2>/dev/null || true
@@ -653,7 +667,7 @@ test-lau: $(INSTALL_DONE) vm-create
 	echo "Copying $(BIN_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
 	scp $(SSH_OPTS) -r $(BIN_DIR) $$VM_SSH_ADDR:$(VM_HOME); \
 	echo "=> Verifying loader..."; \
-	ssh $(SSH_OPTS) -tt $$VM_SSH_ADDR "stty -echo; sudo $(VM_BIN_DIR)/launcher --base-dir $(VM_HOME)/$@ --src-dir $(VM_BIN_DIR)" < ./$(TEST_REQ_FILE)
+	ssh $(SSH_OPTS) -tt $$VM_SSH_ADDR "stty -echo; doas $(VM_BIN_DIR)/launcher --base-dir $(VM_HOME)/$@ --src-dir $(VM_BIN_DIR)" < ./$(TEST_REQ_FILE)
 
 # run all k8s tests
 # -----------------
