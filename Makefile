@@ -3,7 +3,7 @@
 #
 # First run just do:
 #
-#  	make test
+#  	make test-full
 #
 # Important targets
 # 
@@ -11,13 +11,16 @@
 #  install     : put all cmds into bin folder
 #  deploy      : builds images|create cluster|load images|deploy pods
 # 
-#  test-all    : build and test everything
-#  test-cmds   : build and test cmds (client|server)
+#  test        : run basic tests (test-cmds)
+#  test-full   : run all tests test-cmds,test-lau,test-k8s
+#
+#  test-cmds   : run cmd tests (client|server)
+#  test-lau    : run launcher tests
+#  test-k8s    : run k8s tests (wait-pods,test-pod,test-net)
+#
 #  test-server : build and test ./server
 #  test-client : build and test ./client
-#  test-lau    : build and test launcher
 #
-#  test-k8s    : do all these tests
 #  wait-pods   : wait for all pods to be ready
 #  test-pod    : test SET|GET|DEL cmds on pods
 #  test-net    : test k8s network policy
@@ -35,7 +38,6 @@
 # - docker - images
 # - k3d - cluster
 # 
-
 
 # #######################
 #     Config
@@ -485,22 +487,30 @@ ifneq ($(MAKE_TERMOUT),)
     GREEN  := $(shell tput setaf 2)
     RED    := $(shell tput setaf 1)
     RESET  := $(shell tput sgr0)
-	CHECK  := $(shell printf "\342\234\223")
-	CROSS  := $(shell printf "\342\234\227")
+	CHECK_MARK := $(shell printf "\342\234\223")
+	CROSS_MARK := $(shell printf "\342\234\227")
+	ROCKET := 🚀
+	CHECK  := ✅
+  	CROSS  := ❌
+	BULB   := 💡 
 else
     # not safe (redirected to a file)
     GREEN  :=
     RED    :=
     RESET  :=
-	CHECK  :=
-	CROSS  :=
+	CHECK_MARK :=
+	CROSS_MARK :=
+	ROCKET := [LAUNCH]
+	CHECK  := [OK]
+	CROSS  := [FAIL]
+	BULB   := [HINT]
 endif
 
 PASS_STR := [$(GREEN) PASS $(RESET)]
 FAIL_STR := [$(RED) FAIL $(RESET)]
 
-ALLOW_STR := $(CHECK) ALLOWED
-DENY_STR  := $(CROSS) DENIED
+ALLOW_STR := $(CHECK_MARK) ALLOWED
+DENY_STR  := $(CROSS_MARK) DENIED
 
 SERV_PORT = 6379
 TEST_PORT = 7379
@@ -509,11 +519,15 @@ TEST_ARGS = --hostname $(TEST_ADDR) --port $(TEST_PORT)
 TEST_LOG  = $(BUILD_DIR)/test.log
 TEST_WAIT_RUN = 0.5
 
-TEST_REQ_FILE = tests/test_req.txt
-TEST_RSP_FILE = tests/test_rsp.txt
 
-# ssh,scp overrides
-# -----------------
+TEST_REPORT = \
+	passed=$$((total - errors)); \
+	[ $$total -eq 0 ] && percent=100 || percent=$$(( (total - errors) * 100 / total )); \
+	echo " => Ran $$total tests: $$passed passed, $$errors failed ($$percent% success)"
+
+# test-lau macros
+GET_VM_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
+
 SSH_OPTS = \
 	-o StrictHostKeyChecking=no \
 	-o UserKnownHostsFile=/dev/null \
@@ -523,10 +537,16 @@ ifeq ($(V),1)
   SSH_OPTS += -v
 endif
 
-GET_VM_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
+LAUNCHER_CMD := stty -echo; \
+	doas $(VM_BIN_DIR)/launcher \
+	--base-dir $(VM_HOME)/$@ \
+	--src-dir $(VM_BIN_DIR)
+
+# test-cmd macros
 WAIT_UP   = timeout $(1) bash -c 'until nc -z $(2) $(3) 2>/dev/null; do sleep 0.1; done'
 KILL_WAIT = kill $(1) 2>/dev/null;  wait $(1) 2>/dev/null || true
 
+# test-server macros
 TEST_CMD = \
     total=$$((total + 1)); \
     echo "$(1)" | nc -w 1 -N $(TEST_ADDR) $(TEST_PORT) | grep -q "$$EXPECT"; \
@@ -537,6 +557,9 @@ TEST_CMD = \
         errors=$$((errors + 1)); \
     fi
 
+# test-client macros
+TEST_REQ_FILE = tests/test_req.txt
+TEST_RSP_FILE = tests/test_rsp.txt
 TEST_FILE = \
 	total=$$((total + 1));  \
 	diff --strip-trailing-cr $(1) $(2) 1>>$(TEST_LOG); \
@@ -546,12 +569,6 @@ TEST_FILE = \
         printf " => TEST '%s' %s\n" "$(1)" "$(FAIL_STR)"; \
         errors=$$((errors + 1)); \
     fi
-
-TEST_REPORT = \
-	passed=$$((total - errors)); \
-	[ $$total -eq 0 ] && percent=100 || percent=$$(( (total - errors) * 100 / total )); \
-	echo " => Ran $$total tests: $$passed passed, $$errors failed ($$percent% success)"
-
 BUILD_REQ_FILE = $(BUILD_DIR)/$(notdir $(TEST_REQ_FILE))
 BUILD_RSP_FILE = $(BUILD_DIR)/$(notdir $(TEST_RSP_FILE))
 SIMPLE_SERVER = scripts/simple_server.awk
@@ -560,6 +577,7 @@ SIMPLE_SERVER = scripts/simple_server.awk
 CLIENT_POD := client-pod
 DB_POD := db-pod
 
+# test-pod macros
 REQ_START := $(subst ",,"[LOG] send req: ")
 RSP_START := $(subst ",," recv rsp: ")
 CLIENT_OK := $(subst ",,"Connectivity test: OK")
@@ -582,9 +600,12 @@ TEST_RESULT = \
 		errors=$$((errors + 1)); \
 	fi
 
+# test-net macros
+TEST_PRECONN = printf " => %-10s -> %-15s " $(1) $(2)
 TEST_CONNECT = \
 	total=$$((total + 1));  \
-	kubectl exec $(2) -- nc -w 3 -zv $(3) $(4) >/dev/null 2>&1; \
+	POD=$$($(call GET_APP,$(2))); \
+	kubectl exec $$POD -- nc -w 3 -zv $(3) $(4) >/dev/null 2>&1; \
 	exit_code=$$?; [ $$exit_code -ne 0 ] && exit_code=1; \
 	perm_str="$(ALLOW_STR)"; [ $(1) -ne 0 ] && perm_str="$(DENY_STR)"; \
 	if [ $$exit_code -eq $(1) ]; then \
@@ -594,13 +615,20 @@ TEST_CONNECT = \
 		errors=$$((errors + 1)); \
 	fi
 
+.PHONY: test-full
+test-full: test-cmds test-lau test-k8s
+	@echo "$(ROCKET) Full test suite complete."
+
 .PHONY: test
-test: test-cmds test-k8s
+test: test-cmds
+	@echo "-------------------------------------------------------"
+	@echo "💡 Next step: 'make test-full' for VM/K8s tests."
 
 # test cmds (client|server)
 # ------------------------
 .PHONY: test-cmds
 test-cmds: test-server test-client
+	@echo "$(CHECK) $@ complete."
 
 # test ./server
 # -----------------
@@ -645,7 +673,7 @@ test-client: client
 	$(call WAIT_UP,3,$(TEST_ADDR),$(TEST_PORT)) || \
 		{ echo " => Wait failed";i $(call KILL_WAIT,$$SRV_PID); exit 1; }; \
 	echo " => Server is UP send $(TEST_REQ_FILE) via client"; \
-	cat $(TEST_REQ_FILE) | timeout 2s ./client $(TEST_ARGS) > $(BUILD_RSP_FILE); \
+	cat $(TEST_REQ_FILE) | timeout 2s ./client $(TEST_ARGS) > $(BUILD_RSP_FILE) 2>$(TEST_LOG); \
 	sed -i -e 's/^> //' -e '/^\[+]/d' $(BUILD_RSP_FILE); \
 	echo " => Shutting down simple-server PID $$SRV_PID"; \
 	$(call KILL_WAIT,$$SRV_PID); \
@@ -659,31 +687,33 @@ test-client: client
 # ------------------
 .PHONY: test-lau
 test-lau: $(INSTALL_DONE) vm-create
-	$(Q)echo "Running $@"; \
+	$(Q)echo " => Running $@"; \
 	> $(TEST_LOG); \
 	VM_IP=$$($(GET_VM_IP)); \
 	if [ -z "$$VM_IP" ]; then echo "[ERROR] No VM ip address"; exit 1; fi; \
 	VM_SSH_ADDR="$(VM_USER)@$$VM_IP"; \
-	echo "Copying $(BIN_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
-	scp $(SSH_OPTS) -r $(BIN_DIR) $$VM_SSH_ADDR:$(VM_HOME); \
-	echo "=> Verifying loader..."; \
-	ssh $(SSH_OPTS) -tt $$VM_SSH_ADDR "stty -echo; doas $(VM_BIN_DIR)/launcher --base-dir $(VM_HOME)/$@ --src-dir $(VM_BIN_DIR)" < ./$(TEST_REQ_FILE)
+	echo " => Copying $(BIN_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
+	scp -q $(SSH_OPTS) -r $(BIN_DIR) $$VM_SSH_ADDR:$(VM_HOME); \
+	echo " => Running $(VM_BIN_DIR)/launcher ..."; \
+	ssh $(SSH_OPTS) -tt $$VM_SSH_ADDR "$(LAUNCHER_CMD)" < ./$(TEST_REQ_FILE) > $(TEST_LOG); \
+	echo "$(CHECK) $@ complete."
 
 # run all k8s tests
 # -----------------
 .PHONY: test-k8s 
 test-k8s:wait-pods test-pod test-net
+	@echo "$(CHECK) $@ complete."
 
 # wait for all pods to be ready
 # ----------------------------
 .PHONY:wait-pods
 wait-pods: deploy
-	$(Q)echo "[+] Waiting for cluster to be READY..."
+	$(Q)echo "[+] Running $@"
 	$(Q)echo " => kubectl waiting for $(DB_POD) ..."
 	$(Q)kubectl wait --for=condition=Ready pod -l app=$(DB_POD) --timeout=30s | sed 's/^/ => /'
 	$(Q)echo " => kubectl waiting for $(CLIENT_POD)s ..."
 	$(Q)kubectl wait --for=condition=Ready pod -l app=$(CLIENT_POD) --timeout=30s | sed 's/^/ => /'
-	$(Q)echo "[+] Waiting for $(CLIENT_OK)"; \
+	$(Q)echo " => Waiting for $(CLIENT_OK)"; \
 	count=0; \
 	until kubectl logs -l app=client-pod --tail=10 2>/dev/null | grep -Fq "$(CLIENT_OK)"; \
 	do \
@@ -695,7 +725,7 @@ wait-pods: deploy
 		sleep 1; \
 		count=$$((count + 1)); \
 	done; \
-	echo "[+} Pods ready"
+	echo " => $(CHECK_MARK) $@ complete."
 
 # test SET|GET|DEL via client-pods
 # --------------------------------
@@ -729,16 +759,13 @@ test-pod: deploy
 test-net: deploy
 	$(Q)echo "[+] Runing $@"; \
 	total=0; errors=0; \
-	echo -n " => Checking $(DB_POD) -> internet "; \
-	POD=$$($(call GET_APP,$(DB_POD))); \
-	$(call TEST_CONNECT,1,$$POD,google.com,443); \
-	echo -n " => Checking $(CLIENT_POD) -> internet "; \
-	POD=$$($(call GET_APP,$(CLIENT_POD))); \
-	$(call TEST_CONNECT,1, $$POD,google.com,443); \
-	echo -n " => Checking $(CLIENT_POD) -> $(DB_POD) "; \
-	POD=$$($(call GET_APP,$(CLIENT_POD))); \
-	$(call TEST_CONNECT,0,$$POD,db-service,$(SERV_PORT)); \
-	echo -n " => Checking random-pod -> $(DB_POD):$(SERV_PORT) "; \
+	$(call TEST_PRECONN,$(DB_POD),internet); \
+	$(call TEST_CONNECT,1,$(DB_POD),google.com,443); \
+	$(call TEST_PRECONN,$(CLIENT_POD),internet); \
+	$(call TEST_CONNECT,1,$(CLIENT_POD),google.com,443); \
+	$(call TEST_PRECONN,$(CLIENT_POD),$(DB_POD)); \
+	$(call TEST_CONNECT,0,$(CLIENT_POD),db-service,$(SERV_PORT)); \
+	$(call TEST_PRECONN,random-pod,$(DB_POD):$(SERV_PORT)); \
 	kubectl run random-pod --image=busybox -l app=random --restart=Never -- sleep 30 >/dev/null 2>&1; \
 	kubectl wait --for=condition=Ready pod/random-pod --timeout=15s >/dev/null 2>&1; \
 	$(call TEST_CONNECT,1,random-pod,db-service,$(SERV_PORT)); \
