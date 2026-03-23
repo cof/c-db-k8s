@@ -28,6 +28,10 @@
 #  clean       : Remove compiled binaries, object files, and test logs
 #  clean-k8s   : Remove cluster and docker images
 #  spotless    : wipe everthing
+#
+#  vm-config   : show vm config
+#  vm-clean    : wipe vm
+#  vm-list     : show vm
 #  
 # ------------------------------------
 #

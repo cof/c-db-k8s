@@ -112,7 +112,7 @@ static int hash_del(struct str_slice key)
         // get hash or mmap entry
         struct db_rec *rec = db_file
             ? (struct db_rec *) make_ptr(db_mmap_ptr, *pp)
-            : (struct db_rec *) (uintptr_t)(*pp);
+            : (struct db_rec *) make_mem(*pp);
         if (slice_cmp_cstr(key, rec->data, key.len)) {
             // unchain
             *pp = rec->next; 
@@ -163,6 +163,7 @@ static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
         struct db_rec *rec = db_file
             ? make_ptr(db_mmap_ptr, *pp)
             : make_mem(*pp);
+        // does record match key
         if (slice_cmp_cstr(key, rec->data, key.len)) {
             // replace existing entry
             struct db_rec *new_rec = create_rec(key, val);
@@ -229,10 +230,11 @@ static int file_check(void)
 // create a mmap database file
 static int file_init(const char *file_name)
 {
-    // create new file
+    // create file
     int new_file = 1;
     int fd = open(file_name, O_RDWR | O_CREAT | O_EXCL, 0666);
     if (fd == -1) {
+        // open file if it exists
         if (errno != EEXIST) {
             return log_errno_rf("open db-file %s failed", file_name);
         }
@@ -269,7 +271,7 @@ static int file_init(const char *file_name)
 
     void *mmap_ptr = mmap(NULL, file_size,
         PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0
-    ); 
+    );
     close(fd);
     if (mmap_ptr == MAP_FAILED) {
         return log_errno_rf("mmap stack %zu failed", file_size);
@@ -293,7 +295,6 @@ static int file_init(const char *file_name)
         int rc = file_check();
         if (rc) return rc;
     }
-    
 
     return 0;
 }
