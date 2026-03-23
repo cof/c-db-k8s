@@ -75,12 +75,13 @@ cmd_CC   = $(Q)echo "  CC    $@";$(CC)
 cmd_LD   = $(Q)echo "  LD    $@";$(CC)
 endif
 
+
 # compiler flags
 # --------------
 GCC_DEPS     := -MMD -MP
 CPP_FLAGS    := -D_GNU_SOURCE -Isrc
 EXTRA_CFLAGS := -Wextra -Wno-missing-field-initializers
-DEBUG_COMMON := -ggdb3 -fsanitize=address -fno-omit-frame-pointer
+DEBUG_COMMON := -ggdb3 -fno-omit-frame-pointer
 DEBUG_CFLAGS := -O0 $(EXTRA_CFLAGS)
 RELEASE_CFLAGS := -O2 $(EXTRA_CFLAGS)
 CFLAGS += -Wall $(CPP_FLAGS) $(GCC_DEPS)
@@ -93,6 +94,18 @@ else
 	CFLAGS += $(RELEASE_CFLAGS)
 	LDFLAGS += --static
 endif
+
+# asan build
+# -----------
+asan: DEBUG=1
+asan: CFLAGS += -fsanitize=address 
+asan: LDFLAGS += -fsanitize=address
+asan: all
+
+# valgrind build
+# --------------
+valgrind: DEBUG=1
+valgrind: all
 
 MAKEFLAGS += --no-print-directory
 
@@ -110,7 +123,7 @@ $(BUILD_DIR):
 
 # server
 # ------
-SERVER_SRCS = src/util.c src/log.c src/sock.c src/db.c src/server.c
+SERVER_SRCS = src/util.c src/log.c src/rwbuf.c src/sock.c src/db.c src/server.c
 SERVER_OBJS = $(SERVER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 SERVER_DEPS = $(SERVER_OBJS:.o=.d)
 -include $(SERVER_DEPS)
@@ -119,7 +132,7 @@ server: $(SERVER_OBJS)
 
 # client
 # ------
-CLIENT_SRCS = src/util.c src/log.c src/sock.c src/client.c
+CLIENT_SRCS = src/util.c src/log.c src/rwbuf.c src/sock.c src/client.c
 CLIENT_OBJS = $(CLIENT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 CLIENT_DEPS = $(CLIENT_OBJS:.o=.d)
 -include $(CLIENT_DEPS)
@@ -613,7 +626,7 @@ TEST_CONNECT = \
 	POD=$$($(call GET_APP,$(2))); \
 	kubectl exec $$POD -- nc -w 3 -zv $(3) $(4) >/dev/null 2>&1; \
 	exit_code=$$?; [ $$exit_code -ne 0 ] && exit_code=1; \
-	perm_str="$(ALLOW_STR)"; [ $(1) -ne 0 ] && perm_str="$(DENY_STR)"; \
+	perm_str="$(ALLOW_STR)"; [ $(1) -ne 0 ] && perm_str="$(DENY_STR) "; \
 	if [ $$exit_code -eq $(1) ]; then \
 		printf "%b %b\n" "$$perm_str" "$(PASS_STR)"; \
 	else \

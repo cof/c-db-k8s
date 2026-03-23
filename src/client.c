@@ -29,10 +29,8 @@ struct my_conn {
     struct simple_sock *sock_recv;
     int poll_in;
     int poll_out;
-    struct rwbuf rbuf;
-    struct rwbuf wbuf;
-    char rdata[BUFSIZ];
-    char wdata[BUFSIZ];
+    uint8_t rdata[BUFSIZ];
+    uint8_t wdata[BUFSIZ];
 };
 
 static struct get_opt opts[] = {
@@ -47,27 +45,26 @@ static char *examples[] = {
     "--hostname locahost --port 6379"
 };
 
-#define MY_CONN_INIT(_sock, _rfd, _wfd) \
+#define MY_CONN_INIT(_conn, _rfd, _wfd) \
     { \
-      .socks[0].fd = (_rfd), \
-      .socks[1].fd = (_wfd), \
-      .sock_send = &_sock.socks[0], \
-      .sock_recv = &_sock.socks[1], \
+      .socks[0] = SOCK_INIT(_rfd, 0, _conn.rdata, sizeof(_conn.rdata), _conn.wdata, sizeof(_conn.wdata)), \
+      .socks[1] = SOCK_INIT(_wfd, 0, _conn.rdata, sizeof(_conn.rdata), _conn.wdata, sizeof(_conn.wdata)), \
+      .sock_send = &_conn.socks[0], \
+      .sock_recv = &_conn.socks[1], \
       .poll_in  = -1, \
       .poll_out = -1, \
-      .rbuf = RWBUF_LOAD(_sock.rdata, sizeof(_sock.rdata)), \
-      .wbuf = RWBUF_LOAD(_sock.wdata, sizeof(_sock.wdata)), \
       .rdata = { 0 }, \
       .wdata = { 0 } \
     }
 
 static inline int my_conn_isbusy(struct my_conn *conn)
 {
-    return conn->wbuf.len > 0 || sock_isbusy(conn->sock_send);
+    return sock_isbusy(conn->sock_send);
 }
+
 static inline int my_conn_iseof(struct my_conn *conn)
 {
-    return conn->rbuf.len == 0 && sock_recveof(conn->sock_recv);
+    return sock_recveof(conn->sock_recv);
 }
 
 static inline int my_conn_isactive(struct my_conn *conn)
@@ -81,9 +78,10 @@ static void my_conn_pipe(struct my_conn *src, struct my_conn *dst,
     const char *log_line)
 {
     int read_eof = 0;
-    int rc = sock_read(src->sock_recv, &src->rbuf);
+    int rc = sock_read(src->sock_recv);
     if (rc < 0) {
-        // read error or eof
+        // read error (SOCK_ERR|SOCK_CLOSED|SOCK_AGAIN)
+        if (rc == SOCK_AGAIN) return;
         fds[src->poll_in].fd = -1;
         if (rc != SOCK_CLOSED) return;
         read_eof = 1;
@@ -93,52 +91,53 @@ static void my_conn_pipe(struct my_conn *src, struct my_conn *dst,
     }
 
     struct str_slice line;
+    int sent_line = 0;
 
-    while ((rc = read_line(&src->rbuf, &line, read_eof)) > 0) {
+    while ((rc = sock_readline(src->sock_recv, &line, read_eof)) > 0) {
         if (log_line) {
             log_info("LOG", "%s: %.*s", log_line, SLICE(line));
         }
-        rc = sock_write_line(dst->sock_send, &dst->wbuf, line);
+        rc = sock_sendline(dst->sock_send, line);
         if (rc < 0) {
             // write error
             fds[dst->poll_out].fd = -1;
             return;
         }
+        sent_line = sock_sendbuf_used(dst->sock_send) == 0 ? 1 : 0;
         // enable writes if backlog has data
-        fds[dst->poll_out].events = dst->wbuf.len ? POLLOUT : 0;
-        if (prompt && dst->wbuf.len == 0) *prompt = 1;
+        fds[dst->poll_out].events = sent_line ? 0: POLLOUT;
     }
 
-    if (rc < 0) {
-        // line too big fail it
-        sock_seterr(src->sock_recv);
+    if (prompt && sent_line) {
+        *prompt = 1;
     }
 }
 
 static void my_conn_drain(struct my_conn *conn, struct pollfd *fds)
 {
-    int rc = sock_write(conn->sock_send, &conn->wbuf);
+    int rc = sock_write(conn->sock_send);
     if (rc < 0) {
         // write error
         fds[conn->poll_out].fd = -1;
     }
 
     // enable writes if backlog has data
-    fds[conn->poll_out].events = conn->wbuf.len ? POLLOUT : 0;
+    fds[conn->poll_out].events = sock_sendbuf_used(conn->sock_send) ? POLLOUT : 0;
 }
 
 static int my_conn_stop(struct my_conn *user, struct my_conn *serv, struct pollfd *fds)
 {
-    if (!my_conn_isactive(user) || !my_conn_isactive(serv)) return 1;
+    if (!my_conn_isactive(user))  return 1;
+    if (!my_conn_isactive(serv)) return 1;
 
-    if (sock_isclosing(serv->sock_send) && serv->wbuf.len == 0) {
+    if (sock_wr_done(serv->sock_send)) {
         // nothing left to write
         int rc = sock_sendfin(serv->sock_send);
         if (rc) return 1;
         fds[serv->poll_out].fd = -1;
     }
 
-    if (sock_isclosing(user->sock_send) && user->wbuf.len == 0) {
+    if (sock_wr_done(user->sock_send)) {
         // nothing left to write
         int rc = sock_sendfin(user->sock_send);
         if (rc) return 1;
@@ -167,7 +166,7 @@ static int set_fd(struct simple_sock *sock, int idx, struct pollfd *fds, int eve
 static void my_conn_prompt(struct my_conn *conn)
 {
     struct str_slice prompt = slice_make(STR_LIT("> "));
-    sock_write_data(conn->sock_send, &conn->wbuf, prompt);
+    sock_send_data(conn->sock_send, prompt);
 }
 
 // signal handling
@@ -254,9 +253,9 @@ int main(int argc, char *argv[])
         
     // setup stdout,stdin for send,recv
     struct my_conn user = MY_CONN_INIT(user, STDOUT_FILENO, STDIN_FILENO);
-    rc = sock_set_noblock(user.sock_recv);
+    rc = sock_set_nonblock(user.sock_recv);
     if (rc) fatal_errno("set stdin non-block failed");
-    rc = sock_set_noblock(user.sock_send);
+    rc = sock_set_nonblock(user.sock_send);
     if (rc) fatal_errno("set stdout  non-block failed");
 
     struct pollfd fds[4];

@@ -21,135 +21,8 @@
 #include "config.h"
 #include "util.h"
 #include "log.h"
+#include "rwbuf.h"
 #include "sock.h"
-
-#define MAX_EVENTS 10
-
-// big enough for "[" host "]" :" port + null
-#define MAX_HOSTPORT (4 + NI_MAXHOST + NI_MAXSERV)
-
-// buffer code
-int resize_cap(struct rwbuf *buf, size_t cap)
-{
-    cap = ALIGN_UP(cap, 128);
-    void *data = malloc(cap);
-    if (!data) return 0;
-
-    if (buf->data) {
-        memcpy(data, buf->rptr, buf->len);
-        free(buf->data);
-    }
-
-    buf->data = data;
-    buf->rptr = data;
-    buf->cap = cap;
-
-    return 1;
-}
-
-void *make_space(struct rwbuf *buf, size_t len)
-{
-    char *wptr = buf->rptr + buf->len;
-    size_t rem = buf->data + buf->cap - wptr;
-
-    if (rem < len) {
-        // not enough space
-        if (buf->no_resize) return NULL;
-        if (!resize_cap(buf, len + buf->len)) {
-            return NULL;
-        }
-        wptr = buf->rptr + buf->len;
-    }
-
-    buf->len += len;
-
-    return wptr;
-}
-
-int rwbuf_write(struct rwbuf *buf, void *data, size_t len)
-{
-    void *space = make_space(buf, len);
-    if (!space) return -1;
-
-    memcpy(space, data, len); 
-
-    return 0;
-}
-
-void init_rwbuf(struct rwbuf *buf, size_t cap)
-{
-    memset(buf, 0, sizeof(*buf));
-
-    if (cap) 
-        resize_cap(buf, cap);
-}
-
-void deinit_rwbuf(struct rwbuf *buf)
-{
-    buf->len = 0;
-    buf->cap = 0;
-    buf->rptr = NULL;
-
-    if (buf->data) {
-        free(buf->data);
-        buf->data = NULL;
-    }
-}
-
-int read_line(struct rwbuf *buf, struct str_slice *line, int eof)
-{
-    char *eol = memchr(buf->rptr, '\n', buf->len);
-
-    if (eol) {
-        // found terminator
-        int rlen = eol - buf->rptr + 1;
-        char *str = buf->rptr;
-        // remove from buffer
-        int len = rlen;
-        buf->len -= len;
-        buf->rptr += len;
-
-        // chop cr/lf - TODO remove this ?
-        if (len && str[len - 1] == '\n') len--;
-        if (len && str[len - 1] == '\r') len--;
-        str[len] = '\0';
-
-        // store line
-        line->ptr = str;
-        line->len = len;
-
-        if (len > MAX_LINE) {
-            return log_error_rf("line too big - len %d > max %d", len, MAX_LINE);
-        }
-
-        // line length + CRLF
-        return rlen;
-    }
-
-    // incomplete line
-    if (buf->len > MAX_LINE) {
-        return log_error_rf("line too big - len %zu > max %d", buf->len, MAX_LINE);
-    }
-
-    if (eof) {
-        // store line
-        line->ptr = buf->rptr;
-        line->len =  buf->len;
-        // clear buffer
-        buf->len = 0;
-        buf->rptr = buf->data;
-        return line->len;
-    }
-
-    if (buf->rptr > buf->data) {
-        // ensure partial line at buffer start
-        memmove(buf->data, buf->rptr, buf->len);
-        buf->rptr = buf->data;
-    }
-
-    // wait for eol
-    return 0;
-}
 
 static int sockaddr_tobuf(struct sockaddr *addr, socklen_t addr_len, char *buf, size_t buf_len)
 {
@@ -239,6 +112,35 @@ static struct addrinfo *resolve_addr(const char *host, const char *port)
     }
 
     return res;
+}
+
+int sock_init(struct simple_sock *sock,
+    int fd, struct sockaddr_in6 *addr, 
+    size_t buf_size, size_t min_size, size_t max_size)
+{
+    sock->fd = fd;
+    if (addr) {
+        memcpy(&sock->addr, addr, sizeof(*addr));
+    }
+
+    sock->min_size = min_size;
+
+    int rc = rwbuf_init(&sock->recv_buf, buf_size, max_size);
+    if (rc) return rc;
+
+    rc = rwbuf_init(&sock->send_buf, buf_size, max_size);
+    if (rc) return rc;
+
+    return 0;
+}
+
+// close sock free memory
+void sock_deinit(struct simple_sock *sock, int can_log)
+{
+    sock_close(sock, can_log);
+
+    rwbuf_deinit(&sock->send_buf);
+    rwbuf_deinit(&sock->recv_buf);
 }
 
 // create inet(4|6) tcp listener socket
@@ -333,7 +235,40 @@ int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr)
     return fd;
 }
 
-int sock_set_noblock(struct simple_sock *sock)
+int sock_connect_hostport(struct simple_sock *sock, const char *host, const char *port)
+{
+    struct addrinfo *addr_list = resolve_addr(host, port);
+    if (!addr_list) return -1;
+
+    // loop over addr list for working connection
+    int sock_fd =-1;
+    for (struct addrinfo *ai = addr_list; ai; ai = ai->ai_next) {
+        sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (sock_fd == -1) continue;
+        int rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
+        if (rc != -1) {
+            // connected
+            sock->fd = sock_fd;
+            memcpy(&sock->addr, ai->ai_addr, sizeof(sock->addr));
+            break;
+        }
+        close(sock_fd);
+        sock_fd = -1;
+    }
+    freeaddrinfo(addr_list);
+    if (sock_fd == -1) return -1;
+
+    int rc = sock_set_nonblock(sock);
+    if (rc) {
+        close(sock_fd);
+        sock->fd = -1;
+        return rc;
+    }
+
+    return 0;
+}
+
+int sock_set_nonblock(struct simple_sock *sock)
 {
     int flags = fcntl(sock->fd, F_GETFL, 0);
     if (flags == -1) {
@@ -350,54 +285,30 @@ int sock_set_noblock(struct simple_sock *sock)
     return 0;
 }
 
-int sock_connect_hostport(struct simple_sock *sock, const char *host, const char *port)
-{
-    struct addrinfo *addr_list = resolve_addr(host, port);
-    if (!addr_list) return -1;
-
-    // loop over addr list for working connection
-    int sock_fd =-1;
-    for (struct addrinfo *ai = addr_list; ai; ai = ai->ai_next) {
-        sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-        if (sock_fd == -1) continue;
-        int rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
-        if (rc != -1) {
-            // connected
-            *sock  = (struct simple_sock) { 0 };
-            sock->fd = sock_fd;
-            memcpy(&sock->addr, ai->ai_addr, sizeof(sock->addr));
-            break;
-        }
-        close(sock_fd);
-        sock_fd = -1;
-    }
-    freeaddrinfo(addr_list);
-    if (sock_fd == -1) return -1;
-
-    int rc = sock_set_noblock(sock);
-    if (rc) {
-        close(sock_fd);
-        sock->fd = -1;
-        return rc;
-    }
-
-    return 0;
-}
-
-int sock_read(struct simple_sock *sock, struct rwbuf *buf)
+int sock_read(struct simple_sock *sock)
 {
     if (sock->sys_err) return SOCK_ERROR;
     if (sock->recv_fin) return SOCK_CLOSED;
     
     int rc = SOCK_OK;
     int ec = SOCK_OK;
-    char *rptr = buf->rptr + buf->len;
-    size_t rem = buf->data + buf->cap - rptr;
 
-    while (rem) {
+    uint8_t *wptr = rwbuf_wptr(&sock->recv_buf);
+    size_t space  = rwbuf_space(&sock->recv_buf);
+
+    if (sock->min_size && space < sock->min_size) {
+        wptr = rwbuf_mkspace(&sock->recv_buf, space - sock->min_size);
+        if (!wptr) {
+            sock->sys_err = 1;
+            return SOCK_ERROR;
+        }
+        space = rwbuf_space(&sock->recv_buf);
+    }
+
+    while (space) {
         
         // read as much as we can
-        ssize_t nr = read(sock->fd, rptr, rem);
+        ssize_t nr = read(sock->fd, wptr, space);
 
         if (nr == -1)  {
             // read failed
@@ -424,16 +335,26 @@ int sock_read(struct simple_sock *sock, struct rwbuf *buf)
 
         // read data
         rc = SOCK_DATA;
-        rptr += nr;
-        rem -= nr;
-        buf->len += nr;
+        wptr  += nr;
+        space -= nr;
+        sock->recv_buf.widx += nr;
     }
 
     // data or error
     return rc == SOCK_DATA ? rc : ec;
 }
 
-int sock_write(struct simple_sock *sock, struct rwbuf *buf)
+int sock_readline(struct simple_sock *sock, struct str_slice *line, int eof)
+{
+    int rc = rwbuf_readline(&sock->recv_buf, line, eof);
+    if (rc < 0) {
+        // line too big
+        sock->sys_err = 1;
+    }
+    return rc;
+}
+
+int sock_write(struct simple_sock *sock)
 {
     if (sock->sys_err) {
         return SOCK_ERROR;
@@ -442,9 +363,12 @@ int sock_write(struct simple_sock *sock, struct rwbuf *buf)
     int rc = SOCK_OK;
     int ec = SOCK_OK;
 
-    while (buf->len) {
+    size_t   wlen = rwbuf_used(&sock->send_buf);
+    uint8_t *wptr = rwbuf_rptr(&sock->send_buf);
 
-        ssize_t nw = write(sock->fd, buf->rptr, buf->len);
+    while (wlen) {
+
+        ssize_t nw = write(sock->fd, wptr, wlen);
 
         if (nw == -1) {
             // write failed
@@ -454,7 +378,7 @@ int sock_write(struct simple_sock *sock, struct rwbuf *buf)
                 ec = SOCK_AGAIN;
             }
             else if (errno != EINTR) {
-               log_errno("sock_write fd=%d len=%zu", sock->fd,  buf->len);
+               log_errno("sock_write fd=%d len=%zu", sock->fd,  wlen);
                sock->sys_err = 1;
             }
             // stop write
@@ -468,8 +392,15 @@ int sock_write(struct simple_sock *sock, struct rwbuf *buf)
 
         // wrote data
         rc = SOCK_DATA;
-        buf->rptr += nw;
-        buf->len -= nw;
+        wptr += nw;
+        wlen -= nw;
+
+        sock->send_buf.ridx += nw;
+        if (sock->send_buf.ridx == sock->send_buf.widx) {
+            // empty buffer
+            sock->send_buf.ridx = 0;
+            sock->send_buf.widx = 0;
+        }
     }
 
     // data or error
@@ -477,12 +408,6 @@ int sock_write(struct simple_sock *sock, struct rwbuf *buf)
 }
 
 // super-duper buffering
-static inline void load_iov(struct iovec *iov, void *data, size_t len)
-{
-    iov->iov_base = data;
-    iov->iov_len = len;
-}
-
 static int sock_writev(struct simple_sock *sock, int nbuf,  struct iovec iovs[nbuf])
 {
     if (sock->sys_err) {
@@ -493,10 +418,7 @@ static int sock_writev(struct simple_sock *sock, int nbuf,  struct iovec iovs[nb
     int ec = SOCK_OK;
 
     // calc total-length
-    size_t write_len = 0;
-    for (int i = 0; i < nbuf; i++)  {
-        write_len += iovs[i].iov_len;
-    }
+    size_t write_len = iovs_len(nbuf, iovs);
     struct iovec *iov = iovs;
 
     while (write_len) {
@@ -546,12 +468,43 @@ static int sock_writev(struct simple_sock *sock, int nbuf,  struct iovec iovs[nb
     return rc == SOCK_DATA ? rc : ec;
 }
 
-int sock_write_data(struct simple_sock *sock, struct rwbuf *backlog, struct str_slice data)
+// buffer data - send later
+int sock_write_data(struct simple_sock *sock, struct str_slice data)
+{
+    int rc = rwbuf_write(&sock->send_buf, data.ptr, data.len);
+    if (rc) {
+        sock->sys_err = 1;
+        return rc;
+    }
+
+    return 0;
+}
+
+// buffer line - send later
+int sock_write_line(struct simple_sock *sock, struct str_slice line)
+{
+    struct iovec iovs[2];
+
+    // load backlog + data + CRLF
+    load_iov(iovs + 0, line.ptr, line.len);
+    load_iov(iovs + 1, STR_LIT("\r\n"));
+
+    int rc = rwbuf_writev(&sock->send_buf, 2, iovs);
+    if (rc) {
+        sock->sys_err = 1;
+        return rc;
+    }
+
+    return 0;
+}
+
+// send now - buffer backlog
+int sock_send_data(struct simple_sock *sock, struct str_slice data)
 {
     struct iovec iovs[2];
 
     // load backlog + data 
-    load_iov(iovs + 0, backlog->rptr, backlog->len);
+    load_iov(iovs + 0, rwbuf_rptr(&sock->send_buf), rwbuf_used(&sock->send_buf));
     load_iov(iovs + 1, data.ptr, data.len);
 
     // write backlog + data
@@ -559,24 +512,25 @@ int sock_write_data(struct simple_sock *sock, struct rwbuf *backlog, struct str_
     if (rc < 0) return rc;
 
     // update backlog
-    rc = rwbuf_update(backlog, backlog->len - iovs[0].iov_len);
+    rc = rwbuf_ridx_adj(&sock->send_buf, iovs[0].iov_len);
     if (rc) return rc;
 
     // add partial data
     if (iovs[1].iov_len) {
-        rc = rwbuf_write(backlog, iovs[1].iov_base, iovs[1].iov_len);
+        rc = rwbuf_write(&sock->send_buf, iovs[1].iov_base, iovs[1].iov_len);
         if (rc) return rc;
     }
 
     return 0;
 }
 
-int sock_write_line(struct simple_sock *sock, struct rwbuf *backlog, struct str_slice line)
+// send now - buffer backlog
+int sock_sendline(struct simple_sock *sock, struct str_slice line)
 {
     struct iovec iovs[3];
 
     // load backlog + data + CRLF
-    load_iov(iovs + 0, backlog->rptr, backlog->len);
+    load_iov(iovs + 0, rwbuf_rptr(&sock->send_buf), rwbuf_used(&sock->send_buf));
     load_iov(iovs + 1, line.ptr, line.len);
     load_iov(iovs + 2, STR_LIT("\r\n"));
 
@@ -585,18 +539,18 @@ int sock_write_line(struct simple_sock *sock, struct rwbuf *backlog, struct str_
     if (rc < 0) return rc;
 
     // update backlog
-    rc = rwbuf_update(backlog, backlog->len - iovs[0].iov_len);
+    rc = rwbuf_ridx_adj(&sock->send_buf, iovs[0].iov_len);
     if (rc) return rc;
 
     // add partial data
     if (iovs[1].iov_len) {
-        rc = rwbuf_write(backlog, iovs[1].iov_base, iovs[1].iov_len);
+        rc = rwbuf_write(&sock->send_buf, iovs[1].iov_base, iovs[1].iov_len);
         if (rc) return rc;
     }
 
     // add partial CFLF
     if (iovs[2].iov_len) {
-        rc = rwbuf_write(backlog, iovs[2].iov_base, iovs[2].iov_len);
+        rc = rwbuf_write(&sock->send_buf, iovs[2].iov_base, iovs[2].iov_len);
         if (rc) return rc;
     }
 
