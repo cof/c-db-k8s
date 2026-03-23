@@ -180,7 +180,7 @@ static inline int is_numeral(int ch)
 
 static inline int str_isnumeric(const char *str, size_t len)
 {
-	if (!len) return 0;
+    if (!len) return 0;
     
     const char *end = str + len;
 
