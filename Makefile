@@ -12,10 +12,10 @@
 #  deploy      : builds images|create cluster|load images|deploy pods
 # 
 #  test        : run basic tests (test-cmds)
-#  test-full   : run all tests test-cmds,test-lau,test-k8s
+#  test-full   : run all tests (test-cmds,test-lau,test-k8s)
 #
-#  test-cmds   : run cmd tests (client|server)
-#  test-lau    : run launcher tests
+#  test-cmds   : run cmd tests (client,server)
+#  test-lau    : run launcher tests (using VM)
 #  test-k8s    : run k8s tests (wait-pods,test-pod,test-net)
 #
 #  test-server : build and test ./server
@@ -238,7 +238,7 @@ REL_NAME = $(OS_NAME)-$(REL_VER)$(PATCH_VER)
 REL_FILE = nocloud_$(REL_NAME)-x86_64-bios-cloudinit-r0.qcow2
 REL_DIR = v$(REL_VER)/releases/cloud
 MIRROR = https://dl-cdn.alpinelinux.org
-REL_URL = $(MIRROR_URL)/$(REL_DIR)/$(REL_FILE)
+REL_URL = $(MIRROR)/$(REL_DIR)/$(REL_FILE)
 
 # our vm
 # ------
@@ -305,13 +305,18 @@ $(VM_DISK): | $(VM_CACHE_FILE) $(VM_DIR)
 
 .PHONY: vm-config
 vm-config:
-	@echo "MIRROR=$(MIRROR)"
-	@echo "REL_URL=$(REL_URL)"
+	@echo "-------SRC_IMAGE------------"
+	@echo "OS_NAME=$(OS_NAME)"
+	@echo "OS_VARIANT=$(OS_VARIANT)"
+	@echo "REL_NAME=$(REL_NAME)"
 	@echo "REL_FILE=$(REL_FILE)"
 	@echo "REL_VER=$(REL_VER)"
+	@echo "MIRROR=$(MIRROR)"
+	@echo "REL_URL=$(REL_URL)"
+	@echo "------INSTALL_IMAGE------------"
 	@echo "CACHE_DIR=$(VM_CACHE_DIR)"
-	@echo "BASE_IMAGE=$(VM_CACHE_FILE)"
-	@echo "RUN_IMAGE=$(VM_DISK)"
+	@echo "VM_BASE_IMAGE=$(VM_CACHE_FILE)"
+	@echo "VM_RUN_IMAGE=$(VM_DISK)"
 	@echo "VM_USER_DATA=$(VM_USER_DATA)"
 	@echo "VM_PUB_KEYFILE=$(VM_PUB_KEYFILE)"
 
@@ -378,8 +383,9 @@ vm-wait:
 
 .PHONY: vm-list
 vm-list:
-	virsh dominfo $(VM_NAME) || true
-	virsh domifaddr $(VM_NAME) || true
+	@echo "[+] Checking VM $(VM_NAME)"
+	$(Q)virsh -q dominfo $(VM_NAME)   2>/dev/null || echo " => VM not found"
+	$(Q)virsh -q domifaddr $(VM_NAME) 2>/dev/null || true
 
 vm-clean:
 	 - virsh -q destroy $(VM_NAME)
@@ -622,7 +628,7 @@ test-full: test-cmds test-lau test-k8s
 .PHONY: test
 test: test-cmds
 	@echo "-------------------------------------------------------"
-	@echo "💡 Next step: 'make test-full' for VM/K8s tests."
+	@echo "$(BULB) Next step: 'make test-full' for VM/K8s tests."
 
 # test cmds (client|server)
 # ------------------------

@@ -18,31 +18,36 @@ Run a database client and server application inside containers.
 ## Building the Project
 
 - **make all** (Default): Compiles server,client,launcher
-- **make deploy**  Deploy client and server into pods
+- **make install** Copy all binaries to bin folder
+- **make deploy**  Deploy client and server into k8s pods
 - **make clean**: Removes compiled binaries, object files, k8s artifacts and test logs
 - **make spotless**: clean + docker system prune
 
 Test targets
 
-- **make test** standalone client and server tests
-- **make test-pod** tests client and server inside pods
-- **make test-net** tests network policy
-- **make test-all** run all tests
+- **make test**  run basic tests
+- **make test-full** run all tests (test-cmds,test-lau,test-k8s)   
+&nbsp;
+- **make test-cmds** run cmd tests client,server
+- **make test-lau** run ./launcher tests (using VM)
+- **make test-k8s** run k8s tests (wait-pods, test-pod,test-net)   
+&nbsp;
+- **make test-server** run ./server tests
+- **make test-client** run ./client tests
+- **make wait-pods** wait for pods to come up
+- **make test-pod** run pod GET|SET|DEL tests
+- **make test-net** run network policy tests
 
 Misc targets:
 
-- **make install** Copy all binaries to bin folder
 - **make gen-seccomp** generate a new seccomp rules flle
 - **make rootfs** generate a roofs for the containers
-- **make install** puts cmds into bin folder
 
 VM targets:
 
-- **make install-vm** Download and create a test-launcher VM
-- **make list-vm**  Show test-launcher VM status
-- **make list-cache** Show VM iso downloads
-- **make show-config** Show VM config
-- **make wipe-vm** shutdown VM, undefine VM and remove the VM file
+- **make vm-config** Show VM config
+- **make vm-list**  Show test-launcher VM status
+- **make vm-clean** shutdown, undefine, remove VM 
 
 ## 1. Local Containers
 
