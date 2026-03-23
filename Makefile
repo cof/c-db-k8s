@@ -538,13 +538,13 @@ TEST_ARGS = --hostname $(TEST_ADDR) --port $(TEST_PORT)
 TEST_LOG  = $(BUILD_DIR)/test.log
 TEST_WAIT_RUN = 0.5
 
-
 TEST_REPORT = \
 	passed=$$((total - errors)); \
 	[ $$total -eq 0 ] && percent=100 || percent=$$(( (total - errors) * 100 / total )); \
 	echo " => Ran $$total tests: $$passed passed, $$errors failed ($$percent% success)"
 
 # test-lau macros
+# ---------------
 GET_VM_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
 
 SSH_OPTS = \
@@ -552,20 +552,24 @@ SSH_OPTS = \
 	-o UserKnownHostsFile=/dev/null \
 	-o LogLevel=ERROR \
 	-o IdentitiesOnly=yes -i $(VM_SSH_KEYFILE)
+
 ifeq ($(V),1)
   SSH_OPTS += -v
 endif
 
+# run launcher in VM using doas
 LAUNCHER_CMD := stty -echo; \
 	doas $(VM_BIN_DIR)/launcher \
 	--base-dir $(VM_HOME)/$@ \
 	--src-dir $(VM_BIN_DIR)
 
 # test-cmd macros
+# ---------------
 WAIT_UP   = timeout $(1) bash -c 'until nc -z $(2) $(3) 2>/dev/null; do sleep 0.1; done'
 KILL_WAIT = kill $(1) 2>/dev/null;  wait $(1) 2>/dev/null || true
 
 # test-server macros
+# -----------------
 TEST_CMD = \
     total=$$((total + 1)); \
     echo "$(1)" | nc -w 1 -N $(TEST_ADDR) $(TEST_PORT) | grep -q "$$EXPECT"; \
@@ -577,6 +581,7 @@ TEST_CMD = \
     fi
 
 # test-client macros
+# ------------------
 TEST_REQ_FILE = tests/test_req.txt
 TEST_RSP_FILE = tests/test_rsp.txt
 TEST_FILE = \
@@ -592,11 +597,13 @@ BUILD_REQ_FILE = $(BUILD_DIR)/$(notdir $(TEST_REQ_FILE))
 BUILD_RSP_FILE = $(BUILD_DIR)/$(notdir $(TEST_RSP_FILE))
 SIMPLE_SERVER = scripts/simple_server.awk
 
-# TODO parse k8s/yaml files to get names
+# test-pod / test-net 
+# ---------------------
 CLIENT_POD := client-pod
 DB_POD := db-pod
 
 # test-pod macros
+# ---------------
 REQ_START := $(subst ",,"[LOG] send req: ")
 RSP_START := $(subst ",," recv rsp: ")
 CLIENT_OK := $(subst ",,"Connectivity test: OK")
@@ -620,6 +627,7 @@ TEST_RESULT = \
 	fi
 
 # test-net macros
+# ---------------
 TEST_PRECONN = printf " => %-10s -> %-15s " $(1) $(2)
 TEST_CONNECT = \
 	total=$$((total + 1));  \
