@@ -48,10 +48,11 @@ struct simple_client {
 };
 
 struct simple_server {
+    struct simple_sock sock;
+    struct simple_sig sig;
+    struct list_elem clients;
     const char *prog_name;
     pid_t pid;
-    struct simple_sock sock;
-    struct list_elem clients;
     // user config
     char *hostname;
     char *port;
@@ -412,51 +413,6 @@ static void handle_server(struct simple_server *server, uint32_t events)
     do_server_check(server);
 }
 
-// signal handling
-volatile sig_atomic_t keep_running = 1;
-volatile sig_atomic_t caught_signo = 0; 
-volatile sig_atomic_t sender_pid = 0; 
-volatile sig_atomic_t sender_uid = 0; 
-
-static void handle_signal(int signo, siginfo_t *info, void *ucontext)
-{
-    (void) ucontext;
-    caught_signo = signo;
-
-    sender_pid = 0;
-    sender_uid = 0;
-
-    if (info->si_code <= 0) {
-        sender_pid = info->si_pid;
-        sender_uid = info->si_uid;
-    }
-
-    keep_running = 0;
-}
-
-static int setup_signals(void)
-{
-    struct sigaction sa = { 0 };
-
-    sa.sa_sigaction = handle_signal;
-    sa.sa_flags = SA_SIGINFO;
-    if (sigaction(SIGINT, &sa, NULL) == -1) {
-        return log_errno_rf("setup sigint");
-    }
-    if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        return log_errno_rf("setup sigterm");
-    }
-
-    // XXX prevent write(fd) trigger a signal
-    sa.sa_handler = SIG_IGN;
-    sa.sa_flags = 0;
-    if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-        return log_errno_rf("setup SIGPIPE");
-    }
-
-    return 0;
-}
-
 static int server_poll(struct simple_server *server)
 {
     struct epoll_event events[MAX_EVENTS];
@@ -482,18 +438,18 @@ static int server_poll(struct simple_server *server)
     return 0;
 }
 
-static int server_run(struct simple_server *server)
+static int server_run(struct simple_server *serv)
 {
-    while (keep_running) {
-        if (server_poll(server) != 0) return -1;
+    while (serv->sig.run) {
+        if (server_poll(serv) != 0) return -1;
     }
 
-    if (caught_signo) {
+    if (serv->sig.signo) {
         log_info("+","server PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
-            server->pid, 
-            caught_signo, strsignal(caught_signo), 
-            sender_uid,
-            sender_pid);
+            serv->pid, 
+            serv->sig.signo, strsignal(serv->sig.signo), 
+            serv->sig.uid,
+            serv->sig.pid);
     }
 
     return 0;
@@ -625,24 +581,24 @@ static struct simple_server *server_create(void)
 
 int main(int argc, char *argv[])
 {
-    struct simple_server *server = NULL;
+    struct simple_server *serv = NULL;
     int ec = EXIT_FAILURE;
 
-    if (!(server = server_create())) { ec = 1; goto done; }
-    if (server_init(server))    { ec = 2; goto done; }
-    if (setup_signals())        { ec = 3 ;goto done; }
-    if (server_parse_argv(server, argc, argv)) { ec = 4;  goto done; }
-    if (setup_database(server)) { ec = 5; goto done; }
-    if (setup_listener(server)) { ec = 6; goto done; }
+    if (!(serv = server_create())) { ec = 1; goto done; }
+    if (server_init(serv))    { ec = 2; goto done; }
+    if (setup_signals(&serv->sig))  { ec = 3 ;goto done; }
+    if (server_parse_argv(serv, argc, argv)) { ec = 4;  goto done; }
+    if (setup_database(serv)) { ec = 5; goto done; }
+    if (setup_listener(serv)) { ec = 6; goto done; }
 
-    if (server_run(server) != 0) { ec = 7; goto done; }
+    if (server_run(serv) != 0) { ec = 7; goto done; }
 
     // all done
     ec = 0;
 
 done:
-    if (server) {
-        server_destroy(server);
+    if (serv) {
+        server_destroy(serv);
     }
 
     return ec;

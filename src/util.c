@@ -12,6 +12,55 @@
 
 int verbose = 0;
 
+// signal handling
+static struct simple_sig *glob_sig = NULL;
+
+static void handle_signal(int signo, siginfo_t *info, void *ucontext)
+{
+    (void) ucontext;
+
+    if (!glob_sig) return;
+
+    glob_sig->signo = signo;
+    glob_sig->pid = 0;
+    glob_sig->uid = 0;
+
+    if (info && info->si_code <= 0) {
+        glob_sig->pid = info->si_pid;
+        glob_sig->uid = info->si_uid;
+    }
+
+    glob_sig->run = 0;
+}
+
+int setup_signals(struct simple_sig *sig)
+{
+    if (!sig) return -1;
+    struct sigaction sa = { 0 };
+
+    sa.sa_sigaction = handle_signal;
+    sa.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        return log_errno_rf("setup sigint");
+    }
+    if (sigaction(SIGTERM, &sa, NULL) == -1) {
+        return log_errno_rf("setup sigterm");
+    }
+
+    // XXX prevent write(fd) trigger a signal
+    sa.sa_handler = SIG_IGN;
+    sa.sa_flags = 0;
+    if (sigaction(SIGPIPE, &sa, NULL) == -1) {
+        return log_errno_rf("setup SIGPIPE");
+    }
+
+    sig->run = 1;
+    glob_sig = sig;
+
+    // all done
+    return 0;
+}
+
 char *slice_strdup(const struct str_slice str)
 {
     char *copy = malloc(str.len + 1);

@@ -97,6 +97,18 @@ DEBUG_CFLAGS   := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
 CFLAGS  = -O2 $(COMMON_CFLAGS) $(EXTRA_CFLAGS)
 LDFLAGS = --static
 
+
+MAKEFLAGS += --no-print-directory
+
+# ###########################
+# CMDS server|client|launcher
+# ###########################
+
+# Default target - build cmds
+# --------------------------
+.PHONY: all
+all: $(CMDS) | $(BUILD_DIR)
+
 # debug build
 # -----------
 debug: CFLAGS = -O0 $(COMMON_CFLAGS) $(DEBUG_CFLAGS)
@@ -113,17 +125,6 @@ asan: all
 valgrind: CFLAGS = -O0 $(COMMON_CFLAGS) $(DEBUG_CFLAGS)
 valgrind: LDFLAGS = 
 valgrind: all
-
-MAKEFLAGS += --no-print-directory
-
-# ###########################
-# CMDS server|client|launcher
-# ###########################
-
-# Default target - build cmds
-# --------------------------
-.PHONY: all
-all: $(CMDS) | $(BUILD_DIR)
 
 $(BUILD_DIR):
 	@mkdir -p $@
@@ -149,7 +150,7 @@ client: $(CLIENT_OBJS)
 # launcher
 # --------
 LAUNCHER_LIBS = $(SECURITY_LIBS)
-LAUNCHER_SRCS = src/util.c src/log.c src/ns_util.c src/launcher.c
+LAUNCHER_SRCS = src/util.c src/log.c src/ns_util.c src/lau_child.c src/launcher.c
 LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 LAUNCHER_DEPS = $(LAUNCHER_OBJS:.o=.d)
 -include $(LAUNCHER_DEPS)
@@ -553,6 +554,7 @@ TEST_REPORT = \
 # test-lau macros
 # ---------------
 GET_VM_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
+TEST_LAU = test-lau
 
 SSH_OPTS = \
 	-o StrictHostKeyChecking=no \
@@ -566,9 +568,7 @@ endif
 
 # run launcher in VM using doas
 LAUNCHER_CMD := stty -echo; \
-	doas $(VM_BIN_DIR)/launcher \
-	--base-dir $(VM_HOME)/$@ \
-	--src-dir $(VM_BIN_DIR)
+	doas $(VM_BIN_DIR)/launcher --base-dir $(VM_HOME)/$(TEST_LAU) --src-dir $(VM_BIN_DIR)
 
 # test-cmd macros
 # ---------------

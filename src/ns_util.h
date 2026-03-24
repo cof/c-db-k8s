@@ -1,8 +1,10 @@
 /*
  * Namespace util api for containers
  */
-#ifndef __NS_UTIL_H__
-#define __NS_UTIL_H__
+#ifndef _NS_UTIL_H_
+#define _NS_UTIL_H_
+
+#include <stdbool.h>
 
 #define NETNS_DIR "/var/run/netns"
 #define HOST_NETNS_PATH "/proc/self/ns/net"
@@ -31,7 +33,7 @@ static inline int close_fd(int *fd)
     int rc = 0;
 
     if (*fd != -1) {
-        if (close(*fd) != 0) rc = -1;
+        rc = close(*fd);
         *fd = -1;
     }
 

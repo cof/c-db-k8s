@@ -164,50 +164,6 @@ static void my_conn_prompt(struct my_conn *conn)
     sock_send_data(conn->sock_send, prompt);
 }
 
-// signal handling
-volatile sig_atomic_t keep_running = 1;
-volatile sig_atomic_t caught_signo = 0; 
-volatile sig_atomic_t sender_pid = 0; 
-volatile sig_atomic_t sender_uid = 0; 
-
-static void handle_signal(int signo, siginfo_t *info, void *ucontext)
-{
-    (void) ucontext;
-    caught_signo = signo;
-
-    sender_pid = 0;
-    sender_uid = 0;
-
-    if (info->si_code <= 0) {
-        sender_pid = info->si_pid;
-        sender_uid = info->si_uid;
-    }
-
-    keep_running = 0;
-}
-
-static int setup_signals(void)
-{
-    struct sigaction sa = { 0 };
-
-    sa.sa_sigaction = handle_signal;
-    sa.sa_flags = SA_SIGINFO;
-    if (sigaction(SIGINT, &sa, NULL) == -1) {
-        return log_errno_rf("setup sigint");
-    }
-    if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        return log_errno_rf("setup sigterm");
-    }
-
-    // XXX prevent write(fd) trigger a signal
-    sa.sa_handler = SIG_IGN;
-    sa.sa_flags = 0;
-    if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-        return log_errno_rf("setup SIGPIPE");
-    }
-
-    return 0;
-}
 
 /* cmd-line */
 enum { SET_HELP = 0, SET_HOST, SET_PORT, SET_LOG };
@@ -256,13 +212,14 @@ int main(int argc, char *argv[])
         .port = TCP_PORT_STR,
         .log = 0
     };
+    struct simple_sig sig;
 
     // process cmd-line options
     int rc = parse_argv(argc, argv, opts, &cfg);
     if (!rc) return -1;
     if (!cfg.hostname) fatal_error("Missing hostname");
 
-    rc = setup_signals();
+    rc = setup_signals(&sig);
     if (rc) fatal_error("setup signals");
 
     // server connect
@@ -293,7 +250,7 @@ int main(int argc, char *argv[])
     int prompt = 0;
     my_conn_prompt(&user);
 
-    while (keep_running) {
+    while (sig.run) {
         // block until fd event or signal
         rc = poll(fds, ARR_LEN(fds), -1);
         if (rc == -1) {

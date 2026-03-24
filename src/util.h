@@ -2,15 +2,15 @@
  * A util api for string and cmdline processing
  *
  */
-#ifndef __UTIL_H__
-#define __UTIL_H__
+#ifndef _UTIL_H_
+#define _UTIL_H_
 
 #include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <getopt.h>
+#include <signal.h>
 
 // system errors
 #define UTIL_OK    0
@@ -236,11 +236,11 @@ static inline struct str_slice slice_tolower(struct str_slice str)
     return str;
 }
 
+
+//  misc
 char *slice_strdup(const struct str_slice str);
 char *itoa(char *buf, int len, int val);
 char *int_tostr(int val);
-
-char *gen_path(const char *dir, const char *name);
 
 //  djb2a hash algorhtim
 static inline uint64_t dbj2a_hash(const void *key, const int klen)
@@ -265,6 +265,16 @@ static inline uint64_t dbj2a_hash_slice(const struct str_slice str)
 {
     return dbj2a_hash(str.ptr, str.len);
 }
+
+// signal handler API
+struct simple_sig {
+    volatile sig_atomic_t run;
+    int signo;
+    uid_t uid;
+    pid_t pid;
+};
+
+int setup_signals(struct simple_sig *sig);
 
 // generic setters
 int str_setval(char **str, const char *name, const char *val_str);

@@ -48,13 +48,14 @@
 #include "util.h"
 #include "log.h"
 #include "ns_util.h"
+#include "lau_child.h"
 
 // config defaults
 #define BASE_DIR "mylauncher"
 #define RUN_DIR "/run/asimple_launcher"
 #define STORE_dir "/var/lib/asimple_launcher"
 
-#define MAX_CONFIG 10
+#define MAX_CHILD 10
 #define START_ORDER 1
 #define START_DELAY 1
 
@@ -64,69 +65,8 @@
 #define DROP_PRIVS  1
 #define USE_SECCOMP 1
 
-// lau error codes
-#define LAU_RECV_INTR  1
-#define LAU_CHILD_OK   2
-#define LAU_CHILD_ERR -1
-
-// container config
-struct myl_child {
-    // user config
-    char *name;      // container name
-    char *cmd_path;  //  location of cmd
-    char *exec_path;  // process to lanuch
-    char **exec_argv; // command line args
-    int exec_argc;
-    char *ip_addr;    // ip addr to add to veth
-    // paths
-    char *store_dir;     // location of container dir
-    char *rootfs_path;   // For the bind mount and pivot_root()
-    char *netns_path;    // bind mounted network namespae
-    char *dst_path;      // bind mounted cmd path
-    // networks
-    char netns_name[IFNAMSIZ]; // network namespace name
-    char veth_name[IFNAMSIZ];  // container eth0 link
-    // used by overlay FS
-    char *lower_path;   
-    char *upper_path;   
-    char *work_path;   
-    int netns_fd;
-    // parent sync child
-    int go_read_fd;    // child reads
-    int go_write_fd;   // parent writes
-    // child sync with parent
-    int ready_read_fd; // parent reads
-    int ready_write_fd; // child writes
-    // stack - created by mmap
-    void *stack; 
-    size_t stack_size;
-    pid_t pid;  
-    int clone_flags;
-    int status; // waitpid
-    // security 
-    uid_t uid;
-    uid_t gid;
-    // flags - bit fields
-    unsigned int use_subdir       : 1; // use a rootfs subdir instead of name
-    unsigned int need_network     : 1; // configure network
-    unsigned int run              : 1; // clone child is active
-    unsigned int storedir_created : 1; // store_dir created
-    unsigned int rootfs_created   : 1; // rootfs_dir created
-    unsigned int netns_mounted    : 1; // netns active
-    unsigned int rootfs_mounted   : 1; // rootfs_dir mounted
-    unsigned int overlay_mounted  : 1; // overlay FS active
-    unsigned int cmd_mounted      : 1; // cmd file was mounted
-    unsigned int drop_sudo        : 1; // setuid|setgid
-    unsigned int drop_caps        : 1; // drop capabilities 
-    unsigned int drop_privs   : 1; // prctl PR_SET_NO_NEW_PRIVS
-    unsigned int use_seccomp  : 1; // seccomp filter
-    // waitpid flags
-    unsigned int exit : 1;
-    unsigned int signalled : 1;
-};
-
 // launcher state
-struct myl_lau {
+struct lau_ctx {
     const char *prog_name; // argv[0]
     char *cur_dir; // cwd where laucher start
     char *base_dir; // root dir for all launcher state
@@ -139,12 +79,12 @@ struct myl_lau {
     char *netns_suffix;
     char *cable_prefix;
     int start_delay;
-    int (*sync_all)(struct myl_lau *lau);
-    // container config
-    struct myl_child configs[MAX_CONFIG];
-    int max_config;
-    int num_config;
-    // 
+    int (*sync_all)(struct lau_ctx *lau);
+    struct simple_sig sig;
+    // container child process
+    int max_proc;
+    int num_proc;
+    struct lau_child *procs[MAX_CHILD];
     unsigned int num_run;
     int host_netns_fd;
     mode_t dir_mode;
@@ -169,124 +109,9 @@ struct myl_lau {
     unsigned int child_add_ip : 1; // child sets up network
 };
 
-// signal handling
-volatile sig_atomic_t keep_running = 1;
-volatile sig_atomic_t caught_signo = 0; 
-volatile sig_atomic_t sender_pid = 0; 
-volatile sig_atomic_t sender_uid = 0; 
-
-
-static inline char *child_get_rootfs(struct myl_child *child)
-{
-    return child->use_subdir ? child->rootfs_path : child->store_dir;
-}
-
-/* child process code */
-static int setup_priv(struct myl_child *child)
-{
-    if (verbose) {
-        log_info("LOG", "Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)", 
-            child->name, child->pid, child->uid, child->gid);
-    }
-
-    if (child->drop_caps && drop_bounding_set(child->name)) return -1;
-    if (child->drop_sudo && drop_sudo(child->name, child->uid , child->gid)) return -1;
-    if (child->drop_caps && clear_all_caps(child->name)) return -1;
-    if (child->drop_privs && drop_new_privs(child->name))  return -1;
-    if (child->use_seccomp && apply_seccomp(child->name)) return -1;
-
-    return 0; 
-}
-
-static int child_send_ready(struct myl_child *child)
-{
-    if (verbose)  {
-        log_info("LOG", "Container (name=%s pid=%d) send-ready", child->name, child->pid);
-    }
-
-    // wake up parent
-    while (write(child->ready_write_fd, "!", 1) == -1)  {
-        if (errno == EINTR) {
-            if (!keep_running) return LAU_RECV_INTR;
-            continue;
-        }
-        return log_errno_rf("child %s write send-ready failed", child->name);
-    }
-
-    // close pipe ends we no longer need
-    if (close_fd(&child->ready_write_fd) != 0) {
-        return log_errno_rf("chile %s close send-ready failed", child->name);
-    }
-
-    return 0;;
-}
-
-static int child_wait_go(struct myl_child *child)
-{
-    // close the pipe ends we don't need
-    if (close_fd(&child->go_write_fd) != 0) {
-        return log_errno_rf("close go_write for %s failed", child->name);
-    }
-    if (close_fd(&child->ready_read_fd) != 0) {
-        return log_errno_rf("close ready_read for %s failed", child->name);
-    }
-
-    // wait for parent
-    ssize_t nr;
-    char ch;
-    while ((nr = read(child->go_read_fd, &ch, 1)) == -1) {
-        if (errno == EINTR) {
-            if (!keep_running) return LAU_RECV_INTR;
-            continue;
-        }
-        return log_errno_rf("child %s read wait-go failed", child->name);
-    }
-
-    // release pipe
-    if (close_fd(&child->go_read_fd) != 0) {
-        return log_errno_rf("child %s close send-go failed", child->name);
-    }
-
-    if (verbose) {
-        log_info("LOG", "Container (name=%s pid=%d) recv-go", child->name, child->pid);
-    }
-
-    return 0;;
-}
-
-// child process starts here
-static int lau_cnt_start(void *arg)
-{
-    struct myl_child *child = arg;
-
-    child->pid = getpid();
-    if (verbose) {
-        log_info("LOG", "Container (name=%s pid=%d) started", child->name, child->pid);
-    }
-
-    if (set_identity(child->name) != 0) _exit(1);
-    if (child_wait_go(child) != 0) _exit(2);
-    if (set_rootfs(child_get_rootfs(child)) !=0) _exit(3);
-    if (set_proc() != 0) _exit(4);
-    if (child->need_network && create_network(child->veth_name, child->ip_addr) != 0) _exit(5);
-    if (child_send_ready(child) != 0) _exit(6);
-
-    // XXX close remaing fds other than stdio,stdout,stderr
-    if (syscall(SYS_close_range, 3, ~0U, 0) == -1) {
-        log_errno("child %s pid=%d close_range failed", child->name, child->pid);
-        _exit(7); 
-    }
-
-    if (setup_priv(child) != 0) _exit(8);
-
-    // finally run the cmd
-    execv(child->exec_path, child->exec_argv);
-    log_errno("child %s execv '%s' failed", child->name, child->exec_path);
-    _exit(9);
-}
 
 /* wait pids code */
-static int lau_check_reaped(struct myl_lau *lau, struct myl_child *child, int status)
+static int lau_check_reaped(struct lau_ctx *lau, struct lau_child *child, int status)
 {
     child->status = status;
 
@@ -317,23 +142,25 @@ static int lau_check_reaped(struct myl_lau *lau, struct myl_child *child, int st
     return log_error_re(rc, "Container '%s' reaped (pid=%d why=%s)", child->name, child->pid, why);
 }
 
-static struct myl_child *lau_find_child(struct myl_lau *lau, pid_t pid)
+static struct lau_child *lau_find_child(struct lau_ctx *lau, pid_t pid)
 {
-    for (int i = 0; i < lau->num_config; i++) {
-        if (lau->configs[i].pid == pid) {
-            return &lau->configs[i];
+    for (int i = 0; i < lau->num_proc; i++) {
+        struct lau_child *child = lau->procs[i];
+        if (child->pid == pid) {
+            return child;
         }
     }
 
+    // not found
     return NULL;
 }
 
 // wait for intr or child exits
-static int lau_wait_pids(struct myl_lau *lau)
+static int lau_wait_pids(struct lau_ctx *lau)
 {
     int status = 0;
 
-    while (keep_running && lau->num_run > 0) {
+    while (lau->sig.run && lau->num_run > 0) {
         pid_t pid = waitpid(-1, &status, 0); 
         if (pid == 0) continue;
         if (pid == -1) {
@@ -341,15 +168,15 @@ static int lau_wait_pids(struct myl_lau *lau)
             if (errno == EINTR) continue;
             if (errno == ECHILD) {
                 // no more children - stop now
-                for (int i = 0; i < lau->num_config; i++) {
-                    lau->configs[i].run = 0;
+                for (int i = 0; i < lau->num_proc; i++) {
+                    lau->procs[i]->run = 0;
                 }
                 lau->num_run = 0;
                 break;
             }
             return log_errno_rf("waitpid failed");;
         }
-        struct myl_child *child = lau_find_child(lau, pid);
+        struct lau_child *child = lau_find_child(lau, pid);
         if (!child) {
             log_info("LOG", "waitpid reaped unknown pid %d", pid);
             continue;
@@ -365,7 +192,7 @@ static int lau_wait_pids(struct myl_lau *lau)
 /* sync all code */
 
 // check child is still running
-static int lau_check_running(struct myl_lau *lau, struct myl_child *child)
+static int lau_check_running(struct lau_ctx *lau, struct lau_child *child)
 {
     int status;
 
@@ -382,7 +209,7 @@ static int lau_check_running(struct myl_lau *lau, struct myl_child *child)
 
 
 // tell child it can go
-static int lau_send_go(struct myl_lau *lau, struct myl_child *child)
+static int lau_send_go(struct lau_ctx *lau, struct lau_child *child)
 {
     if (lau_check_running(lau, child) != 0) {
         return -1;
@@ -395,7 +222,7 @@ static int lau_send_go(struct myl_lau *lau, struct myl_child *child)
     // wake up child
     while (write(child->go_write_fd, "!", 1) == -1)  {
         if (errno == EINTR) {
-            if (!keep_running) return LAU_RECV_INTR;
+            if (!lau->sig.run) return LAU_RECV_INTR;
             continue;
         }
         return log_errno_rf("lau send-go %s failed", child->name);
@@ -410,7 +237,7 @@ static int lau_send_go(struct myl_lau *lau, struct myl_child *child)
 }
 
 // wait for child to become ready
-static int lau_wait_ready(struct myl_lau *lau, struct myl_child *child)
+static int lau_wait_ready(struct lau_ctx *lau, struct lau_child *child)
 {
     if (lau_check_running(lau, child) != 0) {
         return -1;
@@ -425,7 +252,7 @@ static int lau_wait_ready(struct myl_lau *lau, struct myl_child *child)
     char ch;
     while ((nr = read(child->ready_read_fd, &ch, 1)) == -1) {
         if (errno == EINTR) {
-            if (!keep_running) return LAU_RECV_INTR;
+            if (!lau->sig.run) return LAU_RECV_INTR;
             continue;
         }
         return log_errno_rf("lau wait-ready %s failed", child->name);
@@ -444,18 +271,15 @@ static int lau_wait_ready(struct myl_lau *lau, struct myl_child *child)
 }
 
 // sequential start - i.e. ensure DB server is up before client
-static int lau_sync_inorder(struct myl_lau *lau) 
+static int lau_sync_inorder(struct lau_ctx *lau) 
 {
     if (verbose) {
-        log_info("LOG", "Launcher sync %d containers in order", lau->num_config);
+        log_info("LOG", "Launcher sync %d containers in order", lau->num_proc);
     }
 
-    struct myl_child *child;
-    int rc;
-
-    for (int i = 0; i < lau->num_config; i++) {
-        child = &lau->configs[i];
-        rc = lau_send_go(lau, child);
+    for (int i = 0; i < lau->num_proc; i++) {
+        struct lau_child *child = lau->procs[i];
+        int rc = lau_send_go(lau, child);
         if (rc) return rc;
         rc = lau_wait_ready(lau, child);
         if (rc) return rc;
@@ -466,171 +290,117 @@ static int lau_sync_inorder(struct myl_lau *lau)
 }
 
 // parallel start - note clone/fork start order is undefined by OS
-static int lau_sync_parallel(struct myl_lau *lau) 
+static int lau_sync_parallel(struct lau_ctx *lau) 
 {
     if (verbose) {
-        log_info("LOG", "Launcher sync %d containers in parallel", lau->num_config);
+        log_info("LOG", "Launcher sync %d containers in parallel", lau->num_proc);
     }
 
-    for (int i = 0; i < lau->num_config; i++) {
-        int rc = lau_send_go(lau, &lau->configs[i]);
+    for (int i = 0; i < lau->num_proc; i++) {
+        int rc = lau_send_go(lau, lau->procs[i]);
         if (rc) return rc;
     }
 
-    for (int i = 0; i < lau->num_config; i++) {
-        int rc = lau_wait_ready(lau, &lau->configs[i]);
+    for (int i = 0; i < lau->num_proc; i++) {
+        int rc = lau_wait_ready(lau, lau->procs[i]);
         if (rc) return rc;
     }
 
     return 0;
 }
 
-// create child process to be the container
-static int lau_run_child(struct myl_lau *lau, struct myl_child *child)
+static int lau_restore_netns(struct lau_ctx *lau)
 {
-    if (verbose) {
-        log_info("LOG", "Launcher starting %s", child->name);
+    int rc = setns(lau->host_netns_fd, CLONE_NEWNET);
+    if (rc) {
+        log_errno_rf("restore netns %s failed", HOST_NETNS_PATH);
     }
 
-    if (child->netns_mounted) {
-        // switch to child netns before clone
-        if (setns(child->netns_fd, CLONE_NEWNET) != 0) {
-            return log_errno_rf("run-child %s setns(%d,'%s') failed", 
-                child->name, child->netns_fd, child->netns_path);
-        }
-        if (close_fd(&child->netns_fd) != 0) {
-            int _errno = errno;
-            // restore host netns
-            setns(lau->host_netns_fd, CLONE_NEWNET);
-            errno = _errno;
-            return log_errno_rf("run-child %s close netns_fd %d failed", child->name, child->netns_fd);
-        }
-    }
+    return 0;
+}
 
-    // launch child (fork/exec)
-    child->pid = clone(lau_cnt_start, child->stack + child->stack_size, child->clone_flags, child);
-    if (child->pid == -1) {
-        // failed ?
-        int _errno = errno;
-        // restore host netns
-        setns(lau->host_netns_fd, CLONE_NEWNET);
-        errno = _errno;
-        return log_errno_rf("run-child %s exec '%s' clone failed", child->name, child->exec_path);
-    }
-
-    // clean up after run
-    child->run = 1;
-    lau->num_run++;
+int lau_child_prerun(struct lau_ctx *lau, struct lau_child *child)
+{
+    (void) lau;
 
     int num_err = 0;
 
-    // restore host netns
-    if (child->netns_mounted && setns(lau->host_netns_fd, CLONE_NEWNET) != 0) {
-        log_errno_rf("run-child %s restore netns %s failed", child->name, HOST_NETNS_PATH);
+    if (child->netns_mounted && lau_child_switch_netns(child)) {
         num_err++;
     }
 
-    // close our ends - child has a copy
-    if (close_fd(&child->go_read_fd) != 0) {
-        log_errno("parent close %s go_read_fd failed", child->name);
+    return 0;
+}
+
+int lau_child_postrun(struct lau_ctx *lau, struct lau_child *child)
+{
+    int num_err = 0;
+
+    if (child->netns_mounted && lau_restore_netns(lau)) {
         num_err++;
     }
 
-    if (close_fd(&child->ready_write_fd) != 0) {
-        log_errno("parent close %s reay_write_fd failed", child->name);
+    if (close_fd(&child->go_read_fd)) {
+        log_errno("close go_read_fd for %s failed", child->name);
+        num_err++;
+    }
+
+    if (close_fd(&child->ready_write_fd)) {
+        log_errno("close ready_write_fd for %s failed", child->name);
         num_err++;
     }
 
     // release overlay mount
     if (child->overlay_mounted) {
         if (umount2(child->rootfs_path, MNT_DETACH) < 0 && errno != EINVAL) {
-            log_errno("myl_child_run %s unmount overlay %s failed", child->name, child->rootfs_path);
+            log_errno("unmount overlay %s for %s failed", child->rootfs_path, child->name);
             num_err++;
         }
         child->overlay_mounted = 0;
     }
 
+    return num_err;
+}
+
+static int lau_start_child(struct lau_ctx *lau, struct lau_child *child)
+{
+    if (verbose) {
+        log_info("LOG", "Launcher starting %s", child->name);
+    }
+
+    int num_err = 0;
+
+    if (lau_child_prerun(lau, child)) num_err++;
+    if (!num_err && lau_child_run(child)) num_err++;
+    if (lau_child_postrun(lau, child)) num_err++;
+
+    if (child->run) lau->num_run++;
+
     // done
-    return num_err == 0 ? 0 : -1;
+    return num_err;
 }
 
-// create pipe / stack / clone flags
-static int child_prepare(struct myl_child *child)
-{
-    int fds[2];
-
-    // create go sync pipe
-    if (pipe(fds) == -1)  {
-        return log_errno_rf("create go-pipe for %s failed", child->name);
-    }
-    child->go_read_fd = fds[0];
-    child->go_write_fd = fds[1];
-
-    // create ready sync pipe
-    if (pipe(fds) == -1) {
-        return log_errno_rf("create ready_pipe for %s failed", child->name);
-    }
-    child->ready_read_fd = fds[0];
-    child->ready_write_fd = fds[1];
-
-    // allocate a protected memory region for child stack
-    // - never ever use malloc as child can corrupt it and parents heap
-    // - linux stack grows downwards
-    child->stack_size = 1024 * 1024;
-    void *stack = mmap(NULL, child->stack_size,
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0
-    );
-    if (stack == MAP_FAILED) {
-        return log_errno_rf("child_prepare %s create stack %zu failed", child->name, child->stack_size);
-    }
-    child->stack = stack; // XXX MAP_FAILED may not be 0
-
-    // setup clone flags
-    child->clone_flags = SIGCHLD | CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS;
-    if (child->need_network) {
-        child->clone_flags |= CLONE_NEWNET;
-    }
-
-    return 0;
-}
-
-static int lau_start_all(struct myl_lau *lau)
+static int lau_start_all(struct lau_ctx *lau)
 {
     if (verbose) {
-        log_info("LOG", "Starting %d containers", lau->num_config);
+        log_info("LOG", "Starting %d containers", lau->num_proc);
     }
 
-    for (int i = 0; i < lau->num_config; i++) {
-        int rc = child_prepare(&lau->configs[i]);
+    for (int i = 0; i < lau->num_proc; i++) {
+        int rc = lau_child_prep(lau->procs[i]);
         if (rc) return rc;
     }
 
-    for (int i = 0; i < lau->num_config; i++) {
-        int rc = lau_run_child(lau, &lau->configs[i]);
+    for (int i = 0; i < lau->num_proc; i++) {
+        int rc = lau_start_child(lau, lau->procs[i]);
         if (rc) return rc;
     }
 
     return 0;
 }
 
-static int child_setup_network(struct myl_child *child)
-{
-    if (verbose) {
-        log_info("LOG", "launcher setup-network (name=%s ipaddr=%s" , child->name, child->ip_addr);
-    }
 
-    RUN_CMD("nsenter -t %d -n ip link set %s name eth0", child->pid, child->veth_name);
-    RUN_CMD("nsenter -t %d -n ip addr add %s/24 dev eth0", child->pid, child->ip_addr);
-    RUN_CMD("nsenter -t %d -n ip link set lo up", child->pid);
-    RUN_CMD("nsenter -t %d -n ip link set eth0 up", child->pid);
-
-    child->need_network = 0;
-
-    return 0;
-}
-
-static int set_cable_name(struct myl_lau *lau, struct myl_child *child)
+static int set_cable_name(struct lau_ctx *lau, struct lau_child *child)
 {
     const char *prefix = lau->cable_prefix ?: "";
 
@@ -645,7 +415,7 @@ static int set_cable_name(struct myl_lau *lau, struct myl_child *child)
     return 0;
 }
 
-static int lau_link_veths(struct myl_lau *lau, struct myl_child *x, struct myl_child *y)
+static int lau_link_veths(struct lau_ctx *lau, struct lau_child *x, struct lau_child *y)
 {
     if (verbose) {
         log_info("LOG", "Launcher create-cable (left=%s, right=%s)", x->name, y->name);
@@ -666,15 +436,15 @@ static int lau_link_veths(struct myl_lau *lau, struct myl_child *x, struct myl_c
         return -1;
     }
 
-    RUN(child_setup_network(x));
-    RUN(child_setup_network(y));
+    RUN(lau_child_setup_network(x));
+    RUN(lau_child_setup_network(y));
 
     log_info("+", "Created veth pair: %s <-> %s", x->veth_name, y->veth_name);
 
     return 0;
 }
 
-static int check_network(struct myl_lau *lau, struct myl_child *child)
+static int check_network(struct lau_ctx *lau, struct lau_child *child)
 {
     if (child->ip_addr && lau->child_add_ip) { 
         child->need_network = 1;
@@ -683,7 +453,7 @@ static int check_network(struct myl_lau *lau, struct myl_child *child)
     return 0;
 }
 
-static int create_netns(struct myl_lau *lau, struct myl_child *child)
+static int create_netns(struct lau_ctx *lau, struct lau_child *child)
 {
     // generate name e.g "name-ns"
     char *suffix = lau->netns_suffix ?: "";
@@ -714,7 +484,7 @@ static int create_netns(struct myl_lau *lau, struct myl_child *child)
 }
 
 // load cmd file from host into container filesystem
-static int load_cmd(struct myl_lau *lau, struct myl_child *child)
+static int load_cmd(struct lau_ctx *lau, struct lau_child *child)
 {
     if (verbose) {
         log_info("LOG", "Launcher load-cmd (name=%s, cmd=%s dst=%s)", 
@@ -775,7 +545,7 @@ done:
     return rc;
 }
 
-static int mount_overlay(struct myl_lau *lau, struct myl_child *child)
+static int mount_overlay(struct lau_ctx *lau, struct lau_child *child)
 {
     if (!lau->use_overlay) return 0;
 
@@ -808,7 +578,7 @@ static int mount_overlay(struct myl_lau *lau, struct myl_child *child)
     return rc;
 }
 
-static int mount_rootfs(struct myl_lau *lau, struct myl_child *child)
+static int mount_rootfs(struct lau_ctx *lau, struct lau_child *child)
 {
     if (!lau->use_subdirs) return 0;
     if (!lau->rootfs_dir) return 0;
@@ -834,7 +604,7 @@ static int mount_rootfs(struct myl_lau *lau, struct myl_child *child)
     return 0;
 }
 
-static int create_subdirs(struct myl_lau *lau, struct myl_child *child)
+static int create_subdirs(struct lau_ctx *lau, struct lau_child *child)
 {
     if (!lau->use_subdirs) return 0;
 
@@ -865,7 +635,7 @@ static int create_subdirs(struct myl_lau *lau, struct myl_child *child)
 }
 
 // create folder for container files
-static int create_storedir(struct myl_lau *lau, struct myl_child *child)
+static int create_storedir(struct lau_ctx *lau, struct lau_child *child)
 {
     char tmp[10];
     char *name;
@@ -891,7 +661,7 @@ static int create_storedir(struct myl_lau *lau, struct myl_child *child)
 }
 
 
-static int check_rootfs_dir(struct myl_lau *lau)
+static int check_rootfs_dir(struct lau_ctx *lau)
 {
     if (verbose) {
         log_info("LOG", "Launcher check-rootfs-dir");
@@ -915,7 +685,7 @@ static int check_rootfs_dir(struct myl_lau *lau)
 }
 
 // open host's default network namespace
-static int lau_open_host_netns(struct myl_lau *lau)
+static int lau_open_host_netns(struct lau_ctx *lau)
 {
     // fd must be for this process only (O_CLOEXEC)
     lau->host_netns_fd = open(HOST_NETNS_PATH, O_RDONLY | O_CLOEXEC);
@@ -926,9 +696,8 @@ static int lau_open_host_netns(struct myl_lau *lau)
     return 0;
 }
 
-
 // setup infrastucture
-static int lau_setup(struct myl_lau *lau)
+static int lau_setup_all(struct lau_ctx *lau)
 {
     if (verbose) {
         log_info("LOG", "Launcher setup infrastucture");
@@ -947,8 +716,8 @@ static int lau_setup(struct myl_lau *lau)
 
     RUN(check_rootfs_dir(lau));
 
-    for (int i = 0; i < lau->num_config; i++) {
-        struct myl_child *cnt = &lau->configs[i];
+    for (int i = 0; i < lau->num_proc; i++) {
+        struct lau_child *cnt = lau->procs[i];
         RUN(create_storedir(lau, cnt));
         RUN(create_subdirs(lau, cnt));
         RUN(mount_rootfs(lau, cnt));
@@ -962,42 +731,22 @@ static int lau_setup(struct myl_lau *lau)
     return 0;
 }
 
-static struct myl_child *lau_add(
-    struct myl_lau *lau,
-    const char *name, 
-    const char *cmd_path,
-    const char *exec_path, 
-    const char *exec_args,
-    const char *ip_addr)
+static struct lau_child *lau_add_child(struct lau_ctx *lau, struct lau_config *cfg)
 {
-    if (!name) return log_error_rn("Missing container name");
-    if (!cmd_path) return log_error_rn("Missing cmd_name");
-    if (!exec_path) return log_error_rn("Missing exec_path");
-
-    if (lau->num_config >= lau->max_config) { 
-        return log_error_rn("Too many containers. num-config %d >= max %d", lau->num_config, lau->max_config);
+    if (lau->num_proc >= lau->max_proc) { 
+        return log_error_rn("Add failed. num-proc %d >= max %d", lau->num_proc, lau->max_proc);
     }
 
-    struct myl_child *child = &lau->configs[lau->num_config++];
-    memset(child, 0, sizeof(*child));
+    struct lau_child *child = lau_child_create();
+    if (!child) return NULL;
 
-    // init all fds to -1
-    child->go_read_fd  = -1;
-    child->go_write_fd = -1;
-    child->ready_read_fd = -1;
-    child->ready_write_fd = -1;
-    child->netns_fd = - 1;
-
-    child->name = strdup(name);
-    child->cmd_path = strdup(cmd_path);
-    child->exec_path = strdup(exec_path);
-    child->exec_argv = exec_args_parse(exec_path, exec_args, &child->exec_argc);
-
-    if (ip_addr) {
-        child->ip_addr = strdup(ip_addr);
+    int rc = lau_child_load_cfg(child, cfg);
+    if (rc) {
+        lau_child_free(child);
+        return NULL;
     }
 
-    // security
+    // add security
     if (lau->sudo_user && lau->drop_sudo) {
         child->drop_sudo = 1;
         child->uid = lau->sudo_uid;
@@ -1007,10 +756,15 @@ static struct myl_child *lau_add(
     child->drop_privs = lau->drop_privs;
     child->use_seccomp = lau->use_seccomp;
 
+    // add signal handler
+    child->sig = &lau->sig;
+
+    lau->procs[lau->num_proc++] = child;
+
     return child;
 }
 
-static int lau_setup_cfg(struct myl_lau *lau)
+static int lau_apply_cfg(struct lau_ctx *lau)
 {
     // final checks
     if (!lau->run_dir) {
@@ -1042,47 +796,6 @@ static int lau_setup_cfg(struct myl_lau *lau)
     return 0;
 }
 
-/*  signal handling code */
-static void lau_handle_signal(int signo, siginfo_t *info, void *ucontext)
-{
-    (void) ucontext;
-    caught_signo = signo;
-
-    sender_pid = 0;
-    sender_uid = 0;
-
-    if (info->si_code <= 0) {
-        sender_pid = info->si_pid;
-        sender_uid = info->si_uid;
-    }
-
-    keep_running = 0;
-}
-
-static int lau_setup_signals(void)
-{
-    struct sigaction sa = { 0 };
-
-    sa.sa_sigaction = lau_handle_signal;
-    sa.sa_flags = SA_SIGINFO;
-    if (sigaction(SIGINT, &sa, NULL) == -1) {
-        return log_errno_rf("setup sigint");
-    }
-    if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        return log_errno_rf("setup sigterm");
-    }
-
-    // XXX prevent write(fd) trigger a SIGPIPE signal
-    sa.sa_handler = SIG_IGN;
-    sa.sa_flags = 0;
-    if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-        return log_errno_rf("setup SIGPIPE");
-    }
-
-    // all done
-    return 0;
-}
-
 /* cmd-line */
 enum {
     SET_HELP = 0,
@@ -1098,12 +811,12 @@ static int set_flag(void *arg, size_t flag, const char *name, const char *val);
 static struct cmd_opt opts[] = {
     OPT_FLAG("--help", "This help", SET_HELP, set_flag), 
     OPT_FLAG("--log", "debug mode", SET_LOG,  set_flag),
-    OPT_STR("--base-dir",   "Path for all run-time state", "cwd", struct myl_lau, base_dir),
-    OPT_STR("--src-dir",    "Path where cmd binarys live", "cwd", struct myl_lau, src_dir),
-    OPT_STR("--netns-dir",  "Network namespace dir", 0,  struct myl_lau, base_dir),
-    OPT_STR("--rootfs-dir", "Folder to mount into container using OverlayFS", 0, struct myl_lau, rootfs_dir),
+    OPT_STR("--base-dir",   "Path for all run-time state", "cwd", struct lau_ctx, base_dir),
+    OPT_STR("--src-dir",    "Path where cmd binarys live", "cwd", struct lau_ctx, src_dir),
+    OPT_STR("--netns-dir",  "Network namespace dir", 0,  struct lau_ctx, base_dir),
+    OPT_STR("--rootfs-dir", "Folder to mount into container using OverlayFS", 0, struct lau_ctx, rootfs_dir),
     OPT_BOOL("--start-order", "Start order (0=sequential,1=parallel)", STR(START_ORDER), SET_START_ORDER, set_flag),
-    OPT_INT("--start-delay", "Start delay order in secs", STR(START_DELAY), struct myl_lau, start_delay),
+    OPT_INT("--start-delay", "Start delay order in secs", STR(START_DELAY), struct lau_ctx, start_delay),
     OPT_BOOL("--drop-sudo",  "Drop sudo privilge", STR(DROP_SUDO), SET_DROP_SUDO, set_flag),
     OPT_BOOL("--drop-caps",  "Drop capabilities",  STR(DROP_CAPS), SET_DROP_CAPS, set_flag),
     OPT_BOOL("--drop-privs", "Dont SET_NO_NEW_PRIVS", STR(DROP_PRIVS),  SET_DROP_PRIVS, set_flag),
@@ -1118,7 +831,7 @@ static const char *examples[] = {
 
 static int set_flag(void *arg, size_t flag, const char *name, const char *val)
 {
-    struct myl_lau *lau = arg;
+    struct lau_ctx *lau = arg;
     (void) name;
     (void) val;
 
@@ -1134,9 +847,7 @@ static int set_flag(void *arg, size_t flag, const char *name, const char *val)
     }
 }
 
-
-// cmd-line parser
-int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
+static int lau_parse_argv(struct lau_ctx *lau, int argc, char *argv[])
 {
     lau->prog_name = argv[0];
     int rc = parse_argv(argc, argv, opts, lau);
@@ -1144,10 +855,10 @@ int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
 }
 
 // set defaults
-int lau_init(struct myl_lau *lau)
+int lau_init(struct lau_ctx *lau)
 {
     // set defaults
-    lau->max_config = MAX_CONFIG;
+    lau->max_proc = MAX_CHILD;
     lau->start_order = START_ORDER == 1 ? 1 : 0;
     lau->start_delay = START_DELAY;
     lau->sync_all = lau->start_order ? lau_sync_inorder : lau_sync_parallel;
@@ -1168,10 +879,8 @@ int lau_init(struct myl_lau *lau)
     lau->base_dir = gen_path(lau->cur_dir, BASE_DIR);
     if (!lau->base_dir) return -1;
 
-    lau->src_dir = strdup(lau->cur_dir);
-    if (!lau->src_dir) {
-        return log_errno_rf("strdup cur_dir failed");
-    }
+    str_setval(&lau->src_dir, "cur_dir", lau->cur_dir);
+    if (!lau->src_dir) return -1;
 
     lau->netns_suffix = strdup("-ns");
     lau->cable_prefix = strdup("veth-");
@@ -1193,88 +902,12 @@ int lau_init(struct myl_lau *lau)
     return 0;
 }
 
-static void child_cleanup(struct myl_child *child)
+static void lau_destroy(struct lau_ctx *lau)
 {
-    if (child->run && child->pid > 0) {
-        shutdown_pid(child->pid, 10000);
-        child->run = 0;
+    for (int i = 0; i < lau->num_proc; i++) {
+        lau_child_free(lau->procs[i]);
     }
-
-    // release all fds
-    close_fd(&child->go_read_fd);
-    close_fd(&child->go_write_fd);
-    close_fd(&child->ready_read_fd);
-    close_fd(&child->ready_write_fd);
-    close_fd(&child->netns_fd);
-
-    // release bind mount
-    if (child->netns_mounted) {
-        umount2(child->netns_path, MNT_DETACH);
-        unlink(child->netns_path);
-        child->netns_mounted = 0;
-    }
-
-    if (child->rootfs_mounted) {
-        umount2(child->rootfs_path, MNT_DETACH);
-        child->rootfs_mounted = 0;
-    }
-
-    if (child->rootfs_created) {
-        rmdir(child->rootfs_path);
-    }
-
-    // release overlay mount
-    if (child->overlay_mounted) {
-        umount2(child->rootfs_path, MNT_DETACH);
-        child->overlay_mounted = 0;
-        if (child->cmd_mounted) {
-            // XXX an rootfs unmout clears all mounts
-            child->cmd_mounted = 0;
-        }
-    }
-
-    // release cmd mount
-    if (child->cmd_mounted) {
-        umount2(child->dst_path, MNT_DETACH);
-        child->cmd_mounted = 0;
-    }
-
-    // release stack memory
-    if (child->stack) {
-        munmap(child->stack, child->stack_size);
-        child->stack = NULL;
-    }
-
-    // release name,exec_path,...
-    if (child->name) free(child->name);
-    if (child->cmd_path) free(child->cmd_path);
-    if (child->exec_path) free(child->exec_path);
-    if (child->exec_argc) {
-        for (int i = 0; i < child->exec_argc; i++) {
-            free(child->exec_argv[i]);
-        }
-        free(child->exec_argv);
-    }
-    if (child->ip_addr) free(child->ip_addr);
-
-    if (child->store_dir) free(child->store_dir);
-    if (child->rootfs_path) free(child->rootfs_path);
-    if (child->netns_path) free(child->netns_path);
-    if (child->dst_path) free(child->dst_path);
-
-    if (child->lower_path) free(child->lower_path);
-    if (child->upper_path) free(child->upper_path);
-    if (child->work_path) free(child->work_path);
-
-    // all done
-}
-
-void lau_destroy(struct myl_lau *lau)
-{
-    for (int i = 0; i < lau->num_config; i++) {
-        child_cleanup(&lau->configs[i]);
-    }
-    lau->num_config = 0;
+    lau->num_proc = 0;
 
     close_fd(&lau->host_netns_fd);
 
@@ -1292,39 +925,59 @@ void lau_destroy(struct myl_lau *lau)
     free(lau);
 }
 
-struct myl_lau *lau_create(void)
+static struct lau_ctx *lau_create(void)
 {
-    struct myl_lau *lau;
+    struct lau_ctx *lau;
 
-    lau = calloc(1, sizeof(*lau));
-    if (!lau) return log_errno_rn("malloc lau-state failed");
+    lau = malloc(sizeof(*lau));
+    if (!lau) {
+        return log_errno_rn("malloc lau-state failed");
+    }
 
-    // init
+    memset(lau, 0, sizeof(*lau));
+
+    // init all fds to -1
     lau->host_netns_fd = -1;
 
     return lau;
 }
+
+// define containers 
+static struct lau_config db_cfg = {
+    .name = "db", 
+    .cmd_path = "db/server", 
+    .exec_path = "/bin/server", 
+    .ip_addr = "10.0.0.1"
+};
+
+static struct lau_config client_cfg = {
+    .name = "client", 
+    .cmd_path = "client/client", 
+    .exec_path = "/bin/client", 
+    .exec_args = "--hostname 10.0.0.1", 
+    .ip_addr = "10.0.0.2"
+};
 
 int main(int argc, char *argv[])
 {
     int ec = -1;
 
     // create state
-    struct myl_lau *lau = lau_create();
+    struct lau_ctx *lau = lau_create();
     if (!lau) fatal_error("Failed to create launcher state");
 
     if (lau_init(lau) != 0) goto done;
     if (lau_parse_argv(lau, argc, argv) != 0) goto done;
-    if (lau_setup_cfg(lau) != 0) goto done;
-    if (lau_setup_signals() != 0) goto done;
+    if (lau_apply_cfg(lau) != 0) goto done;
+    if (setup_signals(&lau->sig) != 0) goto done;
 
     // add containers
-    struct myl_child *db  = lau_add(lau, "db", "db/server", "/bin/server", NULL, "10.0.0.1");
-    struct myl_child *cli = lau_add(lau, "client", "client/client", "/bin/client", "--hostname 10.0.0.1", "10.0.0.2");
+    struct lau_child *db  = lau_add_child(lau, &db_cfg);
+    struct lau_child *cli = lau_add_child(lau, &client_cfg);
     if (!db || !cli) goto done;
 
     // setup/run containers
-    if (lau_setup(lau) != 0) goto done;
+    if (lau_setup_all(lau) != 0) goto done;
     if (lau_start_all(lau) != 0) goto done;
 
     // cable client and db together
