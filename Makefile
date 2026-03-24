@@ -10,6 +10,10 @@
 #  all         : build cmds (client|server|launcher)
 #  install     : put all cmds into bin folder
 #  deploy      : builds images|create cluster|load images|deploy pods
+#
+#  debug       : debug build
+#  asan        : asan debug build
+#  valgrind    : valgrind debug build
 # 
 #  test        : run basic tests (test-cmds)
 #  test-full   : run all tests (test-cmds,test-lau,test-k8s)
@@ -82,33 +86,32 @@ endif
 
 # compiler flags
 # --------------
-GCC_DEPS     := -MMD -MP
-CPP_FLAGS    := -D_GNU_SOURCE -Isrc
-EXTRA_CFLAGS := -Wextra -Wno-missing-field-initializers
-DEBUG_COMMON := -ggdb3 -fno-omit-frame-pointer
-DEBUG_CFLAGS := -O0 $(EXTRA_CFLAGS)
-RELEASE_CFLAGS := -O2 $(EXTRA_CFLAGS)
-CFLAGS += -Wall $(CPP_FLAGS) $(GCC_DEPS)
+GCC_DEPS      := -MMD -MP
+CPP_FLAGS     := -D_GNU_SOURCE -Isrc
+EXTRA_CFLAGS  := -Wextra -Wno-missing-field-initializers
+COMMON_CFLAGS := -Wall $(CPP_FLAGS) $(GCC_DEPS) 
+DEBUG_CFLAGS   := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
 
-DEBUG ?= 0
-ifeq ($(DEBUG), 1)
-	CFLAGS  += $(DEBUG_CFLAGS) $(DEBUG_COMMON)
-	LDFLAGS += $(DEBUG_COMMOM)
-else
-	CFLAGS += $(RELEASE_CFLAGS)
-	LDFLAGS += --static
-endif
+# release build
+# -----------
+CFLAGS  = -O2 $(COMMON_CFLAGS) $(EXTRA_CFLAGS)
+LDFLAGS = --static
+
+# debug build
+# -----------
+debug: CFLAGS = -O0 $(COMMON_CFLAGS) $(DEBUG_CFLAGS)
+debug: all
 
 # asan build
 # -----------
-asan: DEBUG=1
-asan: CFLAGS += -fsanitize=address 
-asan: LDFLAGS += -fsanitize=address
+asan: CFLAGS = -O0 $(COMMON_CFLAGS) $(DEBUG_CFLAGS) -fsanitize=address 
+asan: LDFLAGS = -fsanitize=address
 asan: all
 
 # valgrind build
 # --------------
-valgrind: DEBUG=1
+valgrind: CFLAGS = -O0 $(COMMON_CFLAGS) $(DEBUG_CFLAGS)
+valgrind: LDFLAGS = 
 valgrind: all
 
 MAKEFLAGS += --no-print-directory

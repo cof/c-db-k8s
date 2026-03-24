@@ -53,121 +53,109 @@ char *int_tostr(int val)
     return itoa(str, sizeof(bufs[0][0]), val);
 }
 
-// wrapper around getopt_long
-static struct get_opt *getopt_missopt(struct getopt_parse *parse)
+// generic setters
+int str_setval(char **str, const char *name, const char *val_str)
 {
-    int val = optopt;
+    if (*str) free(*str);
+    *str = strdup(val_str);
+    if (!*str) {
+        return log_errno_rf("%s strdup failed", name);
+    }
 
-    for (size_t i = 0; i < parse->num_opt; i++) {
-        if (parse->opts[i].val == val) {
-            parse->opt_idx = i;
-            return &parse->opts[i];
+    return 0;
+}
+
+int int_setval(int *ival, const char *name, const char *val_str)
+{
+    int val = atoi(val_str);
+    if (val < 0) {
+        return log_error_rf("%s cannot be negative", name);
+    }
+    *ival = val;
+
+    return 0;
+}
+
+// cmd-line parsing
+int opt_setstr(void *state, size_t offset, const char *name, const char *val)
+{
+    char **str = make_ptr(state, offset);
+    
+    return str_setval(str, name, val);
+}
+
+int opt_setint(void *state, size_t offset, const char *name, const char *val)
+{
+    int *ival = make_ptr(state, offset);
+    
+    return int_setval(ival, name, val);
+}
+
+static const struct cmd_opt *find_opt(const char *name, const struct cmd_opt opts[])
+{
+    for (int i = 0; opts[i].name; i++) {
+        if (strcmp(name, opts[i].name) == 0) {
+            return &opts[i];
         }
     }
 
     return NULL;
 }
 
-int getopt_init(struct getopt_parse *parse, 
-    int argc, char *argv[],
-    size_t num_opt, struct get_opt opts[num_opt])
+int parse_argv(int argc, char *argv[], const struct cmd_opt opts[], void *state)
 {
-    memset(parse->long_opts, 0, sizeof(parse->long_opts));
+    int i;
 
-    parse->argc = argc >= 0 ? argc : 0;
-    parse->argv = argv;
-
-    parse->opts = opts;
-    parse->num_opt = num_opt;
-    parse->opt_idx = 0;
-
-    if (num_opt > GETOPT_MAX) {
-        return log_error_rf("Num opts %zu > max %d", num_opt, GETOPT_MAX);
-    }
-
-    // disable getopt error reporiing
-    opterr = 0;
-
-    // convert to getopt_long fmt
-    size_t i = 0;
-    while (1) {
-        struct option *lopt = &parse->long_opts[i];
-        struct get_opt *opt = &opts[i];
-        // 3 exit condtions
-        if (num_opt && i >= num_opt) break;
-        if (opt->name == NULL) break;
-        if (parse->num_opt >= GETOPT_MAX) {
-            return log_error_rf("Num opts %zu > max %d", num_opt, GETOPT_MAX);
+    for (i = 1; i < argc; i++) {
+        const char *name = argv[i];
+        if (*name != '-') {
+            // positional argument
+            return i;
         }
-        // safe to load
-        lopt->name = opt->name;
-        lopt->has_arg = opt->has_arg;
-        lopt->val = opt->val;
-        if (!num_opt) parse->num_opt++;
-        i++;
+        // match name
+        const struct cmd_opt *opt = find_opt(name, opts);
+        if (!opt) {
+            return log_error_rf( "Error: Unknown option %s", name);
+        }
+        // get value
+        const char *val = NULL;
+        if (opt->has_arg) {
+            if (i + 1 >= argc) {
+                return log_error_rf("Option: --%s requries a value", opt->name);
+            }
+            if (argv[i + 1][0] == '-') { 
+                return log_error_rf("Option: --%s Missing value", opt->name);
+            }
+            val = argv[++i];
+        }
+        // tell user
+        int rc = opt->setter(state, opt->offset, name, val);
+        if (rc) return rc;
     }
 
-    // all done
-    return 0;
+    return i;
 }
 
-int getopt_next(struct getopt_parse *parse)
+
+
+void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[])
 {
-    int rc = getopt_long_only(
-        parse->argc, parse->argv,
-        ":", parse->long_opts, 
-        &parse->opt_idx
-    );
-
-    if (rc == -1) {
-        // all cmd-line options parsed
-        return GETOPT_EOF;
-    }
-
-    if (rc == ':') {
-        //  Missing value
-        struct get_opt *opt = getopt_missopt(parse);
-        return log_error_re(GETOPT_MISSVAL, "Option: --%s requries an arg", opt->name);
-    }
-
-    if (rc == '?') {
-        // Unknown option
-        const char *opt = getopt_erropt(parse);
-        return log_error_re(GETOPT_ERROPT, "Error: Unknown option %s", opt);
-    }
-    
-    parse->val = slice_make_cstr(optarg);
-
-    // option code
-    return rc;
-}
-
-void print_usage(const char *cmd, 
-    int num_opt, const struct get_opt opts[num_opt],
-    int num_exa, char *examples[num_exa])
-{
-    const char *base = strrchr(cmd, '/');
-    const char *prog_name = (base) ? base + 1 : cmd;
+    const char *prog_name = get_basename(cmd);
     int w= 15;
 
     printf("Usage: %s [OPTIONS]\n\n", prog_name);
     printf("Options:\n");
 
-    for (int i = 0; i < num_opt; i++) {
+    for (int i = 0; opts[i].name; i++)  {
         printf(" --%-*s %s", w, opts[i].name, opts[i].desc);
-        if (opts[i].def_type) {
-            const char *def_str = opts[i].def_type == 1
-                ? int_tostr(opts[i].def_int)
-                : opts[i].def_str;
-            printf(" (default=%s)", def_str);
+        if (opts[i].def_str) {
+            printf(" (default=%s)", opts[i].def_str);
         }
         printf("\n");
     }
 
-    if (!num_exa) return;
-
     printf("\nExamples:\n");
-    for (int i = 0; i < num_exa; i++) {
+    for (int i = 0; examples[i]; i++)  {
         printf("  %s %s\n", prog_name, examples[i]);
     }
 }

@@ -23,6 +23,13 @@
 #include "log.h"
 #include "sock.h"
 
+struct client_config {
+    const char *prog_name;
+    const char *hostname;
+    const char *port;
+    int log;
+};
+
 struct my_conn {
     struct simple_sock socks[2];
     struct simple_sock *sock_send;
@@ -31,18 +38,6 @@ struct my_conn {
     int poll_out;
     uint8_t rdata[BUFSIZ];
     uint8_t wdata[BUFSIZ];
-};
-
-static struct get_opt opts[] = {
-    { "help",     "This help",             0, 'e' },
-    { "hostname", "hostname to listen on", 1, 'h' },
-    { "port",     "port to listen on",     1, 'p', GETOPT_DEFSTR(TCP_PORT_STR) },
-    { "log",      "log request/response",  0, 'l' },
-    { "argv",     "Dump argv to stdout",   0, 'a' }
-};
-
-static char *examples[] = {
-    "--hostname locahost --port 6379"
 };
 
 #define MY_CONN_INIT(_conn, _rfd, _wfd) \
@@ -214,42 +209,73 @@ static int setup_signals(void)
     return 0;
 }
 
+/* cmd-line */
+enum { SET_HELP = 0, SET_HOST, SET_PORT, SET_LOG };
+static int set_opt(void *arg, size_t flag, const char *name, const char *val);
+
+static struct cmd_opt opts[] = {
+    OPT_GEN("--help",     "This help", 0, 0, SET_HELP, set_opt),
+    OPT_GEN("--hostname", "hostname to listen on", 0, 1, SET_HOST, set_opt),
+    OPT_GEN("--port",     "port to listen on", TCP_PORT_STR, 1, SET_PORT, set_opt),
+    OPT_GEN("--log",      "log request/response", 0, 0,  SET_LOG, set_opt),
+    { NULL }
+};
+
+static const char *examples[] = {
+    "--hostname locahost --port 6379",
+    NULL
+};
+
+static int set_opt(void *arg, size_t flag, const char *name, const char *val)
+{
+    struct client_config *cfg = arg;
+    (void) name;
+    (void) val;
+
+    switch(flag) {
+    case SET_HELP: print_usage(cfg->prog_name, opts, examples); exit(0);
+    case SET_HOST: cfg->hostname = val; break;
+    case SET_PORT: cfg->port = val; break;
+    case SET_LOG:  cfg->log = 1; break;
+    default: return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
-    const char *hostname = NULL;
-    const char *port = TCP_PORT_STR;
-    int log = 0;
+    struct client_config {
+        const char *prog_name;
+        const char *hostname;
+        const char *port;
+        int log;
+    } cfg = {
+        .prog_name = argv[0],
+        .hostname = NULL,
+        .port = TCP_PORT_STR,
+        .log = 0
+    };
 
     // process cmd-line options
-    struct getopt_parse parse;
-    int rc = getopt_init(&parse, argc, argv, ARRAY(opts));
-    if (rc) fatal_error("cmd-line parser failed");
-    while ((rc = getopt_next(&parse)) >= 0) {
-        switch(rc) {
-        case 'e': print_usage(argv[0], ARRAY(opts), ARRAY(examples)); return 0;
-        case 'h': hostname = getopt_str(&parse); break;
-        case 'p': port = getopt_str(&parse); break;
-        case 'l': log = 1; break;
-        case 'a': log_argv("+", argc, argv); break;
-        }
-    }
-    if (rc != GETOPT_EOF) return -1;
-    if (!hostname) fatal_error("Missing hostname");
+    int rc = parse_argv(argc, argv, opts, &cfg);
+    if (!rc) return -1;
+    if (!cfg.hostname) fatal_error("Missing hostname");
 
     rc = setup_signals();
     if (rc) fatal_error("setup signals");
 
     // server connect
     struct my_conn serv = MY_CONN_INIT(serv, -1, -1);
-    rc = sock_connect_hostport(&serv.socks[0], hostname, port);
+    rc = sock_connect_hostport(&serv.socks[0], cfg.hostname, cfg.port);
     if (rc) fatal_error("No connection");
     serv.sock_send = serv.sock_recv = serv.socks;
 
     // at this stage safe to proceed
     log_info("+", "Connectivity test: OK");
 
-    const char *log_req = log ? "send req" : NULL;
-    const char *log_rsp = log ? "recv rsp" : NULL;
+    const char *log_req = cfg.log ? "send req" : NULL;
+    const char *log_rsp = cfg.log ? "recv rsp" : NULL;
         
     // setup stdout,stdin for send,recv
     struct my_conn user = MY_CONN_INIT(user, STDOUT_FILENO, STDIN_FILENO);

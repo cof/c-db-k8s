@@ -48,6 +48,7 @@ struct simple_client {
 };
 
 struct simple_server {
+    const char *prog_name;
     pid_t pid;
     struct simple_sock sock;
     struct list_elem clients;
@@ -519,56 +520,49 @@ static int setup_listener(struct simple_server *server)
     return 0;
 }
 
-static int setup_database(struct simple_server *state)
+static int setup_database(struct simple_server *serv)
 {
-    return db_init(state->database);
+    return db_init(serv->database);
 }
 
-static int set_str(char **str, struct get_opt *opt, const char *val_str)
+/* cmd-line */
+enum { SET_HELP = 0, SET_LOG, SET_ARGV };
+static int set_flag(void *arg, size_t flag, const char *name, const char *val);
+
+static struct cmd_opt opts[] = {
+    OPT_FLAG("--help",    "This help", SET_HELP, set_flag),
+    OPT_STR("--hostname", "hostname to listen on", 0, struct simple_server, hostname),
+    OPT_STR("--port",     "port to listen on", TCP_PORT_STR, struct simple_server, port),
+    OPT_STR("--database", "Path to database file", 0, struct simple_server, database),
+    OPT_FLAG("--log",     "log request/response", SET_LOG,  set_flag),
+    OPT_FLAG("--argv",    "Dump argv to stdout",  SET_ARGV, set_flag),
+    { NULL } ,
+};
+
+static const char *examples[] = {
+    "--hostname 127.0.0.1 --port 6379 --database mydb.bin",
+    NULL
+};
+
+static int set_flag(void *arg, size_t flag, const char *name, const char *val)
 {
-    if (*str) free(*str);
-    *str = strdup(val_str);
+    struct simple_server *serv = arg;
+    (void) name;
+    (void) val;
 
-    if (!*str) {
-        return log_error_rf("strdup %s failed", opt->name);
+    switch(flag) {
+    case SET_HELP: print_usage(serv->prog_name, opts, examples); exit(0);
+    case SET_LOG: return serv->log_line = 1, 0;
+    default: return -1;
     }
-
-    return 0;
 }
 
-static int server_parse_argv(struct simple_server *server, int argc, char *argv[])
+// process cmd-line options
+static int server_parse_argv(struct simple_server *serv, int argc, char *argv[])
 {
-    struct get_opt opts[] = {
-        { "help",   "This help", 0, 'e' },
-        { "hostname",  "hostname to listen on", 1, 'h' },
-        { "port",     "port to listen on",      1, 'p', GETOPT_DEFSTR(server->port) },
-        { "database", "Path to database file",  1, 'd' },
-        { "log",      "log request/response",   0, 'l' },
-        { "argv",     "Dump argv to stdout",    0, 'a' }
-    };
-
-    char *examples[] = {
-        "--hostname 127.0.0.1 --port 6379 --database mydb.bin"
-    };
-
-    // process cmd-line options
-    struct getopt_parse parse;
-    int rc = getopt_init(&parse, argc, argv, ARRAY(opts));
-    if (rc) return rc;
-    while ((rc = getopt_next(&parse)) >= 0) {
-        struct get_opt *opt = getopt_curopt(&parse);
-        switch(rc) {
-        case 'e': print_usage(argv[0], ARRAY(opts), ARRAY(examples)); return -1;
-        case 'h': rc = set_str(&server->hostname, opt, getopt_str(&parse)); break;
-        case 'p': rc = set_str(&server->port, opt, getopt_str(&parse)); break;
-        case 'd': rc = set_str(&server->database, opt, getopt_str(&parse)); break;
-        case 'l': server->log_line = 1; break;
-        case 'a': log_argv("+", argc, argv); break;
-        }
-        if (rc < 0) break;
-    }
-
-    return rc == GETOPT_EOF ? 0 : -1;
+    serv->prog_name = argv[0];
+    int rc = parse_argv(argc, argv, opts, serv);
+    return rc >= 0 ? 0 : -1;
 }
 
 static void server_free(struct simple_server *server)

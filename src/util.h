@@ -6,7 +6,7 @@
 #define __UTIL_H__
 
 #include <stdio.h>
-#include <stdarg.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -266,75 +266,51 @@ static inline uint64_t dbj2a_hash_slice(const struct str_slice str)
     return dbj2a_hash(str.ptr, str.len);
 }
 
-// wrapper around getopt_long
-#define GETOPT_EOF     -1
-#define GETOPT_MISSVAL -2
-#define GETOPT_ERROPT  -3
+// generic setters
+int str_setval(char **str, const char *name, const char *val_str);
+int int_setval(int *ival, const char *name, const char *val_str);
 
-#define GETOPT_NOARG  0
-#define GETOPT_REQARG 1
-#define GETOPT_OPTARG 2
-#define GETOPT_MAX 20
-#define GETOPT_DEFINT(x) .def_type = 1, .def_int = (x)
-#define GETOPT_DEFSTR(x) .def_type = 2, .def_str = (x)
+// cmd-line parsing
+int opt_setstr(void *state, size_t offset, const char *name, const char *val);
+int opt_setint(void *state, size_t offset, const char *name, const char *val);
 
-struct get_opt {
+static inline const char *get_basename(const char *name)
+{
+    if (!name) return "<null>";
+    const char *base = strrchr(name, '/');
+    return base ? base + 1 : name;
+}
+
+#define OPT_NOARG  0
+#define OPT_REQARG 1
+#define OPT_OPTARG 2
+
+#define OPT_STR(name, desc, def, type, field) \
+   { name, desc, def, 1, offsetof(type, field), opt_setstr }
+
+#define OPT_INT(name, desc, def, type, field) \
+    { name, desc, def, 1, offsetof(type, field), opt_setint }
+
+#define OPT_BOOL(name, desc, def, mask, setter) \
+    { name, desc, def, 1, mask, setter }
+
+#define OPT_FLAG(name, desc, mask, setter) \
+    { name, desc, NULL, 0, mask, setter }
+
+#define OPT_GEN(name, desc, def, has, code, setter) \
+    { name, desc, def, has, code, setter }
+
+
+struct cmd_opt {
     const char *name;
     const char *desc;
-    int has_arg;
-    int val;
-    int def_type;
-    union  {
-        const char *def_str;
-        int def_int;
-    };
+    const char *def_str;
+    int has_arg;  // 0=none, 1=requried, 2=optional
+    size_t offset;
+    int (*setter)(void *state, size_t data, const char *name, const char *val);
 };
 
-struct getopt_parse {
-    char **argv;
-    int argc;
-    size_t num_opt;
-    struct get_opt *opts;
-    struct str_slice val;
-    int opt_idx;
-    struct option long_opts[GETOPT_MAX+1];
-};
-
-int getopt_init(struct getopt_parse *parse, 
-    int argc, char *argv[],
-    size_t num_opt, struct get_opt opts[num_opt]);
-int getopt_next(struct getopt_parse *parse);
-
-static inline struct str_slice getopt_val(struct getopt_parse *parse)
-{
-    return parse->val;
-}
-
-static inline char *getopt_str(struct getopt_parse *parse)
-{
-    return parse->val.ptr;
-}
-
-static inline struct get_opt *getopt_curopt(struct getopt_parse *parse)
-{
-    int idx = parse->opt_idx;
-    if (idx < 0 || (size_t) idx > parse->num_opt) return NULL;
-    return &parse->opts[idx];
-}
-
-
-static inline char *getopt_erropt(struct getopt_parse *parse)
-{
-    int idx = optind - 1;
-
-    if (idx < 0) return "<null>";
-    if (idx >= parse->argc) return "<null>";
-
-    return parse->argv[idx];
-}
-
-void print_usage(const char *cmd, 
-    int num_opt, const struct get_opt opt[num_opt],
-    int num_exa, char *examples[num_exa]);
+int parse_argv(int argc, char *argv[], const struct cmd_opt opts[], void *state);
+void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[]);
 
 #endif

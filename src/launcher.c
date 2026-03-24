@@ -127,6 +127,7 @@ struct myl_child {
 
 // launcher state
 struct myl_lau {
+    const char *prog_name; // argv[0]
     char *cur_dir; // cwd where laucher start
     char *base_dir; // root dir for all launcher state
     char *src_dir; // where host cmd files live
@@ -925,13 +926,13 @@ static int lau_open_host_netns(struct myl_lau *lau)
     return 0;
 }
 
+
 // setup infrastucture
 static int lau_setup(struct myl_lau *lau)
 {
     if (verbose) {
         log_info("LOG", "Launcher setup infrastucture");
     }
-
 
     RUN(lau_open_host_netns(lau));
     
@@ -960,7 +961,6 @@ static int lau_setup(struct myl_lau *lau)
     // all done
     return 0;
 }
-
 
 static struct myl_child *lau_add(
     struct myl_lau *lau,
@@ -1010,6 +1010,38 @@ static struct myl_child *lau_add(
     return child;
 }
 
+static int lau_setup_cfg(struct myl_lau *lau)
+{
+    // final checks
+    if (!lau->run_dir) {
+        lau->run_dir = gen_path(lau->base_dir, "run_dir");
+        if (!lau->run_dir) return -1;
+        lau->need_basedir = 1;
+    }
+    if (!lau->netns_dir) {
+        lau->netns_dir = gen_path(lau->base_dir, "netns_dir");
+        if (!lau->netns_dir) return -1;
+        lau->need_basedir = 1;
+    }
+    if (!lau->store_dir) {
+        lau->store_dir = gen_path(lau->base_dir, "store_dir");
+        if (!lau->store_dir) return -1;
+        lau->need_basedir = 1;
+    }
+
+    if (lau->rootfs_dir) {
+        // remove trailing slash
+        int len = strlen(lau->rootfs_dir);
+        if (len && lau->rootfs_dir[len - 1] == '/') {
+            lau->rootfs_dir[len - 1] = '\0';
+        }
+    }
+
+    lau->sync_all = lau->start_order ? lau_sync_inorder : lau_sync_parallel;
+
+    return 0;
+}
+
 /*  signal handling code */
 static void lau_handle_signal(int signo, siginfo_t *info, void *ucontext)
 {
@@ -1051,119 +1083,64 @@ static int lau_setup_signals(void)
     return 0;
 }
 
-/*  cmd-line parser  */
+/* cmd-line */
+enum {
+    SET_HELP = 0,
+    SET_LOG,
+    SET_START_ORDER,
+    SET_DROP_SUDO,
+    SET_DROP_CAPS,
+    SET_DROP_PRIVS,
+    SET_USE_SECCOMP
+};
+static int set_flag(void *arg, size_t flag, const char *name, const char *val);
 
-static int set_str(char **dir, struct get_opt *opt, const char *val_str)
+static struct cmd_opt opts[] = {
+    OPT_FLAG("--help", "This help", SET_HELP, set_flag), 
+    OPT_FLAG("--log", "debug mode", SET_LOG,  set_flag),
+    OPT_STR("--base-dir",   "Path for all run-time state", "cwd", struct myl_lau, base_dir),
+    OPT_STR("--src-dir",    "Path where cmd binarys live", "cwd", struct myl_lau, src_dir),
+    OPT_STR("--netns-dir",  "Network namespace dir", 0,  struct myl_lau, base_dir),
+    OPT_STR("--rootfs-dir", "Folder to mount into container using OverlayFS", 0, struct myl_lau, rootfs_dir),
+    OPT_BOOL("--start-order", "Start order (0=sequential,1=parallel)", STR(START_ORDER), SET_START_ORDER, set_flag),
+    OPT_INT("--start-delay", "Start delay order in secs", STR(START_DELAY), struct myl_lau, start_delay),
+    OPT_BOOL("--drop-sudo",  "Drop sudo privilge", STR(DROP_SUDO), SET_DROP_SUDO, set_flag),
+    OPT_BOOL("--drop-caps",  "Drop capabilities",  STR(DROP_CAPS), SET_DROP_CAPS, set_flag),
+    OPT_BOOL("--drop-privs", "Dont SET_NO_NEW_PRIVS", STR(DROP_PRIVS),  SET_DROP_PRIVS, set_flag),
+    OPT_BOOL("--use-seccomp", "Use seccomp filters",  STR(USE_SECCOMP), SET_USE_SECCOMP, set_flag),
+    { NULL }
+};
+
+static const char *examples[] = {
+    "startorder=1 startdelay=5",
+    NULL
+};
+
+static int set_flag(void *arg, size_t flag, const char *name, const char *val)
 {
-    if (*dir) free(*dir);
-    //*dir = validate_dir(opt->name, val_str);
-    *dir = strdup(val_str);
-    if (!*dir) {
-        return log_errno_rf("%s strdup failed", opt->name);
-    }
+    struct myl_lau *lau = arg;
+    (void) name;
+    (void) val;
 
-    return 0;
+    switch(flag) {
+    case SET_HELP: print_usage(lau->prog_name, opts, examples); exit(0);
+    case SET_LOG: return verbose = 1, 0;
+    case SET_START_ORDER: return lau->start_order = 1, 0;
+    case SET_DROP_SUDO: return lau->drop_sudo = 1, 0;
+    case SET_DROP_CAPS: return lau->drop_caps = 1, 0;
+    case SET_DROP_PRIVS: return lau->drop_privs = 1, 0;
+    case SET_USE_SECCOMP: return lau->use_seccomp = 1, 0;
+    default: return -1;
+    }
 }
 
-static int set_int(int *ival, struct get_opt *opt, const char *val_str)
-{
-    int val = atoi(val_str);
-    if (val < 0) {
-        return log_error_rf("%s cannot be negative", opt->name);
-    }
-    *ival = val;
-
-    return 0;
-}
-
-static int set_start_order(struct myl_lau *lau, struct get_opt *opt, const char *val_str)
-{
-    int start_order = atoi(val_str);
-
-    if (start_order < 0 || start_order > 1) {
-        return log_error_rf("%s Must be 0 or 1", opt->name);
-    }
-
-    lau->start_order = start_order == 1;
-    lau->sync_all = lau->start_order ? lau_sync_inorder : lau_sync_parallel;
-
-    return 0;
-}
 
 // cmd-line parser
 int lau_parse_argv(struct myl_lau *lau, int argc, char *argv[])
 {
-    struct get_opt opts[] = {
-        { "help",   "This help",  0, 'h' },
-        { "log",    "debug mode", 0, 'l' },
-        { "base-dir", "Path for all run-time state (default=cwd)", 1, 'b' },
-        { "src-dir",  "Path where cmd binarys live (default=cwd)",  1, 's' },
-        { "netns-dir","Network namespace dir",  1, 'n' },
-        { "rootfs-dir",  "Folder to mount into container using OverlayFS", 1, 'r' },
-        { "start-order", "Start order (0=parallel,1=sequential)",  1, 'o', GETOPT_DEFINT(lau->start_order)  },
-        { "start-delay", "Start delay order in secs",  1, 'd', GETOPT_DEFINT(lau->start_delay) },
-        { "drop-sudo",  "Drop sudo privilge", 0, 'u', GETOPT_DEFINT(lau->drop_sudo) },
-        { "drop-caps",  "Drop capabilities",  0, 'c', GETOPT_DEFINT(lau->drop_caps) },
-        { "drop-privs", "Disable SET_NO_NEW_PRIVS", 0, 'p', GETOPT_DEFINT(lau->drop_privs) },
-        { "use-seccomp", "Use seccomp filters", 0, 'e', GETOPT_DEFINT(lau->use_seccomp) }
-    };
-
-    char *examples[] = {
-        "startorder=1 startdelay=5"
-    };
-
-    // process cmd-line options
-    struct getopt_parse parse;
-    int rc = getopt_init(&parse, argc, argv, ARR_LEN(opts), opts);
-    if (rc) return rc;
-    while ((rc = getopt_next(&parse)) >= 0) {
-        struct get_opt *opt = getopt_curopt(&parse);
-        switch(rc) {
-        case 'h': print_usage(argv[0], ARRAY(opts), ARRAY(examples)); return -1;
-        case 'l': verbose = 1; break;
-        case 'b': rc = set_str(&lau->base_dir, opt, getopt_str(&parse)); break;
-        case 's': rc = set_str(&lau->src_dir, opt, getopt_str(&parse)); break;
-        case 'n': rc = set_str(&lau->netns_dir, opt, getopt_str(&parse)); break;
-        case 'r': rc = set_str(&lau->rootfs_dir, opt, getopt_str(&parse)); break;
-        case 'o': rc = set_start_order(lau, opt, getopt_str(&parse)); break;
-        case 'd': rc = set_int(&lau->start_delay, opt, getopt_str(&parse)); break;
-        case 'u': lau->drop_sudo = atoi(getopt_str(&parse)) != 0; break;
-        case 'c': lau->drop_caps = atoi(getopt_str(&parse)) != 0; break;
-        case 'p': lau->drop_privs = atoi(getopt_str(&parse)) != 0; break;
-        case 'e': lau->use_seccomp = atoi(getopt_str(&parse)) != 0; break;
-        }
-        if (rc < 0) break;
-    }
-
-    if (rc != GETOPT_EOF) return rc;
-
-    // final checks
-    if (!lau->run_dir) {
-        lau->run_dir = gen_path(lau->base_dir, "run_dir");
-        if (!lau->run_dir) return -1;
-        lau->need_basedir = 1;
-    }
-    if (!lau->netns_dir) {
-        lau->netns_dir = gen_path(lau->base_dir, "netns_dir");
-        if (!lau->netns_dir) return -1;
-        lau->need_basedir = 1;
-    }
-    if (!lau->store_dir) {
-        lau->store_dir = gen_path(lau->base_dir, "store_dir");
-        if (!lau->store_dir) return -1;
-        lau->need_basedir = 1;
-    }
-
-    if (lau->rootfs_dir) {
-        // remove trailing slash
-        int len = strlen(lau->rootfs_dir);
-        if (len && lau->rootfs_dir[len - 1] == '/') {
-            lau->rootfs_dir[len - 1] = '\0';
-        }
-    }
-
-    // all done
-    return 0;
+    lau->prog_name = argv[0];
+    int rc = parse_argv(argc, argv, opts, lau);
+    return rc >= 0 ? 0 : -1;
 }
 
 // set defaults
@@ -1189,9 +1166,7 @@ int lau_init(struct myl_lau *lau)
 
     // setup default dirs
     lau->base_dir = gen_path(lau->cur_dir, BASE_DIR);
-    if (!lau->base_dir) {
-        return log_error_rf("gen-path base_dir failed");
-    }
+    if (!lau->base_dir) return -1;
 
     lau->src_dir = strdup(lau->cur_dir);
     if (!lau->src_dir) {
@@ -1340,6 +1315,7 @@ int main(int argc, char *argv[])
 
     if (lau_init(lau) != 0) goto done;
     if (lau_parse_argv(lau, argc, argv) != 0) goto done;
+    if (lau_setup_cfg(lau) != 0) goto done;
     if (lau_setup_signals() != 0) goto done;
 
     // add containers
