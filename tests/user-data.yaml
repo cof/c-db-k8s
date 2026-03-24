@@ -5,8 +5,15 @@ datasource_list: [ NoCloud ]
 packages:
   - util-linux
 
-# XXX alpine is ignore this
+passwd:
+  list: |
+    root:alpine
+    alpine:alpine
+  expire: False
+
 ssh_pwauth: true
+
+# XXX alpine is ignore this
 write_files:
   - path: /etc/ssh/sshd_config.d/00-force-passwords.conf
     permissions: '0600'
@@ -18,9 +25,6 @@ users:
     lock_passwd: false
     ssh_authorized_keys:
       - "{{SSH_PUBLIC_KEY}}"
-
-bootcmd:
-  - echo "root:alpine" | chpasswd
 
 runcmd:
   - echo "alpine:alpine" | chpasswd
