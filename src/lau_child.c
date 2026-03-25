@@ -1,5 +1,8 @@
 /*
  * Container child code
+ *
+ * Notes:
+ *
  */
 #include <errno.h>
 #include <sched.h>
@@ -10,7 +13,6 @@
 
 #include "util.h"
 #include "log.h"
-#include "list.h"
 #include "ns_util.h"
 #include "lau_child.h"
 
@@ -75,7 +77,7 @@ struct lau_child *lau_child_create(void)
 }
 
 // note we MUST clean up active mounts BEFORE we exit
-// either the child process does it or launcher process
+// either the child process does it or the launcher process
 void lau_child_free(struct lau_child *child)
 {
     if (child->run && child->pid > 0) {
@@ -177,6 +179,7 @@ int lau_child_net_setup(struct lau_child *child)
         log_info("LOG", "lau setup-network (name=%s ipaddr=%s" , child->name, child->ip_addr);
     }
 
+    // TODO move this lot into ns_util.c
     RUN_CMD("nsenter -t %d -n ip link set %s name eth0", child->pid, child->veth_name);
     RUN_CMD("nsenter -t %d -n ip addr add %s/24 dev eth0", child->pid, child->ip_addr);
     RUN_CMD("nsenter -t %d -n ip link set lo up", child->pid);
