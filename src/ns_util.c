@@ -191,6 +191,7 @@ int run_cmd(const char *fmt, ...)
     return rc; 
 }
 
+
 char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc) 
 {
     wordexp_t p = { 0 };
@@ -331,6 +332,7 @@ int create_path_nocopy(char *path, mode_t mode)
     return create_dir(path, mode, 1);
 }
 
+
 // aka mkdir -p
 int create_path(const char *path, mode_t mode)
 {
@@ -343,6 +345,31 @@ int create_path(const char *path, mode_t mode)
     free(tmp);
 
     return rc; 
+}
+
+int create_path_for_file(const char *file, mode_t mode)
+{
+    if (!file) {
+        return log_error_rf("file name is null");
+    }
+
+    char *tmp = strdup(file);
+    if (!tmp) {
+        return log_errno_rf("strdup %s failed", file);
+    }
+
+    char *ptr = strrchr(tmp, '/');
+    if (!ptr) {
+        free(tmp);
+        return log_error_rf("Not a file name %s", file);
+    }
+
+    *ptr = '\0';
+
+    int rc = create_path_nocopy(tmp, mode);
+    free(tmp);
+
+    return rc;
 }
 
 char *create_subdir(const char *dir, const char *subdir, mode_t mode)
@@ -413,6 +440,27 @@ close_all:
     return rc;
 }
 
+// open host's default network namespace
+int open_host_netns(void)
+{
+    // fd must be for this process only (O_CLOEXEC)
+    int fd = open(HOST_NETNS_PATH, O_RDONLY | O_CLOEXEC);
+    if (fd == -1) {
+        return log_errno_rf("open host_netns %s failed", HOST_NETNS_PATH);
+    }
+
+    return fd;
+}
+
+int restore_host_netns(int netns_fd)
+{
+    int rc = setns(netns_fd, CLONE_NEWNET);
+    if (rc) {
+        return log_errno_rf("restore netns %s failed", HOST_NETNS_PATH);
+    }
+
+    return 0;
+}
 
 int create_netns_file(const char *netns_path)
 {
@@ -446,6 +494,60 @@ int create_netns_file(const char *netns_path)
         unlink(netns_path);
         errno = _errno; 
         return log_errno_rf("close %s failed", netns_path);
+    }
+
+    return 0;
+}
+
+// mount roofs_dir into container root
+int mount_rootfs(const char *rootfs_dir, const char *rootfs_path)
+{
+    int rc = mount(rootfs_dir, rootfs_path, NULL, MS_BIND, NULL);
+    if (rc != 0) {
+        return log_errno_rf("mount bind rootfs %s to %s failed", rootfs_dir, rootfs_path);
+    }
+   
+    // make all further mounts private
+    rc = mount(NULL, rootfs_path, NULL, MS_REC | MS_PRIVATE, NULL);
+    if (rc) {
+        int _errno = errno;
+        umount2(rootfs_path, MNT_DETACH);
+        return log_ec_rf(_errno, "mount private %s failed", rootfs_path);
+    }
+
+    return 0;
+}
+
+// mount an OverlayFS
+int mount_overlay(const char *path, 
+    const char *lowerdir, const char *upperdir, 
+    const char *workdir,
+    const char *who)
+{
+    char *opts = NULL;
+    int rc = asprintf(&opts, 
+        "lowerdir=%s,upperdir=%s,workdir=%s", 
+        lowerdir, upperdir, workdir
+    );
+    if (rc == -1) {
+        return log_errno_rf("mount overlay genopts failed for %s", who);
+    }
+
+    rc = mount("overlay", path, "overlay", 0, opts);
+    free(opts);
+
+    if (rc == -1) {
+        return log_errno_rf("mount overlay %s for %s failed", path, who);
+    }
+
+    return 0;
+}
+
+int unmount_overlay(const char *path, const char *name)
+{
+    int rc = umount2(path, MNT_DETACH);
+    if (rc < 0 && errno != EINVAL) {
+        return log_errno_rf("unmount overlay %s for %s failed", path, name);
     }
 
     return 0;
@@ -586,20 +688,34 @@ int mount_netns(const char *netns_path)
     return netns_fd;
 }
 
-
-int create_veth(const char *container, char *veth, int veth_len)
+int veth_add(const char *veth, const char *peer)
 {
-    uint32_t id = dbj2a_hash_str(container) & 0xffffffff;
+    return run_cmd("ip link add %s type veth peer name %s 2>/dev/null", veth, peer);
+}
+
+int veth_del(const char *veth)
+{
+    return run_cmd("ip link del %s 2>/dev/null", veth);
+}
+
+int veth_setns(const char *veth, const char *netns)
+{
+    return run_cmd("ip link set %s netns %s", veth, netns);
+}
+
+int create_veth_id(const char *name,
+    char *veth, int veth_len,
+    char *peer, size_t peer_len)
+{
+    uint32_t id = dbj2a_hash_str(name) & 0xffffffff;
     int rc, salt = 10;
+
     do {
-        rc = snprintf(veth, veth_len, "vth%08x%d", id, salt);
-        if (rc < 0)
-            return log_errno_rf("snprintf: veth name failed");
-
-        if (rc == 0 || rc >= veth_len)
-            return log_error_rf("snprintf: incorrct len %d", rc);
-
-        rc = run_cmd("ip link add %s type veth peer name %st 2>/dev/null", veth, veth);
+        rc = gen_str(veth, veth_len, "vth%08x%d", id, salt);
+        if (rc) return rc;
+        rc = gen_str(peer, peer_len, "%s", veth);
+        if (rc) return rc;
+        rc = veth_add(veth, peer);
         if (rc == 0) return 0;
     } while(--salt);
 
@@ -610,16 +726,18 @@ int create_veth(const char *container, char *veth, int veth_len)
 int setup_veth(const char *cont_name, const char *netns)
 {
     char veth[IFNAMSIZ];
+    char peer[IFNAMSIZ];
 
-    RUN(create_veth(cont_name, veth, sizeof(veth)));
+    RUN(create_veth_id(cont_name, veth, sizeof(veth), peer, sizeof(peer)));
 
-    RUN_CMD("ip link set %st netns %s", veth, netns);
+    RUN_CMD("ip link set %s netns %s", peer, netns);
     RUN_CMD("ip link set %s up", veth);
 
     log_info("+", "Created veth %s", veth);
 
     return 0;
 }
+
 
 int set_identity(const char *name)
 {

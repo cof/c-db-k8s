@@ -5,6 +5,8 @@
 #ifndef _LAU_CHILD_
 #define _LAU_CHILD_
 
+#include <net/if.h> // for IFNAMSIZ
+
 struct lau_config {
     char *name;
     char *cmd_path;
@@ -31,9 +33,9 @@ struct lau_child {
     char netns_name[IFNAMSIZ]; // network namespace name
     char veth_name[IFNAMSIZ];  // container eth0 link
     // used by overlay FS
-    char *lower_path;   
-    char *upper_path;   
-    char *work_path;   
+    char *lowerdir;   
+    char *upperdir;   
+    char *workdir;   
     int netns_fd;
     // parent sync child
     int go_read_fd;    // child reads
@@ -71,8 +73,11 @@ struct lau_child {
 
 struct lau_child *lau_child_create(void);
 void lau_child_free(struct lau_child *child);
-int lau_child_load_cfg(struct lau_child *child, struct lau_config *cfg);
-int lau_child_setup_network(struct lau_child *child);
+
+int lau_child_cfg_load(struct lau_child *child, struct lau_config *cfg);
+int lau_child_net_setup(struct lau_child *child);
+int lau_child_set_netns(struct lau_child *child, const char *name, const char *suffix);
+int lau_child_set_veth(struct lau_child *child, const char *name, const char *prefix);
 
 int lau_child_prep(struct lau_child *child);
 int lau_child_switch_netns(struct lau_child *child);

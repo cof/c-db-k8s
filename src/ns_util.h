@@ -76,17 +76,35 @@ char *gen_path(const char *dir, const char *name);
 int create_dir(const char *path, mode_t mode, bool can_exist);
 int create_path_nocopy(char *path, mode_t mode);
 int create_path(const char *path, mode_t mode);
+int create_path_for_file(const char *file, mode_t mode);
+
 char *create_subdir(const char *dir, const char *subdir, mode_t mode);
 int copy_file(const char *src, const char *dst);
 char *validate_dir(const char *key, const char *dir);
 
+int open_host_netns(void);
+int restore_host_netns(int fd);
 int create_netns_file(const char *netns_path);
+
+// mount an OverlayFS into container
+int mount_overlay(const char *path, 
+    const char *lowerdir, const char *upperdir, const char *workdir,
+    const char *who);
+int unmount_overlay(const char *path, const char *name);
+
+// mount roofs_dir into container root
+int mount_rootfs(const char *rootfs_dir, const char *rootfs_path);
+
 int mount_netns(const char *netns_path);
 int mount_file(const char *path);
 int mount_cmd(const char *host_path, const char *rootfs_path);
 
-int create_veth(const char *container, char *veth, int veth_len);
+int veth_add(const char *veth, const char *peer);
+int veth_del(const char *veth);
+int veth_setns(const char *veth, const char *netns);
+
 int setup_veth(const char *cont_name, const char *netns);
+int veth_set_netns(const char *veth, const char *netns);
 
 // child container
 int set_identity(const char *name);

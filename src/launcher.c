@@ -1,61 +1,19 @@
 /* 
  * launcher : runtime container launcher
  * Usage    : ./launcher --help
- * Example  : sudo ./laucher
- * 
- * Notes
- * - CLONE_NEWUTS - private Hostname and NIS
- * - CLONE_PID    - private PID namespace
- * - CLONE_NEWNS  - privae mount namepsace
- * - CLONE_NEWNET - private network
- *
- * Refs:
- * - man 7 nampspaces
- * - man 2 clone
- * - man 2 pivot_root
- * - man 2 wait
- * - Kerrisk - TLPI - The Linux Progamming Interface
+ * Example  : sudo ./launcher
  *
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdbool.h> 
-#include <string.h>
-#include <stdarg.h>
-#include <stddef.h>
-
-#include <unistd.h>
-#include <wordexp.h>
-#include <libgen.h>
-#include <errno.h>
-#include <sched.h>
-#include <limits.h>
-#include <time.h>
-#include <net/if.h>
-#include <fcntl.h>
-#include <grp.h>
-
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <sys/wait.h>
-#include <sys/utsname.h>
-#include <sys/mman.h>
-#include <sys/mount.h>
-#include <sys/sendfile.h>
-#include <sys/syscall.h> 
 
 #include "util.h"
 #include "log.h"
 #include "ns_util.h"
 #include "lau_child.h"
 
-// config defaults
+// defaults
 #define BASE_DIR "mylauncher"
-#define RUN_DIR "/run/asimple_launcher"
-#define STORE_dir "/var/lib/asimple_launcher"
-
-#define MAX_CHILD 10
+#define MAX_PROC 20
 #define START_ORDER 1
 #define START_DELAY 1
 
@@ -77,14 +35,14 @@ struct lau_ctx {
     char *store_dir;
     char *rootfs_dir; // where a rootfs lives
     char *netns_suffix;
-    char *cable_prefix;
+    char *veth_prefix;
     int start_delay;
     int (*sync_all)(struct lau_ctx *lau);
     struct simple_sig sig;
     // container child process
     int max_proc;
     int num_proc;
-    struct lau_child *procs[MAX_CHILD];
+    struct lau_child *procs[MAX_PROC];
     unsigned int num_run;
     int host_netns_fd;
     mode_t dir_mode;
@@ -192,7 +150,7 @@ static int lau_wait_pids(struct lau_ctx *lau)
         if (status != 0) break;
     }
 
-    // success only if allchild exit 0
+    // success only if child exit 0
     return status == LAU_EXIT_OK ? 0 : -1;
 }
 
@@ -253,16 +211,6 @@ static int lau_sync_parallel(struct lau_ctx *lau)
     return 0;
 }
 
-static int lau_restore_netns(struct lau_ctx *lau)
-{
-    int rc = setns(lau->host_netns_fd, CLONE_NEWNET);
-    if (rc) {
-        log_errno_rf("restore netns %s failed", HOST_NETNS_PATH);
-    }
-
-    return 0;
-}
-
 int lau_child_prerun(struct lau_ctx *lau, struct lau_child *child)
 {
     (void) lau;
@@ -282,22 +230,19 @@ int lau_child_postrun(struct lau_ctx *lau, struct lau_child *child)
     int rc;
 
     if (child->netns_mounted) {
-        rc = lau_restore_netns(lau);
+        rc = restore_host_netns(lau->host_netns_fd);
         if (rc) num_err++;
     }
 
-    rc = sync_rdwr_close(&child->go_read_fd, &child->ready_write_fd,
+    rc = sync_rdwr_close(&child->go_read_fd, 
+        &child->ready_write_fd,
         "lau", "post-run", child->name, child->pid
     );
     if (rc) num_err++;
 
-    // release overlay mount
     if (child->overlay_mounted) {
-        rc = umount2(child->rootfs_path, MNT_DETACH);
-        if (rc < 0 && errno != EINVAL) {
-            log_errno("unmount overlay %s for %s failed", child->rootfs_path, child->name);
-            num_err++;
-        }
+        rc = unmount_overlay(child->rootfs_path, child->name);
+        if (rc) num_err++;
         child->overlay_mounted = 0;
     }
 
@@ -341,52 +286,57 @@ static int lau_start_all(struct lau_ctx *lau)
     return 0;
 }
 
-
-static int set_cable_name(struct lau_ctx *lau, struct lau_child *child)
-{
-    const char *prefix = lau->cable_prefix ?: "";
-
-    int rc = snprintf(child->veth_name, sizeof(child->veth_name), "%s%s", prefix, child->name);
-    if (rc < 0) {
-        return log_errno_rf("set_cable_name: snprintf failed");
-    }
-    if ((size_t) rc >= sizeof(child->veth_name)) {
-        return log_error_rf("set_cable_name: no space");
-    }
-
-    return 0;
-}
-
 static int lau_link_veths(struct lau_ctx *lau, struct lau_child *x, struct lau_child *y)
 {
     if (verbose) {
         log_info("LOG", "Launcher create-cable (left=%s, right=%s)", x->name, y->name);
     }
 
-    RUN(set_cable_name(lau, x));
-    RUN(set_cable_name(lau, y));
+    int rc;
 
-    RUN_CMD("ip link add %s type veth peer name %s", x->veth_name, y->veth_name);
+    // create veth for x and y
+    rc = lau_child_set_veth(x, x->name, lau->veth_prefix);
+    if (rc) return rc;
+    rc = lau_child_set_veth(y, y->name, lau->veth_prefix);
+    if (rc) return rc;
+    rc = veth_add(x->veth_name, y->veth_name);
+    if (rc) return rc;
 
-    if (run_cmd("ip link set %s netns %d", x->veth_name, x->pid) != 0) {
-        run_cmd("ip link del %s ", x->veth_name);
-        return -1;
+    // move x end
+    rc = veth_setns(x->veth_name, int_tostr(x->pid));
+    if (rc) {
+        veth_del(x->veth_name);
+        return rc;
     }
 
-    if (run_cmd("ip link set %s netns %d", y->veth_name, y->pid) != 0) {
-        run_cmd("ip link del %s ", y->veth_name);
-        return -1;
+    // move y end
+    rc = veth_setns(y->veth_name, int_tostr(y->pid));
+    if (rc) {
+        veth_del(y->veth_name);
+        return rc;
     }
 
-    RUN(lau_child_setup_network(x));
-    RUN(lau_child_setup_network(y));
+    // setup link (eth0,addr,up)
+    rc = lau_child_net_setup(x);
+    if (rc) {
+        veth_del(x->veth_name);
+        return rc;
+    }
+
+    // setup link (eth0,addr,up)
+    rc = lau_child_net_setup(y);
+    if (rc) {
+        veth_del(y->veth_name);
+        return rc;
+    }
 
     log_info("+", "Created veth pair: %s <-> %s", x->veth_name, y->veth_name);
 
     return 0;
+
 }
 
-static int check_network(struct lau_ctx *lau, struct lau_child *child)
+static int lau_check_net(struct lau_ctx *lau, struct lau_child *child)
 {
     if (child->ip_addr && lau->child_add_ip) { 
         child->need_network = 1;
@@ -395,29 +345,19 @@ static int check_network(struct lau_ctx *lau, struct lau_child *child)
     return 0;
 }
 
-static int create_netns(struct lau_ctx *lau, struct lau_child *child)
+static int lau_create_netns(struct lau_ctx *lau, struct lau_child *child)
 {
     // generate name e.g "name-ns"
-    char *suffix = lau->netns_suffix ?: "";
-    int rc = snprintf(child->netns_name, sizeof(child->netns_name), "%s%s", child->name, suffix);
-    if (rc < 0) {
-        return log_errno_rf("genname %s failed", child->name);
-    }
-    if ((size_t) rc >= sizeof(child->netns_name)) {
-        return log_error_rf("genname %s no space", child->name);
-    }
+    int rc = lau_child_set_netns(child, child->name, lau->netns_suffix);
+    if (rc) return rc;
 
     // generate path e,g "/var/run/netns/name-ns"
     child->netns_path = gen_path(lau->netns_dir, child->netns_name);
-    if (!child->netns_path) {
-        return log_errno_rf("genpath %s failed", child->netns_name);
-    }
+    if (!child->netns_path) return -1;
 
     // bind mount path
     child->netns_fd = mount_netns(child->netns_path);
-    if (child->netns_fd == -1) {
-        return log_error_rf("mount_netns %s failed", child->netns_name);
-    }
+    if (child->netns_fd == -1) return -1;
     child->netns_mounted = 1;
 
     log_info("+", "Created network namespace: %s", child->netns_name);
@@ -426,43 +366,27 @@ static int create_netns(struct lau_ctx *lau, struct lau_child *child)
 }
 
 // load cmd file from host into container filesystem
-static int load_cmd(struct lau_ctx *lau, struct lau_child *child)
+static int lau_load_cmd(struct lau_ctx *lau, struct lau_child *child)
 {
     if (verbose) {
         log_info("LOG", "Launcher load-cmd (name=%s, cmd=%s dst=%s)", 
             child->name, child->cmd_path,  child->exec_path);
     }
 
-    int rc = 1;
-    char *src_path, *dst_path, *dst_dir;
-    src_path = dst_path = dst_dir = NULL;
+    int rc = -1;
 
-    // Get absoulte cmd-path
+    // Get absolute cmd-path
     char *cmd_path = child->cmd_path;
-    if (!cmd_path) {
-        return log_error_rf("copy-cmd %s missing cmd_path", child->name);
-    }
+    if (!cmd_path) return log_error_rf("copy-cmd %s missing cmd_path", child->name);
     if (*cmd_path != '/') {
-        // need full path
-        src_path = gen_path(lau->src_dir, child->cmd_path);
-        if (!src_path) goto done;
-        cmd_path = src_path;
+        cmd_path = gen_path(lau->src_dir, child->cmd_path);
+        if (!cmd_path) return rc;
     }
 
     // Build dst-path - storedir/child/rootfs/exec_path
-    dst_path = gen_path(child_get_rootfs(child), child->exec_path);
+    char *dst_path = gen_path(child_get_rootfs(child), child->exec_path);
     if (!dst_path) goto done;
-
-    // need a copy of dst_path to parse
-    dst_dir = strdup(dst_path);
-    if (!dst_dir) {
-        log_errno("copy-cmd %s strdup dst_path failed", child->name);
-        goto done;
-    }
-    dst_dir = dirname(dst_dir);
-
-    // create dst_dir (mkdir -p dst_dir)
-    rc = create_path_nocopy(dst_dir, lau->dir_mode);
+    rc = create_path_for_file(dst_path, lau->dir_mode);
     if (rc) goto done;
 
     // mount or copy the file into container store-dir
@@ -480,62 +404,44 @@ static int load_cmd(struct lau_ctx *lau, struct lau_child *child)
     }
 
 done:
-    if (src_path) free(src_path);
-    if (dst_dir)  free(dst_dir);
+    if (cmd_path && cmd_path != child->cmd_path) free(cmd_path);
     if (dst_path) free(dst_path);
 
     return rc;
 }
 
-static int mount_overlay(struct lau_ctx *lau, struct lau_child *child)
+static int lau_mount_overlay(struct lau_ctx *lau, struct lau_child *child)
 {
     if (!lau->use_overlay) return 0;
 
     if (verbose) {
-        log_info("LOG", "Launcher mount-overlay (name=%s)", child->name);
+        log_info("LOG", "Launcher add-overlay (name=%s)", child->name);
     }
 
-    char *opts = NULL;
-    int rc = asprintf(&opts, 
-        "lowerdir=%s,upperdir=%s,workdir=%s", 
-        child->lower_path ?: lau->rootfs_dir,
-        child->upper_path, 
-        child->work_path
+    int rc = mount_overlay(child->rootfs_path, 
+        child->lowerdir ?: lau->rootfs_dir, 
+        child->upperdir, 
+        child->workdir,
+        child->name
     );
+    if (rc) return rc;
 
-    if (rc == -1) {
-        return log_errno_rf("mount overlayfs genopts failed");
-    }
+    child->overlay_mounted = 1;
 
-    rc = mount("overlay", child->rootfs_path, "overlay", 0, opts);
-    if (rc == -1) {
-        log_errno("mount overlayfs %s failed", child->rootfs_path);
-    }
-    else {
-        child->overlay_mounted = 1;
-    }
-
-    free(opts);
-
-    return rc;
+    return 0;
 }
 
-static int mount_rootfs(struct lau_ctx *lau, struct lau_child *child)
+// FIXME - overlay works but not this
+static int lau_mount_rootfs(struct lau_ctx *lau, struct lau_child *child)
 {
     if (!lau->use_subdirs) return 0;
     if (!lau->rootfs_dir) return 0;
     if (lau->use_overlay) return 0;
 
-    // TODO overlay works but not this ?
-    if (mount(lau->rootfs_dir, child->rootfs_path, NULL, MS_BIND, NULL) != 0) {
-        return log_errno_rf("mount bind rootfs %s to %s failed", lau->rootfs_dir, child->rootfs_path);
-    }
+    int rc = mount_rootfs(lau->rootfs_dir, child->rootfs_path);
+    if (rc) return rc;
+
     child->rootfs_mounted = 1;
-   
-    // make all furither moutns private
-    if (mount(NULL, child->rootfs_path, NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
-        return log_errno_rf("mount private %s failed", child->rootfs_path);
-    }
 
     if (verbose) {
         log_info("LOG", "Launcher mount-rootfs (name=%s rootfs=%s)", 
@@ -545,12 +451,12 @@ static int mount_rootfs(struct lau_ctx *lau, struct lau_child *child)
     return 0;
 }
 
-static int create_subdirs(struct lau_ctx *lau, struct lau_child *child)
+static int lau_create_subdirs(struct lau_ctx *lau, struct lau_child *child)
 {
     if (!lau->use_subdirs) return 0;
 
     // create store-dir/rootfs
-    child->rootfs_path = create_subdir(child->store_dir, "rootfs", 0755);
+    child->rootfs_path = create_subdir(child->store_dir, "rootfs", lau->dir_mode);
     if (!child->rootfs_path) return -1;
     child->rootfs_created = 1;
     child->use_subdir = 1;
@@ -560,23 +466,23 @@ static int create_subdirs(struct lau_ctx *lau, struct lau_child *child)
 
     if (!lau->rootfs_dir) {
         // need store-dir/child-name/lower
-        child->lower_path = create_subdir(child->store_dir, "lower", 0755);
-        if (!child->lower_path) return -1;
+        child->lowerdir = create_subdir(child->store_dir, "lower", lau->dir_mode);
+        if (!child->lowerdir) return -1;
     }
 
     // store-dir/child-name/upper
-    child->upper_path = create_subdir(child->store_dir, "upper", 0755);
-    if (!child->upper_path) return -1;
+    child->upperdir = create_subdir(child->store_dir, "upper", lau->dir_mode);
+    if (!child->upperdir) return -1;
 
     // store-dir/child-name/work
-    child->work_path = create_subdir(child->store_dir, "work", 0755);
-    if (!child->work_path) return -1;
+    child->workdir = create_subdir(child->store_dir, "work", lau->dir_mode);
+    if (!child->workdir) return -1;
 
     return 0;
 }
 
 // create folder for container files
-static int create_storedir(struct lau_ctx *lau, struct lau_child *child)
+static int lau_create_storedir(struct lau_ctx *lau, struct lau_child *child)
 {
     char tmp[10];
     char *name;
@@ -601,11 +507,10 @@ static int create_storedir(struct lau_ctx *lau, struct lau_child *child)
     return 0;
 }
 
-
-static int check_rootfs_dir(struct lau_ctx *lau)
+static int lau_check_rootfs(struct lau_ctx *lau)
 {
     if (verbose) {
-        log_info("LOG", "Launcher check-rootfs-dir");
+        log_info("LOG", "Launcher check-rootfs");
     }
 
     if (!lau->rootfs_dir) return 0;
@@ -625,14 +530,12 @@ static int check_rootfs_dir(struct lau_ctx *lau)
     return 0;
 }
 
-// open host's default network namespace
 static int lau_open_host_netns(struct lau_ctx *lau)
 {
-    // fd must be for this process only (O_CLOEXEC)
-    lau->host_netns_fd = open(HOST_NETNS_PATH, O_RDONLY | O_CLOEXEC);
-    if (lau->host_netns_fd == -1) {
-        return log_errno_rf("open host_netns %s failed", HOST_NETNS_PATH);
-    }
+    int rc = open_host_netns();
+    if (rc < 0) return rc;
+
+    lau->host_netns_fd = rc;
 
     return 0;
 }
@@ -653,19 +556,19 @@ static int lau_setup_all(struct lau_ctx *lau)
     // create dirs
     RUN(create_dir(lau->netns_dir, lau->dir_mode, 1));
     RUN(create_dir(lau->store_dir, lau->dir_mode, 1));
-    RUN(create_dir(lau->run_dir, lau->dir_mode, 1));
+    RUN(create_dir(lau->run_dir,   lau->dir_mode, 1));
 
-    RUN(check_rootfs_dir(lau));
+    RUN(lau_check_rootfs(lau));
 
     for (int i = 0; i < lau->num_proc; i++) {
         struct lau_child *cnt = lau->procs[i];
-        RUN(create_storedir(lau, cnt));
-        RUN(create_subdirs(lau, cnt));
-        RUN(mount_rootfs(lau, cnt));
-        RUN(mount_overlay(lau, cnt));
-        RUN(load_cmd(lau, cnt));
-        RUN(check_network(lau, cnt));
-        RUN(create_netns(lau, cnt));
+        RUN(lau_create_storedir(lau, cnt));
+        RUN(lau_create_subdirs(lau, cnt));
+        RUN(lau_mount_rootfs(lau, cnt));
+        RUN(lau_mount_overlay(lau, cnt));
+        RUN(lau_load_cmd(lau, cnt));
+        RUN(lau_check_net(lau, cnt));
+        RUN(lau_create_netns(lau, cnt));
     }
 
     // all done
@@ -681,7 +584,7 @@ static struct lau_child *lau_add_child(struct lau_ctx *lau, struct lau_config *c
     struct lau_child *child = lau_child_create();
     if (!child) return NULL;
 
-    int rc = lau_child_load_cfg(child, cfg);
+    int rc = lau_child_cfg_load(child, cfg);
     if (rc) {
         lau_child_free(child);
         return NULL;
@@ -742,6 +645,7 @@ enum {
     SET_HELP = 0,
     SET_LOG,
     SET_START_ORDER,
+    SET_START_DELAY,
     SET_DROP_SUDO,
     SET_DROP_CAPS,
     SET_DROP_PRIVS,
@@ -766,7 +670,8 @@ static struct cmd_opt opts[] = {
 };
 
 static const char *examples[] = {
-    "startorder=1 startdelay=5",
+    "--startorder 1 --startdelay 5",
+    "--base-dir /home/alpine/test-lau --srcdir /home/alpine/bin",
     NULL
 };
 
@@ -799,10 +704,9 @@ static int lau_parse_argv(struct lau_ctx *lau, int argc, char *argv[])
 int lau_init(struct lau_ctx *lau)
 {
     // set defaults
-    lau->max_proc = MAX_CHILD;
+    lau->max_proc = ARR_LEN(lau->procs);
     lau->start_order = START_ORDER == 1 ? 1 : 0;
     lau->start_delay = START_DELAY;
-    lau->sync_all = lau->start_order ? lau_sync_inorder : lau_sync_parallel;
 
     // security
     lau->pid = getpid();
@@ -824,7 +728,7 @@ int lau_init(struct lau_ctx *lau)
     if (!lau->src_dir) return -1;
 
     lau->netns_suffix = strdup("-ns");
-    lau->cable_prefix = strdup("veth-");
+    lau->veth_prefix = strdup("veth-");
     lau->dir_mode = STANDARD_MODE;
 
     // get sudo
@@ -861,7 +765,7 @@ static void lau_destroy(struct lau_ctx *lau)
     if (lau->rootfs_dir) free(lau->rootfs_dir);
 
     if (lau->netns_suffix) free(lau->netns_suffix);
-    if (lau->cable_prefix) free(lau->cable_prefix);
+    if (lau->veth_prefix) free(lau->veth_prefix);
 
     free(lau);
 }

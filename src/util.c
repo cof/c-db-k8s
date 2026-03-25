@@ -102,6 +102,25 @@ char *int_tostr(int val)
     return itoa(str, sizeof(bufs[0][0]), val);
 }
 
+int gen_str(char *buf, size_t len, const char *fmt, ...)
+{
+    va_list args;
+
+    va_start(args, fmt);
+    int rc = vsnprintf(buf, len, fmt, args);
+    va_end(args);
+
+    if (rc < 0) {
+        return log_errno_rf("gen-str printf failed");
+    }
+
+    if ((size_t) rc >= len) {
+        return log_error_rf("gen-str no space");
+    }
+
+    return 0;
+}
+
 // generic setters
 int str_setval(char **str, const char *name, const char *val_str)
 {
@@ -196,7 +215,7 @@ void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examp
     printf("Options:\n");
 
     for (int i = 0; opts[i].name; i++)  {
-        printf(" --%-*s %s", w, opts[i].name, opts[i].desc);
+        printf(" %-*s %s", w, opts[i].name, opts[i].desc);
         if (opts[i].def_str) {
             printf(" (default=%s)", opts[i].def_str);
         }

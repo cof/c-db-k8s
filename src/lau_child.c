@@ -1,22 +1,11 @@
 /*
- *
+ * Container child code
  */
-#include <unistd.h>
 #include <errno.h>
 #include <sched.h>
-#include <limits.h>
-#include <time.h>
-#include <net/if.h>
-#include <fcntl.h>
-#include <grp.h>
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <sys/utsname.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
-#include <sys/sendfile.h>
 #include <sys/syscall.h> 
 
 #include "util.h"
@@ -154,14 +143,14 @@ void lau_child_free(struct lau_child *child)
     if (child->netns_path) free(child->netns_path);
     if (child->dst_path) free(child->dst_path);
 
-    if (child->lower_path) free(child->lower_path);
-    if (child->upper_path) free(child->upper_path);
-    if (child->work_path) free(child->work_path);
+    if (child->lowerdir) free(child->lowerdir);
+    if (child->upperdir) free(child->upperdir);
+    if (child->workdir) free(child->workdir);
 
     // all done
 }
 
-int lau_child_load_cfg(struct lau_child *child, struct lau_config *cfg)
+int lau_child_cfg_load(struct lau_child *child, struct lau_config *cfg)
 {
     if (!cfg->name) return log_error_rf("Missing container name");
     if (!cfg->cmd_path) return log_error_rf("Missing cmd_name");
@@ -179,10 +168,11 @@ int lau_child_load_cfg(struct lau_child *child, struct lau_config *cfg)
     return 0;
 }
 
-int lau_child_setup_network(struct lau_child *child)
+// bring child veth up (rename veth to eth0, add addr, set lo and eth0 up)
+int lau_child_net_setup(struct lau_child *child)
 {
     if (verbose) {
-        log_info("LOG", "launcher setup-network (name=%s ipaddr=%s" , child->name, child->ip_addr);
+        log_info("LOG", "lau setup-network (name=%s ipaddr=%s" , child->name, child->ip_addr);
     }
 
     RUN_CMD("nsenter -t %d -n ip link set %s name eth0", child->pid, child->veth_name);
@@ -193,6 +183,18 @@ int lau_child_setup_network(struct lau_child *child)
     child->need_network = 0;
 
     return 0;
+}
+
+int lau_child_set_netns(struct lau_child *child, const char *name, const char *suffix)
+{
+    if (!suffix) suffix = "";
+    return gen_str(child->netns_name, sizeof(child->netns_name), "%s%s", name, suffix);
+}
+
+int lau_child_set_veth(struct lau_child *child, const char *name, const char *prefix)
+{
+    if (!prefix) prefix = "";
+    return gen_str(child->veth_name, sizeof(child->veth_name), "%s%s", prefix, name);
 }
 
 // create pipe / stack / clone flags

@@ -242,6 +242,9 @@ char *slice_strdup(const struct str_slice str);
 char *itoa(char *buf, int len, int val);
 char *int_tostr(int val);
 
+int gen_str(char *buf, size_t len, const char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
+
 //  djb2a hash algorhtim
 static inline uint64_t dbj2a_hash(const void *key, const int klen)
 {
@@ -286,7 +289,7 @@ int opt_setint(void *state, size_t offset, const char *name, const char *val);
 
 static inline const char *get_basename(const char *name)
 {
-    if (!name) return "<null>";
+    if (!name) return NULL;
     const char *base = strrchr(name, '/');
     return base ? base + 1 : name;
 }
