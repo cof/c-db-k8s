@@ -10,7 +10,6 @@
  * - Kerrisk - TLPI - The Linux Progamming Interface
  *
  */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -571,6 +570,7 @@ int mount_file(const char *path)
     return 0;
 }
 
+// mount a binary file into container root filesystem - no file copy
 int mount_cmd(const char *host_path, const char *rootfs_path)
 {
     if (verbose) {
@@ -738,57 +738,67 @@ int setup_veth(const char *cont_name, const char *netns)
     return 0;
 }
 
-
 int set_identity(const char *name)
 {
     int rc = sethostname(name, strlen(name));
-
-    if (rc == -1)
+    if (rc == -1) {
         return log_errno_rf("sethostname %s failed", name);
+    }
 
     return 0;
 }
 
-// - make mount space private 
-// - create new mount point
-// - change dir to new mount point
-// - pivot_root to new mount point (stack old_root)
-// - change root dir to new mount
-// - change curret dir to new root
-// - umount/remove old root
+/*
+ * set_rootfs -child process switch to new root file system
+ *
+ * 7 steps:
+ * ========
+ * 1 - make mount space private 
+ * 2 - create new mount point
+ * 3 - change dir to new mount point
+ * 4 - pivot_root to new mount point (stack old_root)
+ * 5 - change root dir to new mount
+ * 6 - change curret dir to new root
+ * 7 - umount/remove old root
+ *
+ * Refs:
+ * - man 2 pivot_root
+ */
 int set_rootfs(const char *rootfs)
 {
-    // - make mount space private 
-    if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0)
-        return log_errno_rf("private mount failed");
+    // 1 - make mount space private 
+    int rc = mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL);
+    if (rc) return log_errno_rf("private mount failed");
 
-    // - create new mount point
-    if (mount(rootfs, rootfs, NULL, MS_BIND | MS_REC, NULL) != 0)
-        return log_errno_rf("bind mount roofs %s failed", rootfs);
+    // 2 - create new mount point
+    rc = mount(rootfs, rootfs, NULL, MS_BIND | MS_REC, NULL);
+    if (rc) return log_errno_rf("bind mount roofs %s failed", rootfs);
 
-    // - change dir to new mount point
-    if (chdir(rootfs) != 0)
-        return log_errno_rf("chdir rootfs %s", rootfs);
+    // 3 - change dir to new mount point
+    rc = chdir(rootfs);
+    if (rc) return log_errno_rf("chdir rootfs %s", rootfs);
 
-    // pivot_root to new mount point (stack old_root)
-    if (syscall(SYS_pivot_root, ".", ".") == -1)
-        return log_errno_rf("pivot_root failed");
+    // 4 - pivot_root to new mount point (stack old_root)
+    rc = syscall(SYS_pivot_root, ".", ".");
+    if (rc) return log_errno_rf("pivot_root failed");
 
-    // - change root dir to new mount  task_struct (root ptr)
-    if (chroot(".") != 0)
-        return log_errno_rf("chroot failed");
+    // 5 - change root dir to new mount  task_struct (root ptr)
+    rc = chroot(".");
+    if (rc) return log_errno_rf("chroot failed");
 
-    // - change curret dir to new root - task_struct (cwd ptr)
-    if (chdir("/") != 0)
-        return log_errno_rf("chdir to / failed");
+    // 6 - change curret dir to new root - task_struct (cwd ptr)
+    rc = chdir("/");
+    if (rc) return log_errno_rf("chdir to / failed");
 
-    if (umount2("/", MNT_DETACH) != 0)
-        return log_errno_rf("unmount2 / failed");
+    // 7 - remove/discard old root
+    rc = umount2("/", MNT_DETACH);
+    if (rc) return log_errno_rf("unmount2 / failed");
 
     // all done
     return 0;
 }
 
+// child process - create new /proc
 int set_proc(void)
 {
     // new PID namespace - create new /proc
@@ -803,7 +813,7 @@ int set_proc(void)
     return 0; 
 }
 
-// bring up child containers lo,eth0 and ip address
+// child process - bring up container network - lo, eth0 and ip addr
 int create_network(const char *veth_name, const char *ip_addr)
 {
     RUN_CMD("ip link set %s name eth0", veth_name); 
@@ -814,12 +824,12 @@ int create_network(const char *veth_name, const char *ip_addr)
     return 0;
 }
 
-
 // security
 int drop_bounding_set(const char *name)
 {
     for (int i = 0; i <= 63; i++) { 
-        if (prctl(PR_CAPBSET_DROP, i, 0, 0, 0) == -1) {
+        int rc = prctl(PR_CAPBSET_DROP, i, 0, 0, 0);
+        if (rc == -1) {
             if (errno == EINVAL) break; 
             if (errno == EPERM) {
                 return log_errno_rf("drop-boundin_set failed for container %s", name);
@@ -864,7 +874,8 @@ int drop_sudo(const char *name, uid_t uid, uid_t gid)
 
 int drop_new_privs(const char *name)
 {
-    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+    int rc = prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+    if (rc != 0) {
         return log_errno_rf("prctl set-nonnew_privs failed for container %s", name);
     }
 
@@ -873,6 +884,8 @@ int drop_new_privs(const char *name)
 
 /* 
  * Apply syscall security filters
+ *
+ * TODO add predefined lists
  *
  * Refs:
  * - man 2 seccomp and code example

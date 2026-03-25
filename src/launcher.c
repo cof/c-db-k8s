@@ -336,7 +336,7 @@ static int lau_link_veths(struct lau_ctx *lau, struct lau_child *x, struct lau_c
 
 }
 
-// check if client add network  when cloned
+// check if client must add network when cloned
 static int lau_check_net(struct lau_ctx *lau, struct lau_child *child)
 {
     if (child->ip_addr && lau->child_add_ip) { 
@@ -346,6 +346,7 @@ static int lau_check_net(struct lau_ctx *lau, struct lau_child *child)
     return 0;
 }
 
+// create a netns for container - note we dont use "ip netns add"
 static int lau_create_netns(struct lau_ctx *lau, struct lau_child *child)
 {
     // generate name e.g "name-ns"
