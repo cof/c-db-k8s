@@ -216,7 +216,7 @@ struct simple_client *client_create(int fd, struct sockaddr_in6 *addr)
     }
     memset(client, 0,  sizeof(*client));
 
-    sock_init(&client->sock, fd, addr, INIT_BUF_SIZE, MIN_BUF_SIZE, MAX_BUF_SIZE);
+    sock_init(&client->sock, fd, addr, SOCK_INIT_BUFSIZE, SOCK_MIN_BUFSIZE, SOCK_MAX_BUFSIZE);
 
     list_init(&client->node);
 

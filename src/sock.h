@@ -1,8 +1,8 @@
 /*
  * A simple socket layer
  */
-#ifndef __SOCK_H__
-#define __SOCK_H__
+#ifndef _SOCK_H_
+#define _SOCK_H_
 
 #include "rwbuf.h"
 

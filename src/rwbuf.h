@@ -1,8 +1,8 @@
 /* 
  * read write buffer api
  */
-#ifndef __RWBUF_H__
-#define __RWBUF_H__
+#ifndef _RWBUF_H_
+#define _RWBUF_H_
 
 #include <sys/uio.h>
 

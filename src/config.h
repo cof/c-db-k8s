@@ -1,13 +1,14 @@
-#ifndef __CONFIG_H__
-#define __CONFIG_H__
+#ifndef _CONFIG_H_
+#define _CONFIG_H_
 
 // common config
 #define TCP_PORT_STR "6379"
 
-// socket limits
 #define MAX_LINE 256
-#define INIT_BUF_SIZE 4096
-#define MIN_BUF_SIZE (MAX_LINE * 2)
-#define MAX_BUF_SIZE 8192
+
+// socket limits
+#define SOCK_INIT_BUFSIZE 4096
+#define SOCK_MIN_BUFSIZE (MAX_LINE * 2)
+#define SOCK_MAX_BUFSIZE 8192
 
 #endif

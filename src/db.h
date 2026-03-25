@@ -10,8 +10,8 @@
  * db_del  - delete key e.g    -> rc = db_del(key)
  *
  */
-#ifndef __DB_H__
-#define __DB_H__
+#ifndef _DB_H_
+#define _DB_H_
 
 #define DB_FAIL   -1
 #define DB_REINIT -2
@@ -23,6 +23,5 @@ void db_deinit(void);
 int db_set(struct str_slice key, struct str_slice val);
 struct str_slice db_get(struct str_slice key);
 int db_del(struct str_slice key);
-
 
 #endif
