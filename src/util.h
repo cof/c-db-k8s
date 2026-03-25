@@ -279,14 +279,6 @@ struct simple_sig {
 
 int setup_signals(struct simple_sig *sig);
 
-// generic setters
-int str_setval(char **str, const char *name, const char *val_str);
-int int_setval(int *ival, const char *name, const char *val_str);
-
-// cmd-line parsing
-int opt_setstr(void *state, size_t offset, const char *name, const char *val);
-int opt_setint(void *state, size_t offset, const char *name, const char *val);
-
 static inline const char *get_basename(const char *name)
 {
     if (!name) return NULL;
@@ -294,36 +286,41 @@ static inline const char *get_basename(const char *name)
     return base ? base + 1 : name;
 }
 
+// generic setters
+int str_setval(char **str, const char *name, const char *val_str);
+int int_setval(int *ival, const char *name, const char *val_str);
+
+// cmd-line parsing
 #define OPT_NOARG  0
 #define OPT_REQARG 1
 #define OPT_OPTARG 2
 
-#define OPT_STR(name, desc, def, type, field) \
-   { name, desc, def, 1, offsetof(type, field), opt_setstr }
-
-#define OPT_INT(name, desc, def, type, field) \
-    { name, desc, def, 1, offsetof(type, field), opt_setint }
-
-#define OPT_BOOL(name, desc, def, mask, setter) \
-    { name, desc, def, 1, mask, setter }
-
-#define OPT_FLAG(name, desc, mask, setter) \
-    { name, desc, NULL, 0, mask, setter }
-
-#define OPT_GEN(name, desc, def, has, code, setter) \
-    { name, desc, def, has, code, setter }
-
+#define OPT_EOF     -2
+#define OPT_UNSUPP  -3
+#define OPT_MISSVAL -4
 
 struct cmd_opt {
     const char *name;
     const char *desc;
     const char *def_str;
     int has_arg;  // 0=none, 1=requried, 2=optional
-    size_t offset;
-    int (*setter)(void *state, size_t data, const char *name, const char *val);
 };
 
-int parse_argv(int argc, char *argv[], const struct cmd_opt opts[], void *state);
+struct cmd_argv {
+    int argc;
+    char **argv;
+    struct cmd_opt *opts;
+    int argv_idx;
+    int opt_idx;
+    int val_idx;
+    char *name;
+    char *value;
+};
+
+int cmd_argv_next(struct cmd_argv *parse);
+int opt_setstr(char **str, struct cmd_argv *parse);
+int opt_setint(int *iptr, struct cmd_argv *parse);
+
 void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[]);
 
 #endif

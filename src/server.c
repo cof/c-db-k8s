@@ -482,17 +482,18 @@ static int setup_database(struct simple_server *serv)
 }
 
 /* cmd-line */
-enum { SET_HELP = 0, SET_LOG, SET_ARGV };
-static int set_flag(void *arg, size_t flag, const char *name, const char *val);
 
-static struct cmd_opt opts[] = {
-    OPT_FLAG("--help",    "This help", SET_HELP, set_flag),
-    OPT_STR("--hostname", "hostname to listen on", 0, struct simple_server, hostname),
-    OPT_STR("--port",     "port to listen on", TCP_PORT_STR, struct simple_server, port),
-    OPT_STR("--database", "Path to database file", 0, struct simple_server, database),
-    OPT_FLAG("--log",     "log request/response", SET_LOG,  set_flag),
-    OPT_FLAG("--argv",    "Dump argv to stdout",  SET_ARGV, set_flag),
-    { NULL } ,
+enum { opt_help, opt_host, opt_port, opt_dbase, opt_log, opt_argv };
+
+struct cmd_opt opts[] = {
+    // name, desc, def, has_arg
+    { "--help",    "This help",              0,    0  },
+    { "--hostname", "hostname to listen on", 0,    1  },
+    { "--port",     "port to listen on",     SERV_PORT_STR, 1  },
+    { "--database", "Path to database file", 0,        1  },
+    { "--log",      "log request/response",  0,        0  },
+    { "--argv",     "Dump argv to stdout",   0,        0  },
+    { NULL }
 };
 
 static const char *examples[] = {
@@ -500,25 +501,25 @@ static const char *examples[] = {
     NULL
 };
 
-static int set_flag(void *arg, size_t flag, const char *name, const char *val)
-{
-    struct simple_server *serv = arg;
-    (void) name;
-    (void) val;
-
-    switch(flag) {
-    case SET_HELP: print_usage(serv->prog_name, opts, examples); exit(0);
-    case SET_LOG: return serv->log_line = 1, 0;
-    default: return -1;
-    }
-}
-
 // process cmd-line options
 static int server_parse_argv(struct simple_server *serv, int argc, char *argv[])
 {
-    serv->prog_name = argv[0];
-    int rc = parse_argv(argc, argv, opts, serv);
-    return rc >= 0 ? 0 : -1;
+    struct cmd_argv parser = { argc, argv, opts };
+    int rc;
+
+    while ( (rc = cmd_argv_next(&parser)) >= 0) {
+        switch(rc) {
+        case opt_help:  print_usage(argv[0], opts, examples); exit(0);
+        case opt_host:  rc = opt_setstr(&serv->hostname, &parser); break;
+        case opt_port:  rc = opt_setstr(&serv->port, &parser); break;
+        case opt_dbase: rc = opt_setstr(&serv->database, &parser); break;
+        case opt_log:   serv->log_line = 1; break;
+        case opt_argv:  log_argv("LOG", argc, argv); break;
+        }
+        if (rc < 0) break;
+    }
+
+    return rc == OPT_EOF ? 0 : -1;
 }
 
 static void server_free(struct simple_server *server)
@@ -559,9 +560,9 @@ static int server_init(struct simple_server *server)
     server->pid = getpid();
 
     // set defaults
-    server->port = strdup(TCP_PORT_STR);
+    server->port = strdup(SERV_PORT_STR);
     if (!server->port) {
-        return log_errno_rf("strdup %s", TCP_PORT_STR);
+        return log_errno_rf("strdup %s", SERV_PORT_STR);
     }
 
     return 0;

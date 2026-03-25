@@ -644,32 +644,37 @@ static int lau_apply_cfg(struct lau_ctx *lau)
     return 0;
 }
 
-/* cmd-line */
+/* cmd-line */ 
+// TODO use xmacros
 enum {
-    SET_HELP = 0,
-    SET_LOG,
-    SET_START_ORDER,
-    SET_START_DELAY,
-    SET_DROP_SUDO,
-    SET_DROP_CAPS,
-    SET_DROP_PRIVS,
-    SET_USE_SECCOMP
+    opt_help,
+    opt_log,
+    opt_base_dir,
+    opt_src_dir,
+    opt_netns_dir,
+    opt_rootfs_dir,
+    opt_start_order,
+    opt_start_delay,
+    opt_drop_sudo,
+    opt_drop_caps,
+    opt_drop_privs,
+    opt_use_seccomp
 };
-static int set_flag(void *arg, size_t flag, const char *name, const char *val);
 
 static struct cmd_opt opts[] = {
-    OPT_FLAG("--help", "This help", SET_HELP, set_flag), 
-    OPT_FLAG("--log", "debug mode", SET_LOG,  set_flag),
-    OPT_STR("--base-dir",   "Path for all run-time state", "cwd", struct lau_ctx, base_dir),
-    OPT_STR("--src-dir",    "Path where cmd binarys live", "cwd", struct lau_ctx, src_dir),
-    OPT_STR("--netns-dir",  "Network namespace dir", 0,  struct lau_ctx, base_dir),
-    OPT_STR("--rootfs-dir", "Folder to mount into container using OverlayFS", 0, struct lau_ctx, rootfs_dir),
-    OPT_BOOL("--start-order", "Start order (0=sequential,1=parallel)", STR(START_ORDER), SET_START_ORDER, set_flag),
-    OPT_INT("--start-delay", "Start delay order in secs", STR(START_DELAY), struct lau_ctx, start_delay),
-    OPT_BOOL("--drop-sudo",  "Drop sudo privilge", STR(DROP_SUDO), SET_DROP_SUDO, set_flag),
-    OPT_BOOL("--drop-caps",  "Drop capabilities",  STR(DROP_CAPS), SET_DROP_CAPS, set_flag),
-    OPT_BOOL("--drop-privs", "Dont SET_NO_NEW_PRIVS", STR(DROP_PRIVS),  SET_DROP_PRIVS, set_flag),
-    OPT_BOOL("--use-seccomp", "Use seccomp filters",  STR(USE_SECCOMP), SET_USE_SECCOMP, set_flag),
+    // name, desc, def, has_arg
+    { "--help", "This help", 0, 0 },
+    { "--log", "debug mode",  0, 0 },
+    { "--base-dir",   "Path for all run-time state", "cwd", 1 },
+    { "--src-dir",    "Path where cmd binarys live", "cwd", 1 },
+    { "--netns-dir",  "Network namespace dir", 0,  1 },
+    { "--rootfs-dir", "Folder to mount into container using OverlayFS", 0, 1 },
+    { "--start-order", "Start order (0=sequential,1=parallel)", STR(START_ORDER), 1 },
+    { "--start-delay", "Start delay order in secs", STR(START_DELAY), 1 },
+    { "--drop-sudo",   "Drop sudo privilge",    STR(DROP_SUDO),   1 },
+    { "--drop-caps",   "Drop capabilities",     STR(DROP_CAPS),   1 },
+    { "--drop-privs",  "Dont SET_NO_NEW_PRIVS", STR(DROP_PRIVS),  1 },
+    { "--use-seccomp", "Use seccomp filters",   STR(USE_SECCOMP), 1 },
     { NULL }
 };
 
@@ -679,29 +684,31 @@ static const char *examples[] = {
     NULL
 };
 
-static int set_flag(void *arg, size_t flag, const char *name, const char *val)
-{
-    struct lau_ctx *lau = arg;
-    (void) name;
-    (void) val;
-
-    switch(flag) {
-    case SET_HELP: print_usage(lau->prog_name, opts, examples); exit(0);
-    case SET_LOG: return verbose = 1, 0;
-    case SET_START_ORDER: return lau->start_order = 1, 0;
-    case SET_DROP_SUDO: return lau->drop_sudo = 1, 0;
-    case SET_DROP_CAPS: return lau->drop_caps = 1, 0;
-    case SET_DROP_PRIVS: return lau->drop_privs = 1, 0;
-    case SET_USE_SECCOMP: return lau->use_seccomp = 1, 0;
-    default: return -1;
-    }
-}
-
 static int lau_parse_argv(struct lau_ctx *lau, int argc, char *argv[])
 {
-    lau->prog_name = argv[0];
-    int rc = parse_argv(argc, argv, opts, lau);
-    return rc >= 0 ? 0 : -1;
+    struct cmd_argv parser = { argc, argv, opts };
+    int rc;
+
+    while ( (rc = cmd_argv_next(&parser)) >= 0) {
+        switch(rc) {
+        case opt_help: print_usage(argv[0], opts, examples); exit(0);
+        case opt_log:  verbose = 1; break;
+        case opt_base_dir:    rc = opt_setstr(&lau->base_dir, &parser); break;
+        case opt_src_dir:     rc = opt_setstr(&lau->src_dir, &parser); break;
+        case opt_netns_dir:   rc = opt_setstr(&lau->netns_dir, &parser); break;
+        case opt_rootfs_dir:  rc = opt_setstr(&lau->rootfs_dir, &parser); break;
+        case opt_start_order: lau->start_order = atoi(parser.value) == 1; break;
+        case opt_start_delay: rc = opt_setint(&lau->start_delay, &parser); break;
+        case opt_drop_sudo:   lau->drop_sudo = atoi(parser.value) == 1; break;
+        case opt_drop_caps:   lau->drop_caps = atoi(parser.value) == 1; break;
+        case opt_drop_privs:  lau->drop_privs = atoi(parser.value) == 1; break;
+        case opt_use_seccomp: lau->use_seccomp = atoi(parser.value) == 1; break;
+        }
+        if (rc < 0) break;
+    }
+
+    return rc == OPT_EOF ? 0 : -1;
+
 }
 
 // set defaults

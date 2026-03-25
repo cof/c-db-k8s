@@ -166,14 +166,15 @@ static void my_conn_prompt(struct my_conn *conn)
 
 
 /* cmd-line */
-enum { SET_HELP = 0, SET_HOST, SET_PORT, SET_LOG };
-static int set_opt(void *arg, size_t flag, const char *name, const char *val);
+enum { opt_help, opt_host, opt_port, opt_log, opt_argv };
 
 static struct cmd_opt opts[] = {
-    OPT_GEN("--help",     "This help", 0, 0, SET_HELP, set_opt),
-    OPT_GEN("--hostname", "hostname to listen on", 0, 1, SET_HOST, set_opt),
-    OPT_GEN("--port",     "port to listen on", TCP_PORT_STR, 1, SET_PORT, set_opt),
-    OPT_GEN("--log",      "log request/response", 0, 0,  SET_LOG, set_opt),
+    // name, desc, def, has_arg
+    { "--help",     "This help", 0, 0 },
+    { "--hostname", "hostname to connect to", 0, 1 },
+    { "--port",     "port to listen on", SERV_PORT_STR, 1 },
+    { "--log",      "log request/response", 0, 0 },
+    { "--argv",     "Dump argv to stdout", 0,  0 },
     { NULL }
 };
 
@@ -182,57 +183,43 @@ static const char *examples[] = {
     NULL
 };
 
-static int set_opt(void *arg, size_t flag, const char *name, const char *val)
-{
-    struct client_config *cfg = arg;
-    (void) name;
-    (void) val;
-
-    switch(flag) {
-    case SET_HELP: print_usage(cfg->prog_name, opts, examples); exit(0);
-    case SET_HOST: cfg->hostname = val; break;
-    case SET_PORT: cfg->port = val; break;
-    case SET_LOG:  cfg->log = 1; break;
-    default: return -1;
-    }
-
-    return 0;
-}
-
 int main(int argc, char *argv[])
 {
-    struct client_config {
-        const char *prog_name;
-        const char *hostname;
-        const char *port;
-        int log;
-    } cfg = {
-        .prog_name = argv[0],
-        .hostname = NULL,
-        .port = TCP_PORT_STR,
-        .log = 0
-    };
-    struct simple_sig sig;
+    const char *hostname = NULL;
+    const char *port = SERV_PORT_STR;
+    int log = 0;
 
     // process cmd-line options
-    int rc = parse_argv(argc, argv, opts, &cfg);
-    if (!rc) return -1;
-    if (!cfg.hostname) fatal_error("Missing hostname");
+    int rc;
+    struct cmd_argv parser = { argc, argv, opts };
+    while ( (rc = cmd_argv_next(&parser)) >= 0) {
+        switch(rc) {
+        case opt_help: print_usage(argv[0], opts, examples); exit(0);
+        case opt_host: hostname = parser.value; break;
+        case opt_port: port = parser.value; break;
+        case opt_log:  log = 1; break;
+        case opt_argv: log_argv("LOG", argc, argv); break;
+        }
+    }
+    if (rc != OPT_EOF) return -1;
+    if (!hostname) fatal_error("Missing hostname");
 
+    // signals
+    struct simple_sig sig;
     rc = setup_signals(&sig);
     if (rc) fatal_error("setup signals");
 
     // server connect
     struct my_conn serv = MY_CONN_INIT(serv, -1, -1);
-    rc = sock_connect_hostport(&serv.socks[0], cfg.hostname, cfg.port);
+    rc = sock_connect_hostport(&serv.socks[0], hostname, port);
     if (rc) fatal_error("No connection");
     serv.sock_send = serv.sock_recv = serv.socks;
 
     // at this stage safe to proceed
     log_info("+", "Connectivity test: OK");
 
-    const char *log_req = cfg.log ? "send req" : NULL;
-    const char *log_rsp = cfg.log ? "recv rsp" : NULL;
+    const char *log_req = log ? "send req" : NULL;
+    const char *log_rsp = log ? "recv rsp" : NULL;
         
     // setup stdout,stdin for send,recv
     struct my_conn user = MY_CONN_INIT(user, STDOUT_FILENO, STDIN_FILENO);
