@@ -336,6 +336,7 @@ static int lau_link_veths(struct lau_ctx *lau, struct lau_child *x, struct lau_c
 
 }
 
+// check if client add network  when cloned
 static int lau_check_net(struct lau_ctx *lau, struct lau_child *child)
 {
     if (child->ip_addr && lau->child_add_ip) { 
@@ -496,7 +497,9 @@ static int lau_create_storedir(struct lau_ctx *lau, struct lau_child *child)
     if (!child->store_dir) {
         return log_errno_rf("create_storedir %s genpath failed", name);
     }
-    RUN(create_dir(child->store_dir, lau->dir_mode, 1));
+    int rc = create_dir(child->store_dir, lau->dir_mode, 1);
+    if (rc) return rc;
+
     child->storedir_created = 1;
 
     if (verbose) {
@@ -723,26 +726,30 @@ int lau_init(struct lau_ctx *lau)
     // setup default dirs
     lau->base_dir = gen_path(lau->cur_dir, BASE_DIR);
     if (!lau->base_dir) return -1;
-
-    str_setval(&lau->src_dir, "cur_dir", lau->cur_dir);
+    str_setval(&lau->src_dir, "cur-dir", lau->cur_dir);
     if (!lau->src_dir) return -1;
+    str_setval(&lau->netns_suffix, "netns-suffix", "-ns");
+    if (!&lau->netns_suffix) return -1;
+    str_setval(&lau->veth_prefix, "veth-prefix", "veth-");
+    if (!&lau->veth_prefix) return -1;
 
-    lau->netns_suffix = strdup("-ns");
-    lau->veth_prefix = strdup("veth-");
     lau->dir_mode = STANDARD_MODE;
+    lau->euid = geteuid();
 
     // get sudo
     char *env;
     if ((env = getenv("SUDO_USER")) != NULL) {
-       lau->sudo_user = strdup(env);
+        str_setval(&lau->sudo_user, "sudo_user", env);
+        if (!lau->sudo_user) return -1;
     }
     if ((env = getenv("SUDO_UID")) != NULL) {
-        lau->sudo_uid = atoi(env);
+        int_setval(&lau->sudo_uid, "sudo_uid", env);
+        if (!lau->sudo_uid) return -1;
     }
     if ((env = getenv("SUDO_GID")) != NULL) {
-        lau->sudo_gid = atoi(env);
+        int_setval(&lau->sudo_gid, "sudo_gid", env);
+        if (!lau->sudo_gid) return -1;
     }
-    lau->euid = geteuid();
 
     return 0;
 }
