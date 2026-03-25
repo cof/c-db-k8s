@@ -43,59 +43,25 @@ static int setup_priv(struct lau_child *child)
 
 static int child_send_ready(struct lau_child *child)
 {
-    if (verbose)  {
-        log_info("LOG", "Container (name=%s pid=%d) send-ready", child->name, child->pid);
-    }
-
-    // wake up parent
-    while (write(child->ready_write_fd, "!", 1) == -1)  {
-        if (errno == EINTR) {
-            if (!child->sig->run) return LAU_RECV_INTR;
-            continue;
-        }
-        return log_errno_rf("write send-ready for %s failed", child->name);
-    }
-
-    // close pipe ends we no longer need
-    if (close_fd(&child->ready_write_fd) != 0) {
-        return log_errno_rf("close send-ready for %s failed", child->name);
-    }
-
-    return 0;;
+    return sync_wrpipe(
+        &child->ready_write_fd, child->sig, 
+        "Container", "send-ready", child->name, child->pid
+    );
 }
 
 static int child_wait_go(struct lau_child *child)
 {
     // close the pipe ends we don't need
-    if (close_fd(&child->go_write_fd) != 0) {
-        return log_errno_rf("close go_write for %s failed", child->name);
-    }
+    int rc = sync_rdwr_close(&child->ready_read_fd, &child->go_write_fd,
+        "Container", "wait-go", child->name, child->pid
+    );
+    if (rc) return rc;
 
-    if (close_fd(&child->ready_read_fd) != 0) {
-        return log_errno_rf("close ready_read for %s failed", child->name);
-    }
+    rc = sync_rdpipe(&child->go_read_fd, child->sig,
+        "Container", "wait-go", child->name, child->pid
+    );
 
-    // wait for parent
-    ssize_t nr;
-    char ch;
-    while ((nr = read(child->go_read_fd, &ch, 1)) == -1) {
-        if (errno == EINTR) {
-            if (!child->sig->run) return LAU_RECV_INTR;
-            continue;
-        }
-        return log_errno_rf("child %s read wait-go failed", child->name);
-    }
-
-    // release pipe
-    if (close_fd(&child->go_read_fd) != 0) {
-        return log_errno_rf("close send-go for %s failed", child->name);
-    }
-
-    if (verbose) {
-        log_info("LOG", "Container (name=%s pid=%d) recv-go", child->name, child->pid);
-    }
-
-    return 0;;
+    return rc;
 }
 
 struct lau_child *lau_child_create(void)
@@ -228,7 +194,6 @@ int lau_child_setup_network(struct lau_child *child)
 
     return 0;
 }
-
 
 // create pipe / stack / clone flags
 int lau_child_prep(struct lau_child *child)

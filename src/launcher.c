@@ -120,22 +120,26 @@ static int lau_check_reaped(struct lau_ctx *lau, struct lau_child *child, int st
     child->run = 0;
     lau->num_run--;
 
-    int rc = LAU_CHILD_ERR;
-
+    // check reason why child was reaped
+    int rc = LAU_ERR;
     char why[40];
     if (WIFEXITED(child->status)) {
+        // child exited
         int exit_code = WEXITSTATUS(child->status);
         snprintf(why, sizeof(why), "exit %d", exit_code);
         if (exit_code == 0) {
+            // child exited okay
             log_info("+", "Container '%s' exit ok (pid=%d why=%s)", child->name, child->pid, why);
-            return LAU_CHILD_OK;
+            return LAU_EXIT_OK;
         }
     }
     else if (WIFSIGNALED(child->status)) {
+        // child got signal
         int sig = WTERMSIG(child->status);
         snprintf(why, sizeof(why), "signal %d (%s)", sig, strsignal(sig));
     }
     else {
+        // unknown reason
         snprintf(why, sizeof(why), "unknown 0x%08x", child->status);
     }
 
@@ -155,16 +159,17 @@ static struct lau_child *lau_find_child(struct lau_ctx *lau, pid_t pid)
     return NULL;
 }
 
-// wait for intr or child exits
+// wait for intr or a child exit
 static int lau_wait_pids(struct lau_ctx *lau)
 {
     int status = 0;
 
     while (lau->sig.run && lau->num_run > 0) {
+        // wait for child status
         pid_t pid = waitpid(-1, &status, 0); 
         if (pid == 0) continue;
+        // check if waitpid failed
         if (pid == -1) {
-            // waitpid failed
             if (errno == EINTR) continue;
             if (errno == ECHILD) {
                 // no more children - stop now
@@ -176,6 +181,7 @@ static int lau_wait_pids(struct lau_ctx *lau)
             }
             return log_errno_rf("waitpid failed");;
         }
+        // update child status
         struct lau_child *child = lau_find_child(lau, pid);
         if (!child) {
             log_info("LOG", "waitpid reaped unknown pid %d", pid);
@@ -186,88 +192,26 @@ static int lau_wait_pids(struct lau_ctx *lau)
         if (status != 0) break;
     }
 
-    return status == LAU_CHILD_OK ? 0 : -1;
+    // success only if allchild exit 0
+    return status == LAU_EXIT_OK ? 0 : -1;
 }
 
 /* sync all code */
 
-// check child is still running
-static int lau_check_running(struct lau_ctx *lau, struct lau_child *child)
+static int lau_child_send_go(struct lau_ctx *lau, struct lau_child *child)
 {
-    int status;
-
-    pid_t res = waitpid(child->pid, &status, WNOHANG);
-    if (res == -1) {
-        return log_errno_rf("waipid for %s failed", child->name);
-    }
-    if (res == child->pid && lau_check_reaped(lau, child, status) != 0) {
-        return -1;
-    }
-
-    return 0;
+    return sync_wrpipe(
+        &child->go_write_fd, &lau->sig, 
+        "lau", "send-go", child->name, child->pid
+    );
 }
 
-
-// tell child it can go
-static int lau_send_go(struct lau_ctx *lau, struct lau_child *child)
+static int lau_child_wait_ready(struct lau_ctx *lau, struct lau_child *child)
 {
-    if (lau_check_running(lau, child) != 0) {
-        return -1;
-    }
-
-    if (verbose) {
-        log_info("LOG", "Launcher (name=%s pid=%d) send-go", child->name, child->pid);
-    }
-
-    // wake up child
-    while (write(child->go_write_fd, "!", 1) == -1)  {
-        if (errno == EINTR) {
-            if (!lau->sig.run) return LAU_RECV_INTR;
-            continue;
-        }
-        return log_errno_rf("lau send-go %s failed", child->name);
-    }
-
-    // release pipe
-    if (close_fd(&child->go_write_fd) != 0) {
-        return log_errno_rf("close send-go for %s failed", child->name);
-    }
-
-    return 0;
-}
-
-// wait for child to become ready
-static int lau_wait_ready(struct lau_ctx *lau, struct lau_child *child)
-{
-    if (lau_check_running(lau, child) != 0) {
-        return -1;
-    }
-
-    if (verbose) {
-        log_info("LOG", "Launcher (name=%s pid=%d) wait-ready", child->name, child->pid);
-    }
-
-    // wait for child
-    ssize_t nr;
-    char ch;
-    while ((nr = read(child->ready_read_fd, &ch, 1)) == -1) {
-        if (errno == EINTR) {
-            if (!lau->sig.run) return LAU_RECV_INTR;
-            continue;
-        }
-        return log_errno_rf("lau wait-ready %s failed", child->name);
-    }
-
-    // relese pipe
-    if (close_fd(&child->ready_read_fd) != 0) {
-        return log_errno_rf("close wait-ready %s failed", child->name);
-    }
-
-    if (verbose) {
-        log_info("LOG", "Launcher (name=%s pid=%d) recv-ready", child->name, child->pid);
-    }
-
-    return 0;
+    return sync_rdpipe(
+        &child->ready_read_fd, &lau->sig,
+        "lau", "wait-ready", child->name, child->pid
+    );
 }
 
 // sequential start - i.e. ensure DB server is up before client
@@ -279,9 +223,9 @@ static int lau_sync_inorder(struct lau_ctx *lau)
 
     for (int i = 0; i < lau->num_proc; i++) {
         struct lau_child *child = lau->procs[i];
-        int rc = lau_send_go(lau, child);
+        int rc = lau_child_send_go(lau, child);
         if (rc) return rc;
-        rc = lau_wait_ready(lau, child);
+        rc = lau_child_wait_ready(lau, child);
         if (rc) return rc;
         sleep(lau->start_delay);
     }
@@ -297,12 +241,12 @@ static int lau_sync_parallel(struct lau_ctx *lau)
     }
 
     for (int i = 0; i < lau->num_proc; i++) {
-        int rc = lau_send_go(lau, lau->procs[i]);
+        int rc = lau_child_send_go(lau, lau->procs[i]);
         if (rc) return rc;
     }
 
     for (int i = 0; i < lau->num_proc; i++) {
-        int rc = lau_wait_ready(lau, lau->procs[i]);
+        int rc = lau_child_wait_ready(lau, lau->procs[i]);
         if (rc) return rc;
     }
 
@@ -335,24 +279,22 @@ int lau_child_prerun(struct lau_ctx *lau, struct lau_child *child)
 int lau_child_postrun(struct lau_ctx *lau, struct lau_child *child)
 {
     int num_err = 0;
+    int rc;
 
-    if (child->netns_mounted && lau_restore_netns(lau)) {
-        num_err++;
+    if (child->netns_mounted) {
+        rc = lau_restore_netns(lau);
+        if (rc) num_err++;
     }
 
-    if (close_fd(&child->go_read_fd)) {
-        log_errno("close go_read_fd for %s failed", child->name);
-        num_err++;
-    }
-
-    if (close_fd(&child->ready_write_fd)) {
-        log_errno("close ready_write_fd for %s failed", child->name);
-        num_err++;
-    }
+    rc = sync_rdwr_close(&child->go_read_fd, &child->ready_write_fd,
+        "lau", "post-run", child->name, child->pid
+    );
+    if (rc) num_err++;
 
     // release overlay mount
     if (child->overlay_mounted) {
-        if (umount2(child->rootfs_path, MNT_DETACH) < 0 && errno != EINVAL) {
+        rc = umount2(child->rootfs_path, MNT_DETACH);
+        if (rc < 0 && errno != EINVAL) {
             log_errno("unmount overlay %s for %s failed", child->rootfs_path, child->name);
             num_err++;
         }
@@ -594,7 +536,6 @@ static int mount_rootfs(struct lau_ctx *lau, struct lau_child *child)
     if (mount(NULL, child->rootfs_path, NULL, MS_REC | MS_PRIVATE, NULL) != 0) {
         return log_errno_rf("mount private %s failed", child->rootfs_path);
     }
-
 
     if (verbose) {
         log_info("LOG", "Launcher mount-rootfs (name=%s rootfs=%s)", 

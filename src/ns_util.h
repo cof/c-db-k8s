@@ -1,14 +1,23 @@
 /*
- * Namespace util api for containers
+ * Namespace util api for lau containers
  */
 #ifndef _NS_UTIL_H_
 #define _NS_UTIL_H_
 
 #include <stdbool.h>
 
+// lau error codes
+#define LAU_EXIT_OK 1
+#define LAU_OK   0
+#define LAU_ERR  -1
+#define LAU_EOF  -2 // read 0 on pipe
+#define LAU_INTR -3 // intr
+#define LAU_PIPE -4 // sig pipe error
+
+#define STANDARD_MODE 0755
+
 #define NETNS_DIR "/var/run/netns"
 #define HOST_NETNS_PATH "/proc/self/ns/net"
-
 
 #define RUN_CMD(x, ...) do { \
     int rc = run_cmd(x,  ##__VA_ARGS__) ; \
@@ -21,7 +30,6 @@
 } while(0);
 
 
-#define STANDARD_MODE 0755
 
 static inline int is_reaped(int status)
 {
@@ -42,6 +50,22 @@ static inline int close_fd(int *fd)
 
 void shutdown_pid(int pid, int wait);
 
+// sync pipe api
+int sync_rdwr_close(int *rd_fd, int *wr_fd, 
+    const char *who, const char *what, const char *name, 
+    pid_t pid);
+
+int sync_rdpipe(int *fd, 
+    struct simple_sig *sig, 
+    const char *who, const char *what, const char *name, 
+    pid_t pid);
+
+int sync_wrpipe(int *fd, 
+    struct simple_sig *sig, 
+    const char *who, const char *what, const char *name,
+    pid_t pid);
+
+// system run cmd wrapper
 int run_cmd(const char *fmt, ...)
     __attribute__((format(printf, 1, 2)));
 

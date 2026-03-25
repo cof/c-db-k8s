@@ -5,11 +5,6 @@
 #ifndef _LAU_CHILD_
 #define _LAU_CHILD_
 
-// lau error codes
-#define LAU_RECV_INTR  1
-#define LAU_CHILD_OK   2
-#define LAU_CHILD_ERR -1
-
 struct lau_config {
     char *name;
     char *cmd_path;

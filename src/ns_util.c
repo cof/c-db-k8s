@@ -64,6 +64,93 @@ void shutdown_pid(int pid, int wait)
     }
 }
 
+int sync_rdwr_close(int *rd_fd, int *wr_fd,
+    const char *who, const char *what, const char *name, 
+    pid_t pid)
+{
+    if (close_fd(rd_fd) != 0) {
+        return log_errno_rf("%s close rd %s for child %s pid %d failed", who, what, name, pid);
+    }
+
+    if (close_fd(wr_fd) != 0) {
+        return log_errno_rf("%s close wr %s for child %s pid %d failed", who, what, name, pid);
+    }
+
+    return 0;
+}
+
+// read from sync pipe
+int sync_rdpipe(int *fd, 
+    struct simple_sig *sig, 
+    const char *who, const char *what, const char *name,
+    pid_t pid)
+{
+    if (verbose)  {
+        log_info("LOG", "%s read-now %s (name=%s pid=%d)", who, what, name, pid);
+    }
+
+    // wait for peer to write
+    ssize_t nr;
+    char ch;
+    while ((nr = read(*fd, &ch, 1)) == -1) {
+        if (errno == EINTR) {
+            if (!sig->run) return LAU_INTR;
+            continue;
+        }
+        return log_errno_rf("%s read %s failed for %s pid %d", who, what, name, pid);
+    }
+
+    // close our end
+    if (close_fd(fd) != 0) {
+        return log_errno_rf("%s close %s failed for %s pid %d", who, what, name, pid);
+    }
+
+    if (nr == 0) {
+        // peer gone ?
+        return log_error_re(LAU_EOF, "%s read %s eof for %s", who, what, name);
+    }
+
+    if (verbose) {
+        log_info("LOG", "%s read-ok %s (name=%s pid=%d)", who, what, name, pid);
+    }
+
+    return 0;
+}
+
+// write to sync pipe
+int sync_wrpipe(int *fd, 
+    struct simple_sig *sig, 
+    const char *who, const char *what, const char *name,
+    pid_t pid)
+{
+    if (verbose)  {
+        log_info("LOG", "%s write-now %s (name=%s pid=%d)", who, what, name, pid);
+    }
+
+    // wake up peer
+    while (write(*fd, "!", 1) == -1)  {
+        if (errno == EINTR) {
+            if (!sig->run) return LAU_INTR;
+            continue;
+        }
+        int ec = errno = EPIPE ? LAU_PIPE : LAU_ERR;
+        return log_errno_re(ec, "%s write %s  failed for %s", who, what, name);
+    }
+
+    // close our end
+    if (close_fd(fd) != 0) {
+        return log_errno_rf("%s close %s failed for %s", who, what, name);
+    }
+
+    if (verbose)  {
+        log_info("LOG", "%s write-ok %s (name=%s pid=%d)", who, what, name, pid);
+    }
+
+    // all done
+    return 0;
+}
+
+// system run cmd wrapper
 int run_cmd(const char *fmt, ...)
 {
     va_list args;
