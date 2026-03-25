@@ -74,6 +74,8 @@ struct lau_child *lau_child_create(void)
     return child;
 }
 
+// note we MUST clean up active mounts BEFORE we exit
+// either the child process does it or launcher process
 void lau_child_free(struct lau_child *child)
 {
     if (child->run && child->pid > 0) {
