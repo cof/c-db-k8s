@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <stdlib.h> 
 
-#include "config.h"
 #include "util.h"
 #include "log.h"
 #include "rwbuf.h"
@@ -107,7 +106,7 @@ int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf])
     return 0;
 }
 
-int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, int eof)
+int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32_t flags)
 {
     size_t   rlen = rwbuf_used(buf);
     uint8_t *rptr = rwbuf_rptr(buf);
@@ -116,7 +115,7 @@ int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, int eof)
 
     if (eol) {
         // found terminator
-        int llen = eol - rptr + 1;
+        size_t llen = eol - rptr + 1;
         char *str = (char *) rptr;
 
         // remove from buffer
@@ -128,7 +127,7 @@ int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, int eof)
         }
 
         // chop cr/lf - TODO remove this ?
-        int len = llen;
+        size_t len = llen;
         if (len && str[len - 1] == '\n') len--;
         if (len && str[len - 1] == '\r') len--;
         str[len] = '\0';
@@ -137,8 +136,9 @@ int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, int eof)
         line->ptr = str;
         line->len = len;
 
-        if (len > MAX_LINE) {
-            return log_error_rf("line too big - len %d > max %d", len, MAX_LINE);
+        if (len > max) {
+            if (flags & RWBUF_NOLOG) return -1;
+            return log_error_rf("line too big - len %zu > max %zu", len, max);
         }
 
         // line length + CRLF
@@ -146,11 +146,12 @@ int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, int eof)
     }
 
     // incomplete line
-    if (rlen > MAX_LINE) {
-        return log_error_rf("line too big - len %zu > max %d", rlen, MAX_LINE);
+    if (rlen > max) {
+        if (flags & RWBUF_NOLOG) return -1;
+        return log_error_rf("line too big - len %zu > max %zu", rlen, max);
     }
 
-    if (eof) {
+    if (flags & RWBUF_EOF) {
         // store line
         line->ptr = (char *) rptr;
         line->len = rlen;

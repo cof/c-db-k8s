@@ -3,18 +3,16 @@
  * Usage   : ./client --help
  * Example : ./client --hostname 127.0.0.1
  *
+ * Overview
+ * --------
+ * Implements a TCP wrapper or socket bridge between stdio/socket.
+ * Client acts as 4 way pipe reading lines from stdin, sending them to socket
+ * and reading lines from the socket and sending them to stdout.
+ *
+ *  stdin -> socket write (local to remote)
+ *  socket read -> stdout (remote to local)
+ * 
  */
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <string.h>
-#include <errno.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <signal.h>
-
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <netdb.h>
 #include <poll.h>
 
@@ -42,8 +40,8 @@ struct my_conn {
 
 #define MY_CONN_INIT(_conn, _rfd, _wfd) \
     { \
-      .socks[0] = SOCK_INIT(_rfd, 0, _conn.rdata, sizeof(_conn.rdata), _conn.wdata, sizeof(_conn.wdata)), \
-      .socks[1] = SOCK_INIT(_wfd, 0, _conn.rdata, sizeof(_conn.rdata), _conn.wdata, sizeof(_conn.wdata)), \
+      .socks[0] = SOCK_INIT(_rfd, MAX_LINE, 0, _conn.rdata, sizeof(_conn.rdata), _conn.wdata, sizeof(_conn.wdata)), \
+      .socks[1] = SOCK_INIT(_wfd, MAX_LINE, 0, _conn.rdata, sizeof(_conn.rdata), _conn.wdata, sizeof(_conn.wdata)), \
       .sock_send = &_conn.socks[0], \
       .sock_recv = &_conn.socks[1], \
       .poll_in  = -1, \
@@ -54,17 +52,13 @@ struct my_conn {
 
 static inline int my_conn_isbusy(struct my_conn *conn)
 {
-    return sock_isbusy(conn->sock_send);
+    return sock_isbusy(conn->sock_send) && !sock_mustclose(conn->sock_send);
 }
 
+// has read end finished
 static inline int my_conn_iseof(struct my_conn *conn)
 {
-    return sock_recveof(conn->sock_recv);
-}
-
-static inline int my_conn_isactive(struct my_conn *conn)
-{
-    return sock_isactive(conn->sock_recv) || sock_isactive(conn->sock_send);
+    return sock_rd_done(conn->sock_recv) || sock_mustclose(conn->sock_recv);
 }
 
 static void my_conn_pipe(struct my_conn *src, struct my_conn *dst, 
@@ -73,7 +67,7 @@ static void my_conn_pipe(struct my_conn *src, struct my_conn *dst,
     const char *log_line)
 {
     int read_eof = 0;
-    int rc = sock_read(src->sock_recv);
+    int rc = sock_recv(src->sock_recv);
     if (rc < 0) {
         // read error (SOCK_ERR|SOCK_CLOSED|SOCK_AGAIN)
         if (rc == SOCK_AGAIN) return;
@@ -92,7 +86,7 @@ static void my_conn_pipe(struct my_conn *src, struct my_conn *dst,
         if (log_line) {
             log_info("LOG", "%s: %.*s", log_line, SLICE(line));
         }
-        rc = sock_sendline(dst->sock_send, line);
+        rc = sock_send_line(dst->sock_send, line);
         if (rc < 0) {
             // write error
             fds[dst->poll_out].fd = -1;
@@ -110,7 +104,7 @@ static void my_conn_pipe(struct my_conn *src, struct my_conn *dst,
 
 static void my_conn_drain(struct my_conn *conn, struct pollfd *fds)
 {
-    int rc = sock_write(conn->sock_send);
+    int rc = sock_send(conn->sock_send);
     if (rc < 0) {
         // write error
         fds[conn->poll_out].fd = -1;
@@ -122,9 +116,6 @@ static void my_conn_drain(struct my_conn *conn, struct pollfd *fds)
 
 static int my_conn_stop(struct my_conn *user, struct my_conn *serv, struct pollfd *fds)
 {
-    if (!my_conn_isactive(user))  return 1;
-    if (!my_conn_isactive(serv)) return 1;
-
     if (sock_wr_done(serv->sock_send)) {
         // nothing left to write
         int rc = sock_sendfin(serv->sock_send);
@@ -147,6 +138,7 @@ static int my_conn_stop(struct my_conn *user, struct my_conn *serv, struct pollf
         ingress_done = 1;
     }
 
+    // all done
     return ingress_done && egress_done;
 }
 
@@ -161,7 +153,7 @@ static int set_fd(struct simple_sock *sock, int idx, struct pollfd *fds, int eve
 static void my_conn_prompt(struct my_conn *conn)
 {
     struct str_slice prompt = slice_make(STR_LIT("> "));
-    sock_send_data(conn->sock_send, prompt);
+    sock_send_str(conn->sock_send, prompt);
 }
 
 
@@ -211,7 +203,7 @@ int main(int argc, char *argv[])
 
     // server connect
     struct my_conn serv = MY_CONN_INIT(serv, -1, -1);
-    rc = sock_connect_hostport(&serv.socks[0], hostname, port);
+    rc = sock_connect(&serv.socks[0], SOCK_TCP | SOCK_NONBLK, hostname, port);
     if (rc) fatal_error("No connection");
     serv.sock_send = serv.sock_recv = serv.socks;
 
@@ -223,10 +215,8 @@ int main(int argc, char *argv[])
         
     // setup stdout,stdin for send,recv
     struct my_conn user = MY_CONN_INIT(user, STDOUT_FILENO, STDIN_FILENO);
-    rc = sock_set_nonblock(user.sock_recv);
-    if (rc) fatal_errno("set stdin non-block failed");
-    rc = sock_set_nonblock(user.sock_send);
-    if (rc) fatal_errno("set stdout  non-block failed");
+    if (sock_set_mode(user.sock_send, SOCK_FILE | SOCK_NONBLK)) exit(1);
+    if (sock_set_mode(user.sock_recv, SOCK_FILE | SOCK_NONBLK)) exit(1);
 
     struct pollfd fds[4];
     user.poll_in  = set_fd(user.sock_recv, 0, fds, POLLIN);

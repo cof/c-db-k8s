@@ -67,7 +67,110 @@ static inline const char *ec_tostr(int len, const char *estr[len], int ec, const
     return str ?: def;
 }
 
-// string handling code
+
+/*
+ * Simple encoders/decoders
+ */
+static inline uint8_t *enc_u32(uint8_t *wptr, uint32_t value)
+{
+    *wptr++ = value >> 24;
+    *wptr++ = value >> 16;
+    *wptr++ = value >> 8;
+    *wptr++ = value;
+
+    return wptr;
+}
+
+static inline uint8_t *enc_u16(uint8_t *wptr, uint16_t value)
+{
+    *wptr++ = value >> 8;
+    *wptr++ = value;
+
+    return wptr;
+}
+
+static inline uint8_t *enc_raw(uint8_t *wptr, uint8_t *raw, uint16_t len)
+{
+    mempcpy(wptr, raw, len);
+    wptr += len;
+
+    return wptr;
+}
+
+static inline uint32_t dec_u32(const unsigned char *buf)
+{
+    uint32_t value;
+
+    value = buf[0] << 24;
+    value |= buf[1] << 16;
+    value |= buf[2] << 8;
+    value |= buf[3];
+
+    return value;
+}
+
+static inline uint16_t dec_u16(const unsigned char *buf)
+{
+    uint16_t value;
+
+    value = buf[0] << 8;
+    value |= buf[1];
+
+    return value;
+}
+
+
+/*
+ * a simple string write buffer
+ */
+struct strbuf {
+    char *data;
+    char *wptr;
+    char *end;
+};
+
+#define STRBUF_INIT(_buf, _size) { _buf, _buf, _buf + _size } 
+
+static inline size_t strbuf_avail(struct strbuf *buf)
+{
+    return buf->end - buf->wptr;
+}
+
+// bytes writen to buffer available to read
+static inline size_t strbuf_used(struct strbuf *buf)
+{
+    return buf->wptr - buf->data;
+}
+
+static inline struct strbuf *strbuf_putmem(struct strbuf *buf, const char *mem, size_t len)
+{
+    if (len > strbuf_avail(buf)) return NULL;
+
+    memcpy(buf->wptr, mem, len);
+    buf->wptr += len;
+
+    return buf;
+}
+
+static inline struct strbuf *strbuf_putstr(struct strbuf *buf, const char *str)
+{
+    return str ? strbuf_putmem(buf, str, strlen(str)) : NULL;
+}
+
+static inline struct strbuf *strbuf_putsep(struct strbuf *buf, int ch, const char *mem, size_t len)
+{
+    if (strbuf_used(buf)) {
+        if (!strbuf_avail(buf)) return NULL;
+        *buf->wptr++ = ch;
+    }
+    return strbuf_putmem(buf, mem, len);
+}
+
+
+/*
+ * String slice handling code
+ *
+ */
 struct str_slice {
     char *ptr;
     size_t len;
@@ -85,9 +188,9 @@ static inline struct str_slice slice_make(char *str, size_t len)
     return dst;
 }
 
-static inline struct str_slice slice_make_cstr(char *str)
+static inline struct str_slice slice_make_cstr(const char *str)
 {
-    return slice_make(str, str ? strlen(str) : 0);
+    return slice_make(RMCONST(char *, str), str ? strlen(str) : 0);
 }
 
 static inline struct str_slice slice_copy(struct str_slice val)
@@ -289,6 +392,7 @@ static inline const char *get_basename(const char *name)
 // generic setters
 int str_setval(char **str, const char *name, const char *val_str);
 int int_setval(int *ival, const char *name, const char *val_str);
+int uint_setval(uint32_t *uval, const char *name, const char *val_str);
 
 // cmd-line parsing
 #define OPT_NOARG  0
@@ -304,6 +408,7 @@ struct cmd_opt {
     const char *desc;
     const char *def_str;
     int has_arg;  // 0=none, 1=requried, 2=optional
+    int code;
 };
 
 struct cmd_argv {
@@ -312,15 +417,17 @@ struct cmd_argv {
     struct cmd_opt *opts;
     int argv_idx;
     int opt_idx;
-    int val_idx;
-    char *name;
-    char *value;
+    struct cmd_opt *opt; // match opt
+    const char *name;    // argv name
+    const char *value;   // argv value
 };
 
 int cmd_argv_next(struct cmd_argv *parse);
 int opt_setstr(char **str, struct cmd_argv *parse);
 int opt_setint(int *iptr, struct cmd_argv *parse);
+int opt_setuint(uint32_t *uptr, struct cmd_argv *parse);
 
 void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[]);
+
 
 #endif

@@ -135,12 +135,19 @@ int str_setval(char **str, const char *name, const char *val_str)
 
 int int_setval(int *ival, const char *name, const char *val_str)
 {
-    int val = atoi(val_str);
+    int val = strtol(val_str, NULL, 0);
     if (val < 0) {
         return log_error_rf("%s cannot be negative", name);
     }
     *ival = val;
 
+    return 0;
+}
+
+int uint_setval(uint32_t *uval, const char *name, const char *val_str)
+{
+    (void) name;
+    *uval = strtoul(val_str, NULL, 0);
     return 0;
 }
 
@@ -155,6 +162,11 @@ int opt_setint(int *iptr, struct cmd_argv *parse)
     return int_setval(iptr, parse->name, parse->value);
 }
 
+int opt_setuint(uint32_t *iptr, struct cmd_argv *parse)
+{
+    return uint_setval(iptr, parse->name, parse->value);
+}
+
 static int find_opt(const char *name, const struct cmd_opt opts[])
 {
     for (int i = 0; opts[i].name; i++) {
@@ -162,7 +174,7 @@ static int find_opt(const char *name, const struct cmd_opt opts[])
             return i;
         }
     }
-
+    // not found
     return -1;
 }
 
@@ -179,24 +191,23 @@ int cmd_argv_next(struct cmd_argv *parse)
     if (parse->opt_idx == -1) {
         return log_error_re(OPT_UNSUPP, "Error: Unknown option %s", parse->name);
     }
+    parse->opt = parse->opts + parse->opt_idx;
 
     // get value
     parse->value = NULL;
-    parse->val_idx = -1;
-    if (parse->opts[parse->opt_idx].has_arg) {
+    if (parse->opt->has_arg) {
         if (parse->argv_idx >= parse->argc) {
             return log_error_re(OPT_MISSVAL, "Option: --%s Missing a value", parse->name);
         }
         if (parse->argv[parse->argv_idx][0] == '-') { 
             return log_error_re(OPT_MISSVAL, "Option: --%s Missing value", parse->name);
         }
-        // save value index
-        parse->value = parse->argv[parse->argv_idx];
-        parse->val_idx = parse->argv_idx++;
+        // save value
+        parse->value = parse->argv[parse->argv_idx++];
     }
 
     // tell user
-    return parse->opt_idx;
+    return parse->opt->code ? parse->opt->code : parse->opt_idx;
 }
 
 void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[])

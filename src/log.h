@@ -1,5 +1,5 @@
-#ifndef __LOG_H__
-#define __LOG_H__
+#ifndef _LOG_H_
+#define _LOG_H_
 
 #include <errno.h>
 
@@ -23,10 +23,10 @@ void log_argv(const char *what, int argc, char *argv[]);
     UTIL_FAIL; \
 })
 
-// report msg, return 0
-#define log_info_rz(what, ...) ({ \
+// report msg, return ec
+#define log_info_rc(what, rc, ...) ({ \
     log_info(what,  __VA_ARGS__); \
-    UTIL_OK; \
+    (rc); \
 })
 
 // report estr

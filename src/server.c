@@ -16,19 +16,7 @@
  * - commands are case insensitve
  * - see config.h for current defaults
  */
-#include <stdio.h>
-#include <stdlib.h> 
-#include <stdarg.h>
-#include <stddef.h>
-#include <string.h> 
-#include <signal.h>
-
-#include <sys/types.h> 
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <netdb.h> 
-#include <unistd.h>
 #include <sys/epoll.h>
 #include <errno.h>
 
@@ -216,7 +204,9 @@ struct simple_client *client_create(int fd, struct sockaddr_in6 *addr)
     }
     memset(client, 0,  sizeof(*client));
 
-    sock_init(&client->sock, fd, addr, SOCK_INIT_BUFSIZE, SOCK_MIN_BUFSIZE, SOCK_MAX_BUFSIZE);
+    sock_init(&client->sock, fd, addr, 
+        MAX_LINE, SOCK_INIT_BUFSIZE, SOCK_MIN_BUFSIZE, SOCK_MAX_BUFSIZE
+    );
 
     list_init(&client->node);
 
@@ -228,7 +218,7 @@ struct simple_client *client_create(int fd, struct sockaddr_in6 *addr)
 
 static void do_client_write(struct simple_client *client)
 {
-    int rc = sock_write(&client->sock);
+    int rc = sock_send(&client->sock);
     if (rc < 0) return;
 
     uint32_t events;
@@ -252,7 +242,7 @@ static void do_client_write(struct simple_client *client)
 void do_client_read(struct simple_client *client)
 {
     int eof = 0;
-    int rc = sock_read(&client->sock);
+    int rc = sock_recv(&client->sock);
     if (rc < 0) {
         // read error (SOCK_ERR|SOCK_CLOSED|SOCK_AGAIN)
         if (rc != SOCK_CLOSED) return;
@@ -457,7 +447,8 @@ static int server_run(struct simple_server *serv)
 
 static int setup_listener(struct simple_server *server)
 {
-    int rc = sock_listen_hostport(&server->sock, server->hostname, server->port);
+    uint32_t mode = SOCK_LISTEN | SOCK_TCP;
+    int rc = sock_listen(&server->sock, mode, server->hostname, server->port);
     if (rc) return rc;
 
     server->epoll_fd = epoll_create1(0);

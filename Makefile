@@ -89,7 +89,7 @@ endif
 GCC_DEPS      := -MMD -MP
 CPP_FLAGS     := -D_GNU_SOURCE -Isrc
 EXTRA_CFLAGS  := -Wextra -Wno-missing-field-initializers
-COMMON_CFLAGS := -Wall $(CPP_FLAGS) $(GCC_DEPS) 
+COMMON_CFLAGS := -Wall $(CPP_FLAGS) $(GCC_DEPS) -Werror=implicit-function-declaration
 DEBUG_CFLAGS   := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
 
 # release build
