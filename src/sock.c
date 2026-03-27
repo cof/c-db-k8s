@@ -1,5 +1,7 @@
 /*
- * socket wrapper code
+ * socket wrapper code API
+ * -----------------------
+ * See sock.h for API description.
  */
 #include <stdio.h>
 #include <stdlib.h> 
@@ -95,7 +97,15 @@ int sockfd_get_addr(int sockfd, char *buf, int len)
 }
 
 /*
- * resolv_addr : resovle addr/port string to list of IP address + port
+ * resolv_addr(mode,host,port) : resolv host,port to list of IP address + port
+ *
+ * mode
+ * --------
+ * SOCK_ANY -  Use IPv4, IPv6 or V4 mapped
+ * SOCK_IPV4 - IPv4 only
+ * SOCK_IPV6 - IPv6 only
+ * SOCK_PASSIVE - use bindable address (server/listener)
+ * SOCK_NUMSERV - disable name resolution on port str
  *
  * Refs:
  * -----
@@ -634,7 +644,7 @@ int sock_send_str(struct simple_sock *sock, struct str_slice str)
     if (rc == 0) return 0;
 
     // update backlog
-    rc = rwbuf_ridx_adj(&sock->send_buf, iovs[0].iov_len);
+    rc = rwbuf_rdinc(&sock->send_buf, iovs[0].iov_len);
     if (rc) return rc;
 
     // add partial data
@@ -669,7 +679,7 @@ int sock_send_line(struct simple_sock *sock, struct str_slice line)
     if (rc == 0) return 0;
 
     // update backlog
-    rc = rwbuf_ridx_adj(&sock->send_buf, iovs[0].iov_len);
+    rc = rwbuf_rdinc(&sock->send_buf, iovs[0].iov_len);
     if (rc) return rc;
 
     // add partial data

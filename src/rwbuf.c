@@ -1,5 +1,7 @@
 /*
- * read write buffers
+ * A simple read|write buffer API
+ * ------------------------------
+ * See rwbuf.h for API description.
  */
 #include <stdio.h>
 #include <stdlib.h> 

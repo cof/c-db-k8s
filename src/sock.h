@@ -1,5 +1,77 @@
 /*
- * A simple socket layer
+ * A simple socket layer API
+ * ========================
+ *
+ * Create client|server socket
+ * -------------------------
+ * sock_connect(sock,mode,host,port) : connect to host,port 
+ * sock_listen(sock,mode,host,port)  : listen on host,port
+ * sock_accept(sock, addr) : accept client sock fd
+ *
+ * mode is bit-wise or of the following flags:
+ *
+ * Resolver
+ * --------
+ * SOCK_ANY -  Use IPv4, IPv6 or V4 mapped
+ * SOCK_IPV4 - IPv4 only
+ * SOCK_IPV6 - IPv6 only
+ * SOCK_PASSIVE - use bindable address (server/listener)
+ * SOCK_NUMSERV - disable name resolution on port str
+ *
+ * type
+ * ----
+ * SOCK_FILE - socket is a file (e,g stdin,stdout)
+ * SOCK_TCP  - TCP socket
+ * SOCK_UDP  - UDP socket
+ *
+ * state
+ * ------
+ * SOCK_UDPCON - connect UDP socket to address
+ * SOCK_NONBLK - make socket non-blocking
+ *
+ * Close socket fd
+ * ------------
+ * sock_close   - close socket fd
+ * sock_sendfin - shutdown writes send TCP fin
+ * 
+ * Change fd state
+ * -----------------------
+ * sock_set_mode   - change socket mode flags
+ * sock_set_nonblk - set socket non blocking
+ * sock_set_sndto  - set socket send timeout in ms
+ * sock_set_rcvto  - set socket recv timeout in ms:
+ *
+ * send|recv memory buffers to|from sock fd 
+ * ------------------
+ * sock_send_data - send memory buffer to fd
+ * sock_recv_data - recv into memory buffer from fd
+ * sock_send_iovs - send iov buffer list to fd
+ *
+ * send|recv sock buffer data to|from sock fd
+ * ------------------------------------------
+ * sock_recv - read from fd into sock recv buffer
+ * sock_send - write to fd sock send buffer
+ *
+ * readline - sock buffer
+ * ---------------------
+ * sock_readline - read line from sock recv buffer into string slice
+ *
+ * buffer now - send later
+ * ------------------------
+ * sock_write_data - write data to sock send buffer
+ * sock_write_line - write line to sock send buffer
+ *
+ * send now - buffer unsent
+ * -------------------------
+ * sock_send_mem - write send buffer + mem to socket fd, buffer unsent
+ * sock_send_str - write send buffer + str to socket fd, buffer unsent
+ * sock_send_line - write send buffer + line to socket fd, buffer unsent
+ * 
+ * 
+ * Helper
+ * -------
+ * sockaddr_tostr - convert socket addr to string
+ * sock_tostr - convert socket to str
  */
 #ifndef _SOCK_H_
 #define _SOCK_H_
@@ -71,7 +143,7 @@ int sock_init(struct simple_sock *sock,
     size_t min_size, size_t max_size);
 void sock_deinit(struct simple_sock *sock, int can_log);
 
-// create socket fd
+// Create client|server socket
 int sock_connect(struct simple_sock *sock, uint32_t mode, const char *host, const char *port);
 int sock_listen(struct simple_sock *sock, uint32_t mode, const char *host, const char *port);
 int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr);
@@ -82,16 +154,16 @@ int sock_set_nonblk(struct simple_sock *sock);
 int sock_set_sndto(struct simple_sock *sock, uint32_t ms);
 int sock_set_rcvto(struct simple_sock *sock, uint32_t ms);
 
-// send|recv data to|from socket fd
+// send|recv memory buffers to|from sock fd
 ssize_t sock_send_data(struct simple_sock *sock, void *data, size_t len);
 ssize_t sock_recv_data(struct simple_sock *sock, void *data, size_t len);
 ssize_t sock_send_iovs(struct simple_sock *sock, int nbuf, struct iovec iovs[nbuf]);
 
-// send|recv buffers to|from socket fd
+// send|recv memory buffers to|from sock fd
 int sock_recv(struct simple_sock *sock);
 int sock_send(struct simple_sock *sock);
 
-// read line from our recv buffer
+// read line from sock recv buffer into string slice 
 int sock_readline(struct simple_sock *sock, struct str_slice *line, int eof);
 
 // buffer now - send later
@@ -103,9 +175,11 @@ int sock_send_mem(struct simple_sock *sock, void *mem, size_t len);
 int sock_send_str(struct simple_sock *sock, struct str_slice str);
 int sock_send_line(struct simple_sock *sock, struct str_slice line);
 
+// close socket
 int sock_close(struct simple_sock *sock, int can_log);
 int sock_sendfin(struct simple_sock *sock);
 
+// helpers
 char *sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len);
 char *sock_tostr(struct simple_sock *sock);
 
