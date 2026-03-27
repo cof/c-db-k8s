@@ -1,9 +1,11 @@
 # db-k8s
 
-Run a database client and server application inside containers.
+Run a database (DB) client and server application inside containers.
 
-- **Local Containers**  run DB client/server inside a custom container
-- **Kubernetes**   Deploy DB client/server to real k8s setup
+There are 2 parts to this project. 
+
+- **Containers**  run DB client and server inside containers using a custom launcher
+- **Kubernetes**  Deploy DB client/server inside k8s pods
 
 ## Prerequisites
 
@@ -18,12 +20,21 @@ Run a database client and server application inside containers.
 ## Building the Project
 
 - **make all** (Default): Compiles server,client,launcher
-- **make install** Copy all binaries to bin folder
 - **make deploy**  Deploy client and server into k8s pods
-- **make clean**: Removes compiled binaries, object files, k8s artifacts and test logs
-- **make spotless**: clean + docker system prune
+- **make test-full** Run all tests (cmds,laucher,k8s)
+- **make spotless**: wipe complied binaries, VMS, k8s pods
 
-Test targets
+## Design Notes
+
+- Makefile has extensive build and test targets:
+- All applicaton code written in C using custom apis
+- SOCK api - socket layer wrapper in sock(.h|.c)
+- RWBUF api - to read|write buffer data
+- UTIL api - string process,cmd-line parsing, signal handling
+- LOG api - info and erro loggin in log(.h|.c)
+
+## Testing the Project
+Note there are a lot test componets in project.
 
 - **make test**  run basic tests
 - **make test-full** run all tests (test-cmds,test-lau,test-k8s)   
@@ -38,57 +49,52 @@ Test targets
 - **make test-pod** run pod GET|SET|DEL tests
 - **make test-net** run network policy tests
 
-Misc targets:
+## 1. Containers
 
-- **make gen-seccomp** generate a new seccomp rules flle
-- **make rootfs** generate a roofs for the containers
-
-VM targets:
-
-- **make vm-config** Show VM config
-- **make vm-list**  Show test-launcher VM status
-- **make vm-clean** shutdown, undefine, remove VM 
-
-## 1. Local Containers
-
-Runs a database client and server inside custom containers.
+Runs a database (DB) client and server inside containers using custom launcher.
 
 - **launcher** A Linux container runtime management tool
-- **server**  A TCP server that implement SET|GET|DEL cmds to DB
-- **client**  A TCP client supports a telnet like connection to server
+- **server**  A DB server that implement SET|GET|DEL cmds to DB
+- **client**  A DB client supports a telnet like connection to server
 
 ## 1.1 Launcher
 
-A linux runtime container launcher for running applications in isolated namespaces.
+A custom linux container launcher for running applications inside isolated namespaces.
 
 **Supported features**
 
 - Create and manages its own network namespaces
-- Creates an isolated filesystem (rootfs)
+- Creates an isolated filesystem for each container
+- OverLay FS support using a provided rootfs-dir
 - Supports privilege dropping (sudo,caps,privs,seccomp)
 - Use a simple API for container configuration
 - An Alpine Linux VM was used to test launcher
 
 **Design**
 
-- Creates its own runtime dirs for network and filesystem namepaces
-- By default it create runtime dir in the current dir
-- Support cmd line args to overide runtime defaults
-- Uses signal to catch SIGTERM and SIGINT
-- Uses a container api to configure a list of containers to run.
-- Create and manages its own network namespace files
-- Supports running container in order or in parallel
-- Uses bind mount to create network namespace files
-- Uses setns and clone to run containers in their own netns
-- Uses pipe to sync with child 
-- Child setup proc and its own rootfs before excing containerA
-- Child supports privilege dropping sudo|caps|priv|seccomp
-- Parent uses waitpid to monitor childrean
-- If any container dies it kills/reaps the rest
-- seccomp rules where built with strace and awk script
-- An Alpine VM image was used to test launcher
-- You can uses make install-vm to recreate vm
-- Uss cloud-config yaml to configure VM
+- use UTIL api to read cmd-line args
+- create dirs/inftrastructure before running containers
+- Create a folder (rootfs) for each container to hold its rootfs
+- create veth devices for container
+- creates a network namespace for each container
+- creates a child process for each container
+- child switches to its private rootfs
+- child creates proc
+- child applys security settings
+- child execs the client or server binary
+- uses mount and clone to create netns and containers
+
+**Testing **
+
+- An Alpine VM image was used to safely test launcher
+- Makefile has support for downloading and building VM
+- Simply run make test-lau to download and create the VM
+- Uses cloud-config user-data.yaml template file to configure VM
+- Embeds users public key (id_pub.rsa) into user-data.yaml file
+- VM alpine user is setup as sudo user (using doas)
+- make test-lau simply installs client,server,launcher into VM and runs launcher
+- Can simply ssh to VM with ssh alpine@test-lau if nsswitch.conf allows it
+- Just edit /etc/nsswitch.conf and add libvirt_guest to hosts line e.g "hosts: files libvirt_guest" 
 
 **Example usage**
 
@@ -131,7 +137,7 @@ A linux runtime container launcher for running applications in isolated namespac
 	launcher:~/bin$ 
 
 ### 1.2 Server
-A TCP server than support a telnet-style api to acccsss a key/value store.  
+A database (DB) server than support a telnet-style api to acccsss a key/value store.  
 Clients simply connect to server and send commands to modify key/value store.
 
 **Supported Commands:**
@@ -143,21 +149,17 @@ Clients simply connect to server and send commands to modify key/value store.
 
 **Supported featues**
 
-- Supoorts a telnet style cmd SET|GET|DEL api to a DB
+- Supports a telnet style cmd SET|GET|DEL api to a DB
 - Database using mmap database file
 
 **Design**
 
-- Uses signal to catch SIGTERM and SIGINT
-- Uses mmap to create a database file
-- Uses getaddrinfo to select a socket address
-- Uses socket/bind/listen/accept for network I/O
-- Uses non blocking sockets
+- code is single threaded
 - Use dual stack sockets that support both IPv4 and IPv6
+- Uses SOCK-API to create non blocking listener and client sockets
 - Uses epoll (level triggered) to monitor all socket events
-- Uses a socket wrapper api to read/write/track/log/errors
-- Uses util string api to process strings
-- Uses a custom read-line wrapper around client sockets
+- Uses RWBUG api to read and write lines to sockets
+- Uses DB api to update key,value store
 - listens by default using wildcard [::]:6379
 - cmd-line can override this
 
@@ -167,22 +169,25 @@ Clients simply connect to server and send commands to modify key/value store.
     [+] Database listening on [::]:6379
 
 ### 1.3 Client
-A simple telnet client that connect to a server address.  
-Client will connect to server and read/write lines to server.
+A telnet client that connect to a server address.  
+Client simply reads and writes lines betwen stdio and server socket.
 
 **Supported featues**
 
 - Connect to a server addres and port
-- read and writes line to a socket
+- Client acts a 4 way pipe between stdio/socket
+- Suppors pipe or normal stdin,stdout
 
 **Design**
 
-- Uses getaddrinfo() to get a server TCP address
-- Uses socket/connect/fdopen to read/write network I/O
-- Uses fdopen to wrap socket into  read/write FIlE.
-- Uses fgets/fputs to read/write lines to server
+- Uses a TCP wrapper or socket bridge between stdio/socket
+- Client acts a 4 way pipe between stdio/socket
+- Reads lines from stdin and writes then to socket
+- Reads lines from socket  and writes then to stdout
+- Uses a 4 way pipe design to read and write lines:
+- Uses SOCK api to create socket and manage stdin,stdout fds
+- Uses poll() to monitor fd activity (stdin,stdout,socket)
 - Captures all error and logs them to stderr
-
 
 **Example usage**
 

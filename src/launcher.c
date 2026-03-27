@@ -8,13 +8,14 @@
  * Implements a container launcher for running client and server.
  *
  * Bascially:
- * - Createa a folders for each container filesystem
+ * - Create a folder for each container to hold its rootfs
  * - create veth devices for containter
- * - creates a network namespace for each container
+ * - creates a network namespace (netns) for each container
  * - creates a child process for each container
- * - switchs child to its private filesystem
- * - applys security settings
- * - execs the client or server binary
+ * - child switches to its private rootfs
+ * - child creates proc
+ * - child applys security settings
+ * - child execs the client or server binary
  *
  * Notes
  * - uses mount to create netns
