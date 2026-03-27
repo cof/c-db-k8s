@@ -611,21 +611,33 @@ DB_POD := db-pod
 
 # test-pod macros
 # ---------------
-REQ_START := $(subst ",,"[LOG] send req: ")
-RSP_START := $(subst ",," recv rsp: ")
-CLIENT_OK := $(subst ",,"Connectivity test: OK")
+
+# 1=file
+GREP_CONNOK = grep -Fc "[+] Connectivity test: OK" $(1) | wc -l
+# 1=req, 2=rsp, 3=file
+GREP_REQRSP  = grep -Fq "[LOG] send req: $(1) recv rsp: $(2)" $(3)
+# 1=cmd,2=file
+SND_CMD = echo $(1) | kubectl attach -qi $(2) 2>/dev/null
+# 1=pod
+GET_PODS = kubectl get pods -l app=$(1) -o name
+GET_POD  = $(call GET_PODS,$(1)) | head -n 1
+GET_LOG  = kubectl logs $(1) --tail=20 >$(2) 2>/dev/null
+# 1=pod 2=file
+GET_LOGS = \
+	POD_LIST=$$($(call GET_PODS,$(1))); \
+	true > $(2); \
+	for POD in $$POD_LIST; do \
+		kubectl logs $$POD >$(2) 2>/dev/null; \
+	done
 
 TEST_POD_LOG = $(BUILD_DIR)/testpod.txt
 TEST_POD_RES = $(TEST_POD_LOG).result
-GET_APP    = kubectl get pods -l app=$(1) -o name | head -n 1
-SND_ATTACH = echo $(1) | kubectl attach -qi $(2) 2>/dev/null
-GET_LOGS = kubectl logs $(1) --tail=20 >$(2) 2>/dev/null
 DO_CLEAN = sed -e 's/^> //' -e '/^\[LOG\]/!d' $(1) | \
 	sed -z 's/\n\[LOG\] recv rsp:/ recv rsp:/g' > $(2)
 
-TEST_RESULT = \
+CHK_CMDRES = \
 	total=$$((total + 1));  \
-	grep -Fq "$(REQ_START)$(1)$(RSP_START)$(2)" $(3); \
+	$(GREP_REQRSP) $(1) $(2) $(3); \
 	if [ $$? -eq 0 ]; then \
 		printf " => check %s %b\n" "$(1)" "$(PASS_STR)"; \
 	else \
@@ -638,7 +650,7 @@ TEST_RESULT = \
 TEST_PRECONN = printf " => %-10s -> %-15s " $(1) $(2)
 TEST_CONNECT = \
 	total=$$((total + 1));  \
-	POD=$$($(call GET_APP,$(2))); \
+	POD=$(shell $(call GET_POD,$(2))); \
 	kubectl exec $$POD -- nc -w 3 -zv $(3) $(4) >/dev/null 2>&1; \
 	exit_code=$$?; [ $$exit_code -ne 0 ] && exit_code=1; \
 	perm_str="$(ALLOW_STR)"; [ $(1) -ne 0 ] && perm_str="$(DENY_STR) "; \
@@ -738,27 +750,25 @@ test-lau: $(INSTALL_DONE) vm-create
 test-k8s:wait-pods test-pod test-net
 	@echo "$(CHECK) $@ complete."
 
+
 # wait for all pods to be ready
 # ----------------------------
 .PHONY:wait-pods
 wait-pods: deploy
 	$(Q)echo "[+] Running $@"
-	$(Q)echo " => kubectl waiting for $(DB_POD) ..."
+	$(Q)echo " => kubectl wait for $(DB_POD) ready ..."
 	$(Q)kubectl wait --for=condition=Ready pod -l app=$(DB_POD) --timeout=30s | sed 's/^/ => /'
-	$(Q)echo " => kubectl waiting for $(CLIENT_POD)s ..."
+	$(Q)echo " => kubectl wait for $(CLIENT_POD) ready ..."
 	$(Q)kubectl wait --for=condition=Ready pod -l app=$(CLIENT_POD) --timeout=30s | sed 's/^/ => /'
-	$(Q)echo " => Waiting for $(CLIENT_OK)"; \
-	count=0; \
-	until kubectl logs -l app=client-pod --tail=10 2>/dev/null | grep -Fq "$(CLIENT_OK)"; \
-	do \
-		if [ $$count -eq 3 ]; then \
-			echo " => [ERROR} timeout waiting for $(CLIENT_OK) in logs"; \
-			exit 1; \
-		fi; \
-		printf "."; \
-		sleep 1; \
-		count=$$((count + 1)); \
+	$(Q)NEED_OK=1; NUM_OK=0; \
+	echo " => Wait for $$NEED_OK $(CLIENT_POD) connected ..."; \
+	for i in { 1..3}; do \
+		$(call GET_LOGS,$(CLIENT_POD),$(TEST_POD_LOG)); \
+		NUM_OK=$$($(call GREP_CONNOK,$(TEST_POD_LOG))); \
+		if [ "$$NUM_OK" -ge "$$NEED_OK" ]; then break; fi; \
+		sleep 2; \
 	done; \
+	if [ "$$NUM_OK" -lt "$$NEED_OK" ]; then exit 1; fi; \
 	echo " => $(CHECK_MARK) $@ complete."
 
 # test SET|GET|DEL via client-pods
@@ -766,24 +776,24 @@ wait-pods: deploy
 .PHONY: test-pod
 test-pod: deploy
 	$(Q)echo "[+] Running $@"; \
-	CLIENT_POD=$$($(call GET_APP,$(CLIENT_POD))); \
+	CLIENT_POD=$(shell $(call GET_POD,$(CLIENT_POD))); \
 	echo " => Using $(CLIENT_POD): $$CLIENT_POD"; \
 	RAND_STR=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30); \
 	CMD1="SET test-pod $$RAND_STR"; \
 	CMD2="GET test-pod"; \
 	CMD3="DEL test-pod"; \
 	echo " => Sending cmds"; \
-	$(call SND_ATTACH,$$CMD1,$$CLIENT_POD); \
-	$(call SND_ATTACH,$$CMD2,$$CLIENT_POD); \
-	$(call SND_ATTACH,$$CMD3,$$CLIENT_POD); \
+	$(call SND_CMD,$$CMD1,$$CLIENT_POD); \
+	$(call SND_CMD,$$CMD2,$$CLIENT_POD); \
+	$(call SND_CMD,$$CMD3,$$CLIENT_POD); \
 	echo " => Fetching logs"; \
-	$(call GET_LOGS,$$CLIENT_POD,$(TEST_POD_LOG)); \
+	$(call GET_LOG,$$CLIENT_POD,$(TEST_POD_LOG)); \
 	$(call DO_CLEAN,$(TEST_POD_LOG),$(TEST_POD_RES)); \
 	echo " => Checking results"; \
 	total=0; errors=0; \
-	$(call TEST_RESULT,$$CMD1,OK,$(TEST_POD_RES)); \
-	$(call TEST_RESULT,$$CMD2,$$RAND_STR,$(TEST_POD_RES)); \
-	$(call TEST_RESULT,$$CMD3,OK,$(TEST_POD_RES)); \
+	$(call CHK_CMDRES,$$CMD1,OK,$(TEST_POD_RES)); \
+	$(call CHK_CMDRES,$$CMD2,$$RAND_STR,$(TEST_POD_RES)); \
+	$(call CHK_CMDRES,$$CMD3,OK,$(TEST_POD_RES)); \
 	$(call TEST_REPORT); \
 	if [ $$errors -gt 0 ]; then exit 1; fi
 
