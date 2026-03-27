@@ -295,37 +295,30 @@ static int lau_link_veths(struct lau_ctx *lau, struct lau_child *x, struct lau_c
     int rc;
 
     // create veth for x and y
-    rc = lau_child_set_veth(x, x->name, lau->veth_prefix);
-    if (rc) return rc;
-    rc = lau_child_set_veth(y, y->name, lau->veth_prefix);
-    if (rc) return rc;
-    rc = veth_add(x->veth_name, y->veth_name);
-    if (rc) return rc;
+    if ((rc = lau_child_set_veth(x, x->name, lau->veth_prefix))) return rc;
+    if ((rc = lau_child_set_veth(y, y->name, lau->veth_prefix))) return rc;
+    if ((rc = veth_add(x->veth_name, y->veth_name))) return rc;
 
-    // move x end
-    rc = veth_setns(x->veth_name, int_tostr(x->pid));
-    if (rc) {
+    // move veth x end into x netns
+    if ((rc = veth_setns(x->veth_name, int_tostr(x->pid)))) {
         veth_del(x->veth_name);
         return rc;
     }
 
-    // move y end
-    rc = veth_setns(y->veth_name, int_tostr(y->pid));
-    if (rc) {
+    // move veth y end into y netns
+    if ((rc = veth_setns(y->veth_name, int_tostr(y->pid)))) {
         veth_del(y->veth_name);
         return rc;
     }
 
     // setup link (eth0,addr,up)
-    rc = lau_child_net_setup(x);
-    if (rc) {
+    if ((rc = lau_child_net_setup(x))) {
         veth_del(x->veth_name);
         return rc;
     }
 
     // setup link (eth0,addr,up)
-    rc = lau_child_net_setup(y);
-    if (rc) {
+    if ((rc = lau_child_net_setup(y))) {
         veth_del(y->veth_name);
         return rc;
     }
@@ -333,7 +326,6 @@ static int lau_link_veths(struct lau_ctx *lau, struct lau_child *x, struct lau_c
     log_info("+", "Created veth pair: %s <-> %s", x->veth_name, y->veth_name);
 
     return 0;
-
 }
 
 // check if client must add network when cloned
@@ -553,11 +545,10 @@ static int lau_setup_all(struct lau_ctx *lau)
 
     RUN(lau_open_host_netns(lau));
     
+    // create dirs
     if (lau->need_basedir) {
         RUN(create_path(lau->base_dir, lau->dir_mode));
     }
-
-    // create dirs
     RUN(create_dir(lau->netns_dir, lau->dir_mode, 1));
     RUN(create_dir(lau->store_dir, lau->dir_mode, 1));
     RUN(create_dir(lau->run_dir,   lau->dir_mode, 1));
@@ -708,13 +699,11 @@ static int lau_parse_argv(struct lau_ctx *lau, int argc, char *argv[])
     }
 
     return rc == OPT_EOF ? 0 : -1;
-
 }
 
 // set defaults
 int lau_init(struct lau_ctx *lau)
 {
-    // set defaults
     lau->max_proc = ARR_LEN(lau->procs);
     lau->start_order = START_ORDER == 1 ? 1 : 0;
     lau->start_delay = START_DELAY;
@@ -790,9 +779,7 @@ static struct lau_ctx *lau_create(void)
     struct lau_ctx *lau;
 
     lau = malloc(sizeof(*lau));
-    if (!lau) {
-        return log_errno_rn("malloc lau-state failed");
-    }
+    if (!lau) return log_errno_rn("malloc lau-state failed");
 
     memset(lau, 0, sizeof(*lau));
 

@@ -387,7 +387,7 @@ VM_WAIT_SLEEP   = 3
 VM_WAIT_TIMEOUT = $(shell expr $(VM_WAIT_RETRIES) \* $(VM_WAIT_SLEEP))
 .PHONY:vm-wait
 vm-wait:
-	$(Q)echo " => Waiting for VM $(VM_NAME) to reach SSH"
+	$(Q)echo "[+] Waiting for VM $(VM_NAME) to reach SSH"
 	@count=0; \
 	while [ $$count -lt $(VM_WAIT_RETRIES) ]; do \
 		VM_IP=$$(virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1); \
@@ -721,7 +721,7 @@ test-client: client
 # ------------------
 .PHONY: test-lau
 test-lau: $(INSTALL_DONE) vm-create
-	$(Q)echo " => Running $@"; \
+	$(Q)echo "[+] Running $@"; \
 	> $(TEST_LOG); \
 	VM_IP=$$($(GET_VM_IP)); \
 	if [ -z "$$VM_IP" ]; then echo "[ERROR] No VM ip address"; exit 1; fi; \

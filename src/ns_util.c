@@ -190,7 +190,7 @@ int run_cmd(const char *fmt, ...)
     return rc; 
 }
 
-
+// convert cmd-line exec_args str into argv array
 char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc) 
 {
     wordexp_t p = { 0 };
@@ -258,7 +258,6 @@ char *gen_path(const char *dir, const char *name)
     return path;
 }
 
-
 char *validate_dir(const char *key, const char *dir)
 {
     char *path = realpath(dir, NULL);
@@ -296,7 +295,6 @@ done:
     return path;
 }
 
-
 int create_dir(const char *path, mode_t mode, bool can_exist)
 {
     int rc = mkdir(path, mode);
@@ -330,7 +328,6 @@ int create_path_nocopy(char *path, mode_t mode)
     // Create last dir on path
     return create_dir(path, mode, 1);
 }
-
 
 // aka mkdir -p
 int create_path(const char *path, mode_t mode)
@@ -387,13 +384,15 @@ char *create_subdir(const char *dir, const char *subdir, mode_t mode)
     return path;
 }
 
+// copy file - uses sendfile() for fast copy
 int copy_file(const char *src, const char *dst) 
 {
     int rc = -1;
 
     int src_fd = open(src, O_RDONLY);
-    if (src_fd < 0)
+    if (src_fd < 0) {
         return log_errno_rf("copy_file open src %s failed", src);
+    }
 
     int dst_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0755);
     if (dst_fd < 0) {
