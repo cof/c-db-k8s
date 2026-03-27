@@ -38,8 +38,9 @@ int rwbuf_write(struct rwbuf *buf, void *data, size_t len);
 int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf]);
 
 // readline flags
-#define RWBUF_EOF   0x1
-#define RWBUF_NOLOG 0x2
+#define RWBUF_EOF    0x1
+#define RWBUF_NOLOG  0x2
+#define RWBUF_ADDNUL 0x4
 int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32_t flags);
 
 // inline helpers

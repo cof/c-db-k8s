@@ -126,11 +126,11 @@ int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32
             buf->widx = 0;
         }
 
-        // chop cr/lf - TODO remove this ?
+        // trim cr/lf
         size_t len = llen;
         if (len && str[len - 1] == '\n') len--;
         if (len && str[len - 1] == '\r') len--;
-        str[len] = '\0';
+        if (flags & RWBUF_ADDNUL) str[len] = '\0';
 
         // store line
         line->ptr = str;
