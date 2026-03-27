@@ -3,6 +3,10 @@
  * Usage    : ./server --help
  * Example  : ./server --hostnanme 127.0.0.1 --port 5379
  *
+ * Overview
+ * -------
+ * Implements a TCP server that supports CMD to update a key value store.
+ *
  * Supported commands:
  *
  *  SET key value - store a key value
@@ -11,7 +15,9 @@
  *  QUIT          - close connection
  *
  * Notes:
+ * - code is single threaded 
  * - code is using dual-stack sockets
+ * - code is using epoll for socket fd activity
  * - default listen is [::]:6379
  * - commands are case insensitve
  * - see config.h for current defaults

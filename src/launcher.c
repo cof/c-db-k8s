@@ -3,6 +3,23 @@
  * Usage    : ./launcher --help
  * Example  : sudo ./launcher
  *
+ * Overview
+ * --------
+ * Implements a container launcher for running client and server.
+ *
+ * Bascially:
+ * - Createa a folders for each container filesystem
+ * - create veth devices for containter
+ * - creates a network namespace for each container
+ * - creates a child process for each container
+ * - switchs child to its private filesystem
+ * - applys security settings
+ * - execs the client or server binary
+ *
+ * Notes
+ * - uses mount to create netns
+ * - uses clone to create container child process
+ * - uses pipes to parent/child sync
  */
 #include <sys/wait.h>
 

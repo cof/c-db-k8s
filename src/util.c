@@ -1,7 +1,8 @@
 /*
- *
+ * Util API
+ * --------
+ * See util.h for description
  */
-
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
@@ -210,6 +211,7 @@ int cmd_argv_next(struct cmd_argv *parse)
     return parse->opt->code ? parse->opt->code : parse->opt_idx;
 }
 
+// print cmd usage
 void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[])
 {
     const char *prog_name = get_basename(cmd);

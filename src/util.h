@@ -131,17 +131,19 @@ struct strbuf {
 
 #define STRBUF_INIT(_buf, _size) { _buf, _buf, _buf + _size } 
 
+// return size of writable space
 static inline size_t strbuf_avail(struct strbuf *buf)
 {
     return buf->end - buf->wptr;
 }
 
-// bytes writen to buffer available to read
+// bytes size of readable data
 static inline size_t strbuf_used(struct strbuf *buf)
 {
     return buf->wptr - buf->data;
 }
 
+// copy memory into string buffer
 static inline struct strbuf *strbuf_putmem(struct strbuf *buf, const char *mem, size_t len)
 {
     if (len > strbuf_avail(buf)) return NULL;
@@ -152,11 +154,13 @@ static inline struct strbuf *strbuf_putmem(struct strbuf *buf, const char *mem, 
     return buf;
 }
 
+// copy char *str into buffer
 static inline struct strbuf *strbuf_putstr(struct strbuf *buf, const char *str)
 {
     return str ? strbuf_putmem(buf, str, strlen(str)) : NULL;
 }
 
+// copy memory into buffer - add a sperator if not empty
 static inline struct strbuf *strbuf_putsep(struct strbuf *buf, int ch, const char *mem, size_t len)
 {
     if (strbuf_used(buf)) {
@@ -166,9 +170,15 @@ static inline struct strbuf *strbuf_putsep(struct strbuf *buf, int ch, const cha
     return strbuf_putmem(buf, mem, len);
 }
 
-
 /*
  * String slice handling code
+ *
+ * A simple structure that stores a ptr + len
+ * 
+ * - Ensures buffer + len alway available
+ * - No more strlen() to check 
+ * - Can pass by value a ptr + len
+ * - Can return by value a ptr + len
  *
  */
 struct str_slice {
@@ -178,6 +188,7 @@ struct str_slice {
 
 #define SLICE(x) (int) (x).len, (x).ptr
 
+// load a ptr + len into string slice
 static inline struct str_slice slice_make(char *str, size_t len)
 {
     struct str_slice dst;
@@ -188,21 +199,25 @@ static inline struct str_slice slice_make(char *str, size_t len)
     return dst;
 }
 
+// load a char * into string slice
 static inline struct str_slice slice_make_cstr(const char *str)
 {
     return slice_make(RMCONST(char *, str), str ? strlen(str) : 0);
 }
 
+// dupe the str
 static inline struct str_slice slice_copy(struct str_slice val)
 {
     return val;
 }
 
+// memcmp the str
 static inline int slice_cmp_cstr(struct str_slice str, const char *cstr, size_t len)
 {
     return len == str.len && memcmp(str.ptr, cstr, len) == 0;
 }
 
+// stripe left,right char from str e.g slice_unbracket(str,'[',']')
 static inline struct str_slice slice_unbracket(struct str_slice str, int left, int right)
 {
     if (str.len && str.ptr[0] == left) {
@@ -249,6 +264,7 @@ static inline struct str_slice slice_split(struct str_slice *src, int ch)
     return dst;
 }
 
+// lower case a string
 static inline void str_tolower(char *str, size_t len)
 {
     while (len) {
@@ -259,6 +275,7 @@ static inline void str_tolower(char *str, size_t len)
     }
 }
 
+// upper case a string
 static inline void str_toupper(char *str, size_t len)
 {
     while (len) {
@@ -280,7 +297,7 @@ static inline int is_numeral(int ch)
     return ch >= '0' && ch <= '9' ? 1 : 0;
 }
 
-
+// is memory block all numeric chars
 static inline int str_isnumeric(const char *str, size_t len)
 {
     if (!len) return 0;
@@ -295,12 +312,14 @@ static inline int str_isnumeric(const char *str, size_t len)
     return 1;
 }
 
+// is str all numeric chars
 static inline int slice_isnumeric(struct str_slice str)
 {
     return str_isnumeric(str.ptr, str.len);
 
 }
 
+// trim leading whitespace
 static inline struct str_slice *slice_ltrim(struct str_slice *str)
 {
     while (str->len && iswhite(*str->ptr)) {
@@ -311,6 +330,7 @@ static inline struct str_slice *slice_ltrim(struct str_slice *str)
     return str;
 }
 
+// trim trailing whitespace
 static inline struct str_slice *slice_rtrim(struct str_slice *str)
 {
     while (str->len && iswhite(str->ptr[str->len - 1])) {
@@ -320,6 +340,7 @@ static inline struct str_slice *slice_rtrim(struct str_slice *str)
     return str;
 }
 
+// trim leading and trailing whitespace
 static inline struct str_slice *slice_trim(struct str_slice *str)
 {
     return slice_ltrim(slice_rtrim(str));
@@ -339,12 +360,12 @@ static inline struct str_slice slice_tolower(struct str_slice str)
     return str;
 }
 
-
 //  misc
 char *slice_strdup(const struct str_slice str);
 char *itoa(char *buf, int len, int val);
 char *int_tostr(int val);
 
+// generate a string
 int gen_str(char *buf, size_t len, const char *fmt, ...)
     __attribute__((format(printf, 3, 4)));
 
@@ -372,7 +393,10 @@ static inline uint64_t dbj2a_hash_slice(const struct str_slice str)
     return dbj2a_hash(str.ptr, str.len);
 }
 
-// signal handler API
+/*
+ * signal handler API
+ * Allow user to setup defaukt signal handers
+ */
 struct simple_sig {
     volatile sig_atomic_t run;
     int signo;
@@ -382,6 +406,7 @@ struct simple_sig {
 
 int setup_signals(struct simple_sig *sig);
 
+// get basename string (no malloc)
 static inline const char *get_basename(const char *name)
 {
     if (!name) return NULL;
@@ -394,7 +419,33 @@ int str_setval(char **str, const char *name, const char *val_str);
 int int_setval(int *ival, const char *name, const char *val_str);
 int uint_setval(uint32_t *uval, const char *name, const char *val_str);
 
-// cmd-line parsing
+/*  
+ *  cmd-line parsing API
+ *  Uses a simple stateful iterator over cmd-line args.
+ *  No malloc just pass it arg,argv and array of opts
+ *
+ *  Example Usage:
+ *  =============
+ *  struct cmd_opt opts[] = {
+ *       // name, desc, def, has_arg, code
+ *      { "--opt1", "description", "default", 1, 0 }:
+ *      { "--opt2", "description", "default", 1, 0 }:
+ *  };
+ *
+ *  int main(int argc, char *argv[]) {
+ *  struct cmd_argv parser = { argc, argv, opts };
+ *  while ( (rc = cmd_argv_next(&parser)) >= 0) {
+ *      printf("opt %d name=%s value=%s\n", rc, parser->name, parser->value);
+ *      switch(rc) {
+ *      case 0:
+ *      case 1:
+ *      }
+ *   }
+ *   if (rc != OPT_EOF) { printf("Error\n"); exit(1));
+ *  return 0;
+ * }
+ *
+ */
 #define OPT_NOARG  0
 #define OPT_REQARG 1
 #define OPT_OPTARG 2
@@ -427,7 +478,7 @@ int opt_setstr(char **str, struct cmd_argv *parse);
 int opt_setint(int *iptr, struct cmd_argv *parse);
 int opt_setuint(uint32_t *uptr, struct cmd_argv *parse);
 
+// print cmd usage
 void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[]);
-
 
 #endif

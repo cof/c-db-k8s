@@ -11,7 +11,12 @@
  *
  *  stdin -> socket write (local to remote)
  *  socket read -> stdout (remote to local)
- * 
+ *
+ * Notes:
+ * - code is single threaded 
+ * - code is using sockets fd via sock API
+ * - code wraps stdin and stdout into sock API
+ * - code is using poll for fd activity
  */
 #include <netdb.h>
 #include <poll.h>
