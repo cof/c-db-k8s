@@ -24,12 +24,13 @@
  * table size 10000 * 3/2 = 15000
  * nearest prime is 15013
  */
-#define DB_MAX_REC 10000
+#define DB_MAX_REC     10000
 #define DB_NUM_BUCKETS 15013
 
 #define DB_REC_DEL 0x1
+#define DB_FILE_MODE 0666
 
-// note key and val are stored directly in db record
+// databse record - note key and val are stored at end of rec
 struct db_rec {
     uint64_t next;
     uint64_t flags;
@@ -38,6 +39,7 @@ struct db_rec {
     char data[];
 };
 
+// database file header
 struct db_hdr {
     uint32_t magic;
     uint32_t version;
@@ -54,9 +56,10 @@ static struct db_hdr *db_hdr;
 static int      db_file;
 static int      init_done;
 
-static int hash(const void *key, int klen)
+// calc hash for key
+static int hash(struct str_slice key)
 {
-    return dbj2a_hash(key, klen) % DB_NUM_BUCKETS;
+    return dbj2a_hash(key.ptr, key.len) % DB_NUM_BUCKETS;
 }
 
 // note key and val are stored directly in entry
@@ -104,14 +107,14 @@ static void del_rec(struct db_rec *rec)
 // delete from hash table
 static int hash_del(struct str_slice key)
 {
-    uint32_t idx = hash(key.ptr, key.len);
+    uint32_t idx = hash(key);
     uint64_t *pp = &db_buckets[idx];
 
     while (*pp) {
         // get hash or mmap entry
         struct db_rec *rec = db_file
-            ? (struct db_rec *) make_ptr(db_mmap_ptr, *pp)
-            : (struct db_rec *) make_mem(*pp);
+            ? make_ptr(db_mmap_ptr, *pp)
+            : make_mem(*pp);
         if (slice_cmp_cstr(key, rec->data, key.len)) {
             // unchain
             *pp = rec->next; 
@@ -136,8 +139,8 @@ static struct db_rec *hash_search(int idx, struct str_slice key)
     while (db_link) {
         // get hash or mmap entry
         struct db_rec *rec = db_file    
-            ?  make_ptr(db_mmap_ptr, db_link)
-            :  make_mem(db_link);
+            ? make_ptr(db_mmap_ptr, db_link)
+            : make_mem(db_link);
         if (slice_cmp_cstr(key, rec->data, key.len)) {
             return rec;
         }
@@ -150,14 +153,14 @@ static struct db_rec *hash_search(int idx, struct str_slice key)
 // lookup key in hash table
 static struct db_rec *hash_find(struct str_slice key)
 {
-    int idx = hash(key.ptr, key.len);
+    int idx = hash(key);
     return hash_search(idx, key);
 }
 
 // store key value in database
 static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
 {
-    int idx = hash(key.ptr, key.len);
+    int idx = hash(key);
     uint64_t *pp = &db_buckets[idx];
 
     while (*pp) {
@@ -195,7 +198,7 @@ static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
     return new_rec;
 }
 
-// check file is a valid database file
+// check database file is valid
 static int file_check(void)
 {
     uint64_t db_link, db_offset;
@@ -235,7 +238,7 @@ static int file_init(const char *file)
 {
     // create file
     int new_file = 1;
-    int fd = open(file, O_RDWR | O_CREAT | O_EXCL, 0666);
+    int fd = open(file, O_RDWR | O_CREAT | O_EXCL, DB_FILE_MODE);
     if (fd == -1) {
         // open file if it exists
         if (errno != EEXIST) {

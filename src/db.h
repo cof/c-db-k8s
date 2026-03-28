@@ -2,13 +2,15 @@
  * DB - a simple key:value store API
  * ---------------------------------
  * A simple API for key value store management featuring
- * - Flexible storage : can use in memory store or mmap database file
- * - database file : mmap file is secure and safe from corruption
+ * - Flexible storage : can use a pure memory store or mmap file for database
+ * - file : mmap file is secure and safe from corruption
+ * - file : uses a header and 
  * - No fragmention : record state, key, value are stored as one block in memory
  */
 #ifndef _DB_H_
 #define _DB_H_
 
+// errors hdr id
 #define DB_FAIL   -1
 #define DB_REINIT -2
 #define DB_MAGIC 0x4D594442 // MYDB
