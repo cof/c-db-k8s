@@ -121,6 +121,7 @@ static int lau_check_reaped(struct lau_ctx *lau, struct lau_child *child, int st
     return log_error_re(rc, "Container '%s' reaped (pid=%d why=%s)", child->name, child->pid, why);
 }
 
+// find child with matching pid
 static struct lau_child *lau_find_child(struct lau_ctx *lau, pid_t pid)
 {
     for (int i = 0; i < lau->num_proc; i++) {
@@ -134,7 +135,7 @@ static struct lau_child *lau_find_child(struct lau_ctx *lau, pid_t pid)
     return NULL;
 }
 
-// wait for intr or a child exit
+// wait for intr or child to be reaped
 static int lau_wait_pids(struct lau_ctx *lau)
 {
     int status = 0;
@@ -173,6 +174,7 @@ static int lau_wait_pids(struct lau_ctx *lau)
 
 /* sync all code */
 
+// send go signal to child
 static int lau_child_send_go(struct lau_ctx *lau, struct lau_child *child)
 {
     return sync_wrpipe(
@@ -181,6 +183,7 @@ static int lau_child_send_go(struct lau_ctx *lau, struct lau_child *child)
     );
 }
 
+// wait for ready signal from child
 static int lau_child_wait_ready(struct lau_ctx *lau, struct lau_child *child)
 {
     return sync_rdpipe(
@@ -228,6 +231,7 @@ static int lau_sync_parallel(struct lau_ctx *lau)
     return 0;
 }
 
+// setup state before we run child
 int lau_child_prerun(struct lau_ctx *lau, struct lau_child *child)
 {
     (void) lau;
@@ -241,6 +245,7 @@ int lau_child_prerun(struct lau_ctx *lau, struct lau_child *child)
     return 0;
 }
 
+// cleanup state after we run child
 int lau_child_postrun(struct lau_ctx *lau, struct lau_child *child)
 {
     int num_err = 0;
@@ -266,6 +271,7 @@ int lau_child_postrun(struct lau_ctx *lau, struct lau_child *child)
     return num_err;
 }
 
+// start a child container
 static int lau_start_child(struct lau_ctx *lau, struct lau_child *child)
 {
     if (verbose) {
@@ -284,6 +290,7 @@ static int lau_start_child(struct lau_ctx *lau, struct lau_child *child)
     return num_err;
 }
 
+// start all child containers
 static int lau_start_all(struct lau_ctx *lau)
 {
     if (verbose) {
@@ -303,6 +310,7 @@ static int lau_start_all(struct lau_ctx *lau)
     return 0;
 }
 
+// link two children together using a single veth
 static int lau_link_veths(struct lau_ctx *lau, struct lau_child *x, struct lau_child *y)
 {
     if (verbose) {
@@ -349,6 +357,7 @@ static int lau_link_veths(struct lau_ctx *lau, struct lau_child *x, struct lau_c
 static int lau_check_net(struct lau_ctx *lau, struct lau_child *child)
 {
     if (child->ip_addr && lau->child_add_ip) { 
+        // tell child process to add network
         child->need_network = 1;
     }
 
@@ -421,6 +430,7 @@ done:
     return rc;
 }
 
+// mount overlayFS for child
 static int lau_mount_overlay(struct lau_ctx *lau, struct lau_child *child)
 {
     if (!lau->use_overlay) return 0;
@@ -462,6 +472,7 @@ static int lau_mount_rootfs(struct lau_ctx *lau, struct lau_child *child)
     return 0;
 }
 
+// create subdirs in child store-dir
 static int lau_create_subdirs(struct lau_ctx *lau, struct lau_child *child)
 {
     if (!lau->use_subdirs) return 0;
@@ -492,7 +503,7 @@ static int lau_create_subdirs(struct lau_ctx *lau, struct lau_child *child)
     return 0;
 }
 
-// create folder for container files
+// create a store-dir for container
 static int lau_create_storedir(struct lau_ctx *lau, struct lau_child *child)
 {
     char tmp[10];
@@ -520,6 +531,7 @@ static int lau_create_storedir(struct lau_ctx *lau, struct lau_child *child)
     return 0;
 }
 
+// check if we use use store-dir or store-dir/rootfs dir for child
 static int lau_check_rootfs(struct lau_ctx *lau)
 {
     if (verbose) {
@@ -543,6 +555,7 @@ static int lau_check_rootfs(struct lau_ctx *lau)
     return 0;
 }
 
+// open host netns file
 static int lau_open_host_netns(struct lau_ctx *lau)
 {
     int rc = open_host_netns();
@@ -587,6 +600,7 @@ static int lau_setup_all(struct lau_ctx *lau)
     return 0;
 }
 
+// create a new child for cfg
 static struct lau_child *lau_add_child(struct lau_ctx *lau, struct lau_config *cfg)
 {
     if (lau->num_proc >= lau->max_proc) { 
@@ -620,6 +634,7 @@ static struct lau_child *lau_add_child(struct lau_ctx *lau, struct lau_config *c
     return child;
 }
 
+// apply cmd-line settings and final checks
 static int lau_apply_cfg(struct lau_ctx *lau)
 {
     // final checks
@@ -647,8 +662,12 @@ static int lau_apply_cfg(struct lau_ctx *lau)
         }
     }
 
-    lau->sync_all = lau->start_order ? lau_sync_inorder : lau_sync_parallel;
+    // set sync order
+    lau->sync_all = lau->start_order 
+        ? lau_sync_inorder 
+        : lau_sync_parallel;
 
+    // all done
     return 0;
 }
 
@@ -791,6 +810,7 @@ static void lau_destroy(struct lau_ctx *lau)
     free(lau);
 }
 
+// create launcher state
 static struct lau_ctx *lau_create(void)
 {
     struct lau_ctx *lau;
