@@ -6,14 +6,14 @@
  * - gen macros : array len, string literal, aligment, rmconst
  * - ptr macros : ptr manipulation
  * - str macros : Stringification
- * - safety funcs : for null checks
- * - encoders|decoers : simple encoders and decoders
- * - string buffers - simple string write buffer
- * - string slices -  simple api for memory view (buf+len)
- * - string conversion - upps
- * - signal api - simple signal handler api
- * - setter - simple string and int value setters
- * - cmd-line - simple cmd-line parser
+ * - min-max   : safe min/max funcs
+ * - signal    : simple signal handler api
+ * - string    : misc string api
+ * - codec     : simple encoders and decoders
+ * - strbuf    : api for string write buffer
+ * - str_slice : api for memory view (buf+len)
+ * - setter    : api for setting string and int values
+ * - cmd-line  : a cmd-line parser
  */
 #ifndef _UTIL_H_
 #define _UTIL_H_
@@ -63,10 +63,26 @@ static inline size_t min(size_t x, size_t y)
     return x < y ? x : y;
 }
 
+/* signal handler API */
+
+// signal state 
+struct simple_sig {
+    volatile sig_atomic_t run;
+    int signo;
+    uid_t uid;
+    pid_t pid;
+};
+
 /*
- *
- * String:
- * -------
+ * simple_sig API
+ * -------------
+ * setup_signals(sig) - setup signal handler
+ */
+int setup_signals(struct simple_sig *sig);
+
+/*
+ * String API
+ * ----------
  * ec_tostr(len, estrs, ec, def) : lookup a string for ec or return default
  * dbj2a_hash(key, len)  : return dbj2a hash of key buffer
  * dbj2a_hash_str(str)   : return dbj2a hash of string
@@ -182,8 +198,8 @@ static inline int str_isnumeric(const char *str, size_t len)
 }
 
 /*
- * Simple encoders/decoders
- * ------------------------
+ * Codec - Simple encoders/decoders
+ * --------------------------------
  * enc_u32(wptr, value) : encode 32-bit at wptr return wptr+4
  * enc_u16(wptr, value) : encode 16-bit at wptr return wptr+2
  * enc_raw(wptr, buf, len) : encode buffer at wptr return wptr + len
@@ -452,23 +468,6 @@ static inline uint64_t slice_dbj2a_hash(const struct str_slice str)
     return dbj2a_hash(str.ptr, str.len);
 }
 
-/* signal handler API */
-
-// signal state 
-struct simple_sig {
-    volatile sig_atomic_t run;
-    int signo;
-    uid_t uid;
-    pid_t pid;
-};
-
-/*
- * simple_sig API
- * -------------
- * setup_signals(sig) - setup signal handler
- */
-int setup_signals(struct simple_sig *sig);
-
 /*
  * Setter API
  * ----------
@@ -481,8 +480,8 @@ int int_setval(int *ival, const char *name, const char *val_str);
 int uint_setval(uint32_t *uval, const char *name, const char *val_str);
 
 /*
- *  cmd-line parsing API
- *  --------------------
+ *  cmd-line parser API
+ *  -------------------
  *  Uses a simple stateful iterator over cmd-line args.
  *  No malloc just pass it arg,argv and array of opts
  *
