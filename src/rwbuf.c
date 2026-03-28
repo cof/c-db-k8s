@@ -1,6 +1,6 @@
 /*
- * A simple read|write buffer API
- * ------------------------------
+ * RWBUF - A simple memory buffer API
+ * ----------------------------------
  * See rwbuf.h for API description.
  */
 #include <stdio.h>
@@ -10,6 +10,37 @@
 #include "log.h"
 #include "rwbuf.h"
 
+// setup dynamic buffer
+int rwbuf_init(struct rwbuf *buf, size_t init_size, size_t max_size)
+{
+    memset(buf, 0, sizeof(*buf));
+
+    buf->max_size = max_size;
+    buf->is_malloc = 1;
+    buf->is_grow   = 1;
+
+    if (init_size && !rwbuf_mkspace(buf, init_size)) {
+        // no room 
+        return -1;
+    }
+
+    return 0;
+}
+
+// free memory
+void rwbuf_deinit(struct rwbuf *buf)
+{
+    if (buf->data && buf->is_malloc) {
+        free(buf->data);
+        buf->data = NULL;
+    }
+
+    buf->size = 0;
+    buf->ridx = 0;
+    buf->widx = 0;
+}
+
+// reserve write space in buffer
 void *rwbuf_mkspace(struct rwbuf *buf, size_t need)
 {
     size_t space = buf->size - buf->widx;
@@ -53,34 +84,7 @@ void *rwbuf_mkspace(struct rwbuf *buf, size_t need)
     return buf->data + buf->widx;
 }
 
-int rwbuf_init(struct rwbuf *buf, size_t init_size, size_t max_size)
-{
-    memset(buf, 0, sizeof(*buf));
-
-    buf->max_size = max_size;
-    buf->is_malloc = 1;
-    buf->is_grow   = 1;
-
-    if (init_size && !rwbuf_mkspace(buf, init_size)) {
-        // no room 
-        return -1;
-    }
-
-    return 0;
-}
-
-void rwbuf_deinit(struct rwbuf *buf)
-{
-    if (buf->data && buf->is_malloc) {
-        free(buf->data);
-        buf->data = NULL;
-    }
-
-    buf->size = 0;
-    buf->ridx = 0;
-    buf->widx = 0;
-}
-
+// append memory buffer contents
 int rwbuf_write(struct rwbuf *buf, void *data, size_t len)
 {
     void *space = rwbuf_mkspace(buf, len);
@@ -92,6 +96,7 @@ int rwbuf_write(struct rwbuf *buf, void *data, size_t len)
     return 0;
 }
 
+// append memory buffers contents
 int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf])
 {
     size_t len = iovs_len(nbuf, iovs);
@@ -108,6 +113,7 @@ int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf])
     return 0;
 }
 
+// read a line (CRLF or LF terminated)
 int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32_t flags)
 {
     size_t   rlen = rwbuf_used(buf);

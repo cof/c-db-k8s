@@ -63,7 +63,7 @@ static inline int my_conn_isbusy(struct my_conn *conn)
 // has read end finished
 static inline int my_conn_iseof(struct my_conn *conn)
 {
-    return sock_rd_done(conn->sock_recv) || sock_mustclose(conn->sock_recv);
+    return sock_read_done(conn->sock_recv) || sock_mustclose(conn->sock_recv);
 }
 
 static void my_conn_pipe(struct my_conn *src, struct my_conn *dst, 
@@ -80,7 +80,7 @@ static void my_conn_pipe(struct my_conn *src, struct my_conn *dst,
         if (rc != SOCK_CLOSED) return;
         read_eof = 1;
         // push eof/es to dst
-        sock_wrclose(dst->sock_send, 0);
+        sock_write_close(dst->sock_send, 0);
         log_info("+", "Connection closed by %s", sender);
     }
 
@@ -91,7 +91,7 @@ static void my_conn_pipe(struct my_conn *src, struct my_conn *dst,
         if (log_line) {
             log_info("LOG", "%s: %.*s", log_line, SLICE(line));
         }
-        rc = sock_send_line(dst->sock_send, line);
+        rc = sock_sendline(dst->sock_send, line);
         if (rc < 0) {
             // write error
             fds[dst->poll_out].fd = -1;
@@ -121,14 +121,14 @@ static void my_conn_drain(struct my_conn *conn, struct pollfd *fds)
 
 static int my_conn_stop(struct my_conn *user, struct my_conn *serv, struct pollfd *fds)
 {
-    if (sock_wr_done(serv->sock_send)) {
+    if (sock_write_done(serv->sock_send)) {
         // nothing left to write
         int rc = sock_sendfin(serv->sock_send);
         if (rc) return 1;
         fds[serv->poll_out].fd = -1;
     }
 
-    if (sock_wr_done(user->sock_send)) {
+    if (sock_write_done(user->sock_send)) {
         // nothing left to write
         int rc = sock_sendfin(user->sock_send);
         if (rc) return 1;
@@ -208,7 +208,7 @@ int main(int argc, char *argv[])
 
     // server connect
     struct my_conn serv = MY_CONN_INIT(serv, -1, -1);
-    rc = sock_connect(&serv.socks[0], SOCK_TCP | SOCK_NONBLK, hostname, port);
+    rc = sock_client(&serv.socks[0], SOCK_TCP | SOCK_NONBLK, hostname, port);
     if (rc) fatal_error("No connection");
     serv.sock_send = serv.sock_recv = serv.socks;
 

@@ -1,14 +1,10 @@
 /*
- * DB implements a key:value store
-
- * API
- * ---
- * db_init  - create database  -> rc = db_init(file_name)
- * db_deinit - shutdown database
- * db_set  - set a key value   -> db_set(key, value)
- * db_get  - get value for key -> value = db_get(ket)
- * db_del  - delete key e.g    -> rc = db_del(key)
- *
+ * DB - a simple key:value store API
+ * ---------------------------------
+ * A simple API for key value store management featuring
+ * - Flexible storage : can use in memory store or mmap database file
+ * - database file : mmap file is secure and safe from corruption
+ * - No fragmention : record state, key, value are stored as one block in memory
  */
 #ifndef _DB_H_
 #define _DB_H_
@@ -17,7 +13,20 @@
 #define DB_REINIT -2
 #define DB_MAGIC 0x4D594442 // MYDB
 
-int db_init(const char *file_name);
+/*
+ * Initialization
+ * --------------
+ * db_init(file) : setup database - use file store if set else use memory store
+ * db_deinit()   : shutdown database
+ *
+ * key-value api
+ * -------------
+ * db_set(key,vale) : store a key value
+ * db_get(key)      : get value for key 
+ * db_del(key)      : delete key
+ */
+
+int db_init(const char *file);
 void db_deinit(void);
 
 int db_set(struct str_slice key, struct str_slice val);

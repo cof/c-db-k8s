@@ -1,7 +1,7 @@
 /*
- * Container child code
- *
- * Notes:
+ * launcher child API
+ * ---------------------
+ * See lau_child.h for API description.
  *
  */
 #include <errno.h>
@@ -16,53 +16,13 @@
 #include "ns_util.h"
 #include "lau_child.h"
 
-static int setup_priv(struct lau_child *child)
-{
-    if (verbose) {
-        log_info("LOG", "Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)", 
-            child->name, child->pid, child->uid, child->gid);
-    }
-
-    if (child->drop_caps && drop_bounding_set(child->name)) return -1;
-    if (child->drop_sudo && drop_sudo(child->name, child->uid , child->gid)) return -1;
-    if (child->drop_caps && clear_all_caps(child->name)) return -1;
-    if (child->drop_privs && drop_new_privs(child->name))  return -1;
-    if (child->use_seccomp && apply_seccomp(child->name)) return -1;
-
-    return 0; 
-}
-
-static int child_send_ready(struct lau_child *child)
-{
-    return sync_wrpipe(
-        &child->ready_write_fd, child->sig, 
-        "Container", "send-ready", child->name, child->pid
-    );
-}
-
-static int child_wait_go(struct lau_child *child)
-{
-    // close the pipe ends we don't need
-    int rc = sync_rdwr_close(&child->ready_read_fd, &child->go_write_fd,
-        "Container", "wait-go", child->name, child->pid
-    );
-    if (rc) return rc;
-
-    rc = sync_rdpipe(&child->go_read_fd, child->sig,
-        "Container", "wait-go", child->name, child->pid
-    );
-
-    return rc;
-}
-
+// create new child
 struct lau_child *lau_child_create(void)
 {
     struct lau_child *child;
 
     child = malloc(sizeof(*child));
-    if (!child) {
-        return log_errno_rn("malloc failed for lau_child");
-    }
+    if (!child) return log_errno_rn("malloc failed for lau_child");
 
     memset(child, 0, sizeof(*child));
 
@@ -154,6 +114,7 @@ void lau_child_free(struct lau_child *child)
     // all done
 }
 
+// load config into child
 int lau_child_cfg_load(struct lau_child *child, struct lau_config *cfg)
 {
     if (!cfg->name) return log_error_rf("Missing container name");
@@ -172,7 +133,27 @@ int lau_child_cfg_load(struct lau_child *child, struct lau_config *cfg)
     return 0;
 }
 
-// bring child veth up (rename veth to eth0, add addr, set lo and eth0 up)
+// set child netns name 
+int lau_child_set_netns(struct lau_child *child, const char *name, const char *suffix)
+{
+    if (!suffix) suffix = "";
+    return gen_str(child->netns_name, sizeof(child->netns_name), "%s%s", name, suffix);
+}
+
+// set child veth name
+int lau_child_set_veth(struct lau_child *child, const char *name, const char *prefix)
+{
+    if (!prefix) prefix = "";
+    return gen_str(child->veth_name, sizeof(child->veth_name), "%s%s", prefix, name);
+}
+
+/* 
+ * bring veth up inside child namespace 
+ * - rename veth to eth0
+ * - add ip addr
+ * - set lo up 
+ * - set eth0 up
+ */
 int lau_child_net_setup(struct lau_child *child)
 {
     if (verbose) {
@@ -190,19 +171,7 @@ int lau_child_net_setup(struct lau_child *child)
     return 0;
 }
 
-int lau_child_set_netns(struct lau_child *child, const char *name, const char *suffix)
-{
-    if (!suffix) suffix = "";
-    return gen_str(child->netns_name, sizeof(child->netns_name), "%s%s", name, suffix);
-}
-
-int lau_child_set_veth(struct lau_child *child, const char *name, const char *prefix)
-{
-    if (!prefix) prefix = "";
-    return gen_str(child->veth_name, sizeof(child->veth_name), "%s%s", prefix, name);
-}
-
-// create pipe / stack / clone flags
+// run - create pipe / stack / clone flags
 int lau_child_prep(struct lau_child *child)
 {
     int fds[2];
@@ -243,6 +212,7 @@ int lau_child_prep(struct lau_child *child)
     return 0;
 }
 
+// run - switch to child netns
 int lau_child_switch_netns(struct lau_child *child) 
 {
     int rc = setns(child->netns_fd, CLONE_NEWNET);
@@ -258,7 +228,7 @@ int lau_child_switch_netns(struct lau_child *child)
     return 0;
 }
 
-// clone child aka fork parent process
+// run - clone child aka fork parent process
 int lau_child_run(struct lau_child *child)
 {
     child->pid = clone(lau_child_start, child->stack + child->stack_size, child->clone_flags, child);
@@ -273,7 +243,49 @@ int lau_child_run(struct lau_child *child)
     return 0;
 }
 
-// child process starts here
+// child process - set security
+static int setup_priv(struct lau_child *child)
+{
+    if (verbose) {
+        log_info("LOG", "Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)", 
+            child->name, child->pid, child->uid, child->gid);
+    }
+
+    if (child->drop_caps && drop_bounding_set(child->name)) return -1;
+    if (child->drop_sudo && drop_sudo(child->name, child->uid , child->gid)) return -1;
+    if (child->drop_caps && clear_all_caps(child->name)) return -1;
+    if (child->drop_privs && drop_new_privs(child->name))  return -1;
+    if (child->use_seccomp && apply_seccomp(child->name)) return -1;
+
+    return 0; 
+}
+
+// child process - send ready signal
+static int child_send_ready(struct lau_child *child)
+{
+    return sync_wrpipe(
+        &child->ready_write_fd, child->sig, 
+        "Container", "send-ready", child->name, child->pid
+    );
+}
+
+// child process - wait go signal
+static int child_wait_go(struct lau_child *child)
+{
+    // close the pipe ends we don't need
+    int rc = sync_rdwr_close(&child->ready_read_fd, &child->go_write_fd,
+        "Container", "wait-go", child->name, child->pid
+    );
+    if (rc) return rc;
+
+    rc = sync_rdpipe(&child->go_read_fd, child->sig,
+        "Container", "wait-go", child->name, child->pid
+    );
+
+    return rc;
+}
+
+// child process - starts here
 int lau_child_start(void *arg)
 {
     struct lau_child *child = arg;

@@ -1,9 +1,7 @@
 /*
- * DB implements a key:value store
- *
- * Two storage modes
- * - use in memory store
- * - use mmap database file
+ * DB a simple key:value store API
+ * --------------------------------
+ * See db.h for API description
  */
 #include <stdlib.h>
 #include <string.h>
@@ -103,6 +101,7 @@ static void del_rec(struct db_rec *rec)
     }
 }
 
+// delete from hash table
 static int hash_del(struct str_slice key)
 {
     uint32_t idx = hash(key.ptr, key.len);
@@ -129,6 +128,7 @@ static int hash_del(struct str_slice key)
     return -1;
 }
 
+// lookup key in hash bucket
 static struct db_rec *hash_search(int idx, struct str_slice key)
 {
     uint64_t db_link = db_buckets[idx];
@@ -147,12 +147,14 @@ static struct db_rec *hash_search(int idx, struct str_slice key)
     return NULL;
 }
 
+// lookup key in hash table
 static struct db_rec *hash_find(struct str_slice key)
 {
     int idx = hash(key.ptr, key.len);
     return hash_search(idx, key);
 }
 
+// store key value in database
 static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
 {
     int idx = hash(key.ptr, key.len);
@@ -193,6 +195,7 @@ static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
     return new_rec;
 }
 
+// check file is a valid database file
 static int file_check(void)
 {
     uint64_t db_link, db_offset;
@@ -228,20 +231,20 @@ static int file_check(void)
 }
 
 // create a mmap database file
-static int file_init(const char *file_name)
+static int file_init(const char *file)
 {
     // create file
     int new_file = 1;
-    int fd = open(file_name, O_RDWR | O_CREAT | O_EXCL, 0666);
+    int fd = open(file, O_RDWR | O_CREAT | O_EXCL, 0666);
     if (fd == -1) {
         // open file if it exists
         if (errno != EEXIST) {
-            return log_errno_rf("open db-file %s failed", file_name);
+            return log_errno_rf("open db-file %s failed", file);
         }
         // open existing file
-        fd = open(file_name, O_RDWR, 0);
+        fd = open(file, O_RDWR, 0);
         if (fd == -1) {
-            return log_errno_rf("open db-file %s failed", file_name);
+            return log_errno_rf("open db-file %s failed", file);
         }
         new_file = 0;
     }
@@ -250,7 +253,7 @@ static int file_init(const char *file_name)
     if (fstat(fd, &st) == -1) {
         int ec = errno;
         close(fd);
-        return log_ec_rf(ec, "fstat db-file %s failed", file_name);
+        return log_ec_rf(ec, "fstat db-file %s failed", file);
     }
 
     // calc min file size
@@ -265,7 +268,7 @@ static int file_init(const char *file_name)
         if (ftruncate(fd, file_size) == -1) {
             int ec = errno;
             close(fd);
-            return log_ec_rf(ec, "open db-file %s failed", file_name);
+            return log_ec_rf(ec, "open db-file %s failed", file);
         }
     }
 
@@ -299,6 +302,7 @@ static int file_init(const char *file_name)
     return 0;
 }
 
+// free hash table memory
 static void hash_deinit(void)
 {
     if (!db_buckets) return;
@@ -316,6 +320,7 @@ static void hash_deinit(void)
     db_buckets = NULL;
 }
 
+// allocate hash table memroy
 static int hash_init(void)
 {
     db_buckets = calloc(DB_NUM_BUCKETS, sizeof(uintptr_t));
@@ -327,12 +332,13 @@ static int hash_init(void)
     return 0;
 }
 
-int db_init(const char *file_name)
+// setup database - if file set use file store else use memory store
+int db_init(const char *file)
 {
     if (init_done) return DB_REINIT;
 
-    int rc = file_name
-        ? file_init(file_name)
+    int rc = file
+        ? file_init(file)
         : hash_init();
 
     if (rc) return rc;

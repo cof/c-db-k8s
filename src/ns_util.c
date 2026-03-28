@@ -460,6 +460,7 @@ int restore_host_netns(int netns_fd)
     return 0;
 }
 
+// create a file for a netns
 int create_netns_file(const char *netns_path)
 {
     int fd = open(netns_path, O_RDONLY | O_CREAT | O_EXCL, 0600);
@@ -497,24 +498,6 @@ int create_netns_file(const char *netns_path)
     return 0;
 }
 
-// mount roofs_dir into container root
-int mount_rootfs(const char *rootfs_dir, const char *rootfs_path)
-{
-    int rc = mount(rootfs_dir, rootfs_path, NULL, MS_BIND, NULL);
-    if (rc != 0) {
-        return log_errno_rf("mount bind rootfs %s to %s failed", rootfs_dir, rootfs_path);
-    }
-   
-    // make all further mounts private
-    rc = mount(NULL, rootfs_path, NULL, MS_REC | MS_PRIVATE, NULL);
-    if (rc) {
-        int _errno = errno;
-        umount2(rootfs_path, MNT_DETACH);
-        return log_ec_rf(_errno, "mount private %s failed", rootfs_path);
-    }
-
-    return 0;
-}
 
 // mount an OverlayFS
 int mount_overlay(const char *path, 
@@ -551,25 +534,27 @@ int unmount_overlay(const char *path, const char *name)
     return 0;
 }
 
-int mount_file(const char *path)
-{
-    // make file a mount point
-    if (mount(path, path, "none", MS_BIND, NULL) < 0) {
-        return log_errno_rf("mount self-bind %s failed", path);
-    }
 
-    // make file private
-    if (mount("", path, NULL, MS_PRIVATE, NULL) < 0) {
+// mount roofs_dir into container root
+int mount_rootfs(const char *rootfs_dir, const char *rootfs_path)
+{
+    int rc = mount(rootfs_dir, rootfs_path, NULL, MS_BIND, NULL);
+    if (rc != 0) {
+        return log_errno_rf("mount bind rootfs %s to %s failed", rootfs_dir, rootfs_path);
+    }
+   
+    // make all further mounts private
+    rc = mount(NULL, rootfs_path, NULL, MS_REC | MS_PRIVATE, NULL);
+    if (rc) {
         int _errno = errno;
-        umount2(path, MNT_DETACH);
-        errno = _errno;
-        return log_errno_rf("mount private %s failed", path);
+        umount2(rootfs_path, MNT_DETACH);
+        return log_ec_rf(_errno, "mount private %s failed", rootfs_path);
     }
 
     return 0;
 }
 
-// mount a binary file into container root filesystem - no file copy
+// mount a host binary into container filesystem - no file copy
 int mount_cmd(const char *host_path, const char *rootfs_path)
 {
     if (verbose) {
@@ -607,7 +592,25 @@ int mount_cmd(const char *host_path, const char *rootfs_path)
     return 0;
 }
 
-// bind mount a new nets
+// make file a mount point
+int mount_file(const char *path)
+{
+    if (mount(path, path, "none", MS_BIND, NULL) < 0) {
+        return log_errno_rf("mount self-bind %s failed", path);
+    }
+
+    // make file private
+    if (mount("", path, NULL, MS_PRIVATE, NULL) < 0) {
+        int _errno = errno;
+        umount2(path, MNT_DETACH);
+        errno = _errno;
+        return log_errno_rf("mount private %s failed", path);
+    }
+
+    return 0;
+}
+
+// bind mount a new netns file - uses fork/exec to safely bind mount
 int mount_netns(const char *netns_path)
 {
     // create path
@@ -687,22 +690,26 @@ int mount_netns(const char *netns_path)
     return netns_fd;
 }
 
+// create a new veth device
 int veth_add(const char *veth, const char *peer)
 {
     return run_cmd("ip link add %s type veth peer name %s 2>/dev/null", veth, peer);
 }
 
+// delete veth device
 int veth_del(const char *veth)
 {
     return run_cmd("ip link del %s 2>/dev/null", veth);
 }
 
+// set netns for veth
 int veth_setns(const char *veth, const char *netns)
 {
     return run_cmd("ip link set %s netns %s", veth, netns);
 }
 
-int create_veth_id(const char *name,
+// generate id-str for veth 
+int veth_gen_idstr(const char *name,
     char *veth, int veth_len,
     char *peer, size_t peer_len)
 {
@@ -722,12 +729,13 @@ int create_veth_id(const char *name,
     return -EEXIST;
 }
 
-int setup_veth(const char *cont_name, const char *netns)
+// create and setup a veth for container netns
+int veth_setup(const char *cont_name, const char *netns)
 {
     char veth[IFNAMSIZ];
     char peer[IFNAMSIZ];
 
-    RUN(create_veth_id(cont_name, veth, sizeof(veth), peer, sizeof(peer)));
+    RUN(veth_gen_idstr(cont_name, veth, sizeof(veth), peer, sizeof(peer)));
 
     RUN_CMD("ip link set %s netns %s", peer, netns);
     RUN_CMD("ip link set %s up", veth);
@@ -737,6 +745,7 @@ int setup_veth(const char *cont_name, const char *netns)
     return 0;
 }
 
+// set container hostname
 int set_identity(const char *name)
 {
     int rc = sethostname(name, strlen(name));
@@ -748,7 +757,7 @@ int set_identity(const char *name)
 }
 
 /*
- * set_rootfs -child process switch to new root file system
+ * set_rootfs - swith child process to new root file system
  *
  * 7 steps:
  * ========
@@ -797,7 +806,7 @@ int set_rootfs(const char *rootfs)
     return 0;
 }
 
-// child process - create new /proc
+// child process - create proc dir
 int set_proc(void)
 {
     // new PID namespace - create new /proc
@@ -823,7 +832,7 @@ int create_network(const char *veth_name, const char *ip_addr)
     return 0;
 }
 
-// security
+// child - drop all capabilities
 int drop_bounding_set(const char *name)
 {
     for (int i = 0; i <= 63; i++) { 
@@ -839,6 +848,7 @@ int drop_bounding_set(const char *name)
     return 0;
 }
 
+// child - clear existing capabilities
 int clear_all_caps(const char *name)
 {
     struct __user_cap_header_struct header = { _LINUX_CAPABILITY_VERSION_3, 0 };
@@ -852,6 +862,7 @@ int clear_all_caps(const char *name)
     return 0;
 }
 
+// child - drop sudo
 int drop_sudo(const char *name, uid_t uid, uid_t gid)
 {
     /* needs musl-gcc or dynanic libs
@@ -871,6 +882,7 @@ int drop_sudo(const char *name, uid_t uid, uid_t gid)
     return 0;
 }
 
+// child - drop right to new privileges
 int drop_new_privs(const char *name)
 {
     int rc = prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);

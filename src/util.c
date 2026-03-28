@@ -31,9 +31,11 @@ static void handle_signal(int signo, siginfo_t *info, void *ucontext)
         glob_sig->uid = info->si_uid;
     }
 
+    // tell user
     glob_sig->run = 0;
 }
 
+// setup signal handld for app
 int setup_signals(struct simple_sig *sig)
 {
     if (!sig) return -1;
@@ -74,6 +76,7 @@ char *slice_strdup(const struct str_slice str)
     return copy;
 }
 
+// store ascii repr of int to string buffer
 char *itoa(char *buf, int len, int val)
 {
     if (!buf || len == 0) {
@@ -92,6 +95,7 @@ char *itoa(char *buf, int len, int val)
     return str; 
 }
 
+// convert int to string - uses wrap-around buffer list
 char *int_tostr(int val) 
 {
     static char bufs[16][10];
@@ -103,6 +107,7 @@ char *int_tostr(int val)
     return itoa(str, sizeof(bufs[0][0]), val);
 }
 
+// generate a string using a snprintf to buffer
 int gen_str(char *buf, size_t len, const char *fmt, ...)
 {
     va_list args;
@@ -152,7 +157,34 @@ int uint_setval(uint32_t *uval, const char *name, const char *val_str)
     return 0;
 }
 
-// cmd-line parsing
+/*
+ *  cmd-line parsing API
+ *  --------------------
+ *  Uses a simple stateful iterator over cmd-line args.
+ *  No malloc just pass it arg,argv and array of opts
+ *
+ *  Example Usage:
+ *  =============
+ *  struct cmd_opt opts[] = {
+ *       // name, desc, def, has_arg, code
+ *      { "--opt1", "description", "default", 1, 0 }:
+ *      { "--opt2", "description", "default", 1, 0 }:
+ *  };
+ *
+ *  int main(int argc, char *argv[]) {
+ *  struct cmd_argv parser = { argc, argv, opts };
+ *  while ( (rc = cmd_argv_next(&parser)) >= 0) {
+ *      printf("opt %d name=%s value=%s\n", rc, parser->name, parser->value);
+ *      switch(rc) {
+ *      case 0:
+ *      case 1:
+ *      }
+ *   }
+ *   if (rc != OPT_EOF) { printf("Error\n"); exit(1));
+ *  return 0;
+ * }
+ *
+ */
 int opt_setstr(char **str, struct cmd_argv *parse)
 {
     return str_setval(str, parse->name, parse->value);
@@ -179,7 +211,6 @@ static int find_opt(const char *name, const struct cmd_opt opts[])
     return -1;
 }
 
-// a simple stateful iterator over cmd-line args
 int cmd_argv_next(struct cmd_argv *parse) 
 {
     // skip prog name

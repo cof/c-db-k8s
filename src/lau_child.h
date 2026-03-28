@@ -1,12 +1,13 @@
 /*
- * Container
+ * launcher child API
+ * -----------------
  */
-
 #ifndef _LAU_CHILD_
 #define _LAU_CHILD_
 
 #include <net/if.h> // for IFNAMSIZ
 
+// config structure
 struct lau_config {
     char *name;
     char *cmd_path;
@@ -15,6 +16,7 @@ struct lau_config {
     char *ip_addr;
 };
 
+// child state structure
 struct lau_child {
     struct simple_sig *sig;
     // user config
@@ -71,20 +73,46 @@ struct lau_child {
     unsigned int signalled : 1;
 };
 
+/*
+ * create child
+ * ------------
+ * lau_child_create() - create a new child
+ * lau_child_free()   - free child state
+ */
 struct lau_child *lau_child_create(void);
 void lau_child_free(struct lau_child *child);
 
+/*
+ * configure child
+ * -----------------
+ * lau_child_cfg_load(child, cfg) : load config into child
+ * lau_child_set_netns(child, suffix) : set child netns name
+ * lau_child_set_veth(child, prefix) : set child veth name
+ * lau_child_net_setup(child) : bring veth up inside child namespace
+ */
 int lau_child_cfg_load(struct lau_child *child, struct lau_config *cfg);
-int lau_child_net_setup(struct lau_child *child);
 int lau_child_set_netns(struct lau_child *child, const char *name, const char *suffix);
 int lau_child_set_veth(struct lau_child *child, const char *name, const char *prefix);
+int lau_child_net_setup(struct lau_child *child);
 
+/*
+ * run child
+ * ---------
+ * lau_child_prep(child) : create pipe,stack,clone flags
+ * lau_child_switch_netns(child) : switch to child netns
+ * lau_child_run(child) : clone child aka fork parent process
+ * lau_child_start(child) : clone entry point
+ */
 int lau_child_prep(struct lau_child *child);
 int lau_child_switch_netns(struct lau_child *child);
 int lau_child_run(struct lau_child *child);
 int lau_child_start(void *arg);
 
-// inline helpers
+/*
+ * helpers
+ * -------
+ * child_get_rootfs(child) : return host path of child rootfs
+ */
 static inline char *child_get_rootfs(struct lau_child *child)
 {
     return child->use_subdir ? child->rootfs_path : child->store_dir;

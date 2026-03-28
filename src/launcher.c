@@ -44,32 +44,31 @@
 // launcher state
 struct lau_ctx {
     const char *prog_name; // argv[0]
-    char *cur_dir; // cwd where laucher start
-    char *base_dir; // root dir for all launcher state
-    char *src_dir; // where host cmd files live
-    char *run_dir; // where host cmd files live
-    char *netns_dir;  // netns mounts /var/run/netns
-    char *runtime_dir; 
-    char *store_dir;
-    char *rootfs_dir; // where a rootfs lives
-    char *netns_suffix;
-    char *veth_prefix;
-    int start_delay;
+    char *cur_dir;     // cwd where laucher start
+    char *base_dir;     // root dir for all launcher state
+    char *src_dir;      // location of host cmd files live
+    char *run_dir;      // location of launcher pid run file
+    char *netns_dir;    // netns mount point overide e.g /var/run/netns
+    char *store_dir;    // path where container dirs are createed
+    char *rootfs_dir;   // path where a rootfs_dir lives
+    char *netns_suffix; // suffix to add to nens name e.g name-ns
+    char *veth_prefix;  // prefix to prepend to veth name e.g. veth-name
+    int start_delay;    // delay in secs between starting each container
     int (*sync_all)(struct lau_ctx *lau);
-    struct simple_sig sig;
+    struct simple_sig sig; // signal handler state
     // container child process
     int max_proc;
     int num_proc;
     struct lau_child *procs[MAX_PROC];
-    unsigned int num_run;
-    int host_netns_fd;
-    mode_t dir_mode;
-    pid_t pid;
+    unsigned int num_run; // take a wild guess reader
+    int host_netns_fd;    // default host netns
+    mode_t dir_mode;      // mode for createing dirs
+    pid_t pid;            // our pid
     // security
-    char *sudo_user;
-    int sudo_uid;
-    int sudo_gid;
-    int euid;
+    char *sudo_user; // SUDO_USER value
+    int sudo_uid;    // SUDO_UID value
+    int sudo_gid;    // SUDO_GID value
+    int euid;        // effective uid
     // flags - bit fields
     unsigned int need_basedir : 1; // create base dir
     unsigned int start_order  : 1; // start container in order
@@ -78,11 +77,11 @@ struct lau_ctx {
     unsigned int drop_caps    : 1; // drop capabilities
     unsigned int drop_privs   : 1; // prctl PR_SET_NO_NEW_PRIVS
     unsigned int use_seccomp  : 1; // use seccomp filters
-    unsigned int use_name_id  : 1;
+    unsigned int use_name_id  : 1; // ???
     unsigned int use_subdirs  : 1; // rootfs
     unsigned int use_overlay  : 1; // lower,upper,work,merged
     unsigned int mount_cmds   : 1; // mount cmd files instead of copying 
-    unsigned int child_add_ip : 1; // child sets up network
+    unsigned int child_add_ip : 1; // child process sets up network
 };
 
 
@@ -769,6 +768,7 @@ int lau_init(struct lau_ctx *lau)
     return 0;
 }
 
+// reap children - free memory
 static void lau_destroy(struct lau_ctx *lau)
 {
     for (int i = 0; i < lau->num_proc; i++) {
@@ -782,7 +782,6 @@ static void lau_destroy(struct lau_ctx *lau)
     if (lau->src_dir) free(lau->src_dir);
 
     if (lau->netns_dir) free(lau->netns_dir);
-    if (lau->runtime_dir)  free(lau->runtime_dir);
     if (lau->store_dir) free(lau->store_dir);
     if (lau->rootfs_dir) free(lau->rootfs_dir);
 

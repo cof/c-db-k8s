@@ -1,6 +1,6 @@
 /*
- * socket wrapper code API
- * -----------------------
+ * SOCK - A simple socket layer API
+ * --------------------------------
  * See sock.h for API description.
  */
 #include <stdio.h>
@@ -147,6 +147,7 @@ static struct addrinfo *resolv_addr(uint32_t mode, const char *host, const char 
     return res;
 }
 
+// init state for new or accepted file descriptor
 int sock_init(struct simple_sock *sock,
     int fd, struct sockaddr_in6 *addr,
     size_t max_line, size_t buf_size,
@@ -173,7 +174,49 @@ void sock_deinit(struct simple_sock *sock, int can_log)
     rwbuf_deinit(&sock->recv_buf);
 }
 
-// create inet(4|6) tcp listener socket
+// connect to hostname port - e,g sock_connect(sock, SOCK_TCP, "localhost", 80)
+int sock_client(struct simple_sock *sock, uint32_t mode, const char *hostname, const char *port)
+{
+    struct addrinfo *addr_list = resolv_addr(mode, hostname, port);
+    if (!addr_list) return -1;
+
+    // loop over addr list for working connection
+    int sock_fd = -1;
+    for (struct addrinfo *ai = addr_list; ai; ai = ai->ai_next) {
+        sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (sock_fd == -1) continue;
+        if (mode & SOCK_UDP && (mode & SOCK_UDPCON) == 0) break;
+        int rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
+        if (rc != -1) {
+            // connected
+            sock->fd = sock_fd;
+            sock->mode = mode;
+            memcpy(&sock->addr, ai->ai_addr, sizeof(sock->addr));
+            break;
+        }
+        close(sock_fd);
+        sock_fd = -1;
+    }
+    freeaddrinfo(addr_list);
+
+    if (sock_fd == -1) {
+        return log_error_rf("Connect to %s:%s failed", hostname, port);
+    }
+
+    if (mode & SOCK_NONBLK) {
+        int rc = sock_set_nonblk(sock);
+        if (rc) {
+            close(sock_fd);
+            sock->fd = -1;
+            return rc;
+        }
+    }
+
+    // all done
+    return 0;
+}
+
+// create listener socket fd using resolved IP address + port
 static int sock_listen_addr(struct simple_sock *sock, struct addrinfo *res)
 {
     char tmp[100];
@@ -205,23 +248,26 @@ static int sock_listen_addr(struct simple_sock *sock, struct addrinfo *res)
         goto err;
     }
 
-    // turn on REUSE_ADDR
-    opt = 1;
-    if (setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
-        log_errno("enable reuse_addr");
-        goto err;
+    // resuse addr
+    if (sock->mode & SOCK_REUSE) {
+        opt = 1;
+        if (setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
+            log_errno("enable reuse_addr");
+            goto err;
+        }
     }
 
-    // bind to address
-    if (bind(sock->fd, res->ai_addr, res->ai_addrlen) == -1) {
-        log_errno("bind to (%s) failed", addr_str);
-        goto err;
-    }
-
-    // finally tell os to start listening
-    if (listen(sock->fd, SOMAXCONN) == -1) {
-        log_errno("listen on %d,%s failed", sock->fd, addr_str);
-        goto err;
+    if (sock->mode & SOCK_PASSIVE) {
+        // bind to address
+        if (bind(sock->fd, res->ai_addr, res->ai_addrlen) == -1) {
+            log_errno("bind to (%s) failed", addr_str);
+            goto err;
+        }
+        // listen for incoming connectons
+        if (listen(sock->fd, SOMAXCONN) == -1) {
+            log_errno("listen on %d,%s failed", sock->fd, addr_str);
+            goto err;
+        }
     }
 
     // all done
@@ -238,7 +284,7 @@ err:
     return SOCK_ERROR;
 }
 
-int sock_listen(struct simple_sock *sock, uint32_t mode, const char *host, const char *port)
+int sock_server(struct simple_sock *sock, uint32_t mode, const char *host, const char *port)
 {
     struct addrinfo *res = resolv_addr(mode, host, port);
     if (!res) return -1;
@@ -269,47 +315,51 @@ int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr)
     return fd;
 }
 
-int sock_connect(struct simple_sock *sock, uint32_t mode, const char *host, const char *port)
+
+// shutdown writes on socket
+int sock_sendfin(struct simple_sock *sock) 
 {
-    struct addrinfo *addr_list = resolv_addr(mode, host, port);
-    if (!addr_list) return -1;
+    if (sock->sys_err) return SOCK_ERROR;
+    if (sock->fin_sent) return 0;
 
-    // loop over addr list for working connection
-    int sock_fd = -1;
-    for (struct addrinfo *ai = addr_list; ai; ai = ai->ai_next) {
-        sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-        if (sock_fd == -1) continue;
-        if (mode & SOCK_UDP && (mode & SOCK_UDPCON) == 0) break;
-        int rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
-        if (rc != -1) {
-            // connected
-            sock->fd = sock_fd;
-            sock->mode = mode;
-            memcpy(&sock->addr, ai->ai_addr, sizeof(sock->addr));
-            break;
-        }
-        close(sock_fd);
-        sock_fd = -1;
-    }
-    freeaddrinfo(addr_list);
-
-    if (sock_fd == -1) {
-        return log_error_rf("Connect to %s:%s failed", host, port);
+    int rc = shutdown(sock->fd, SHUT_WR);
+    if (rc != 0 && errno != ENOTSOCK) {
+        sock->sys_err = 1;
+        return log_errno_rf("shutdown write fd=%d failed", sock->fd);
     }
 
-    if (mode & SOCK_NONBLK) {
-        int rc = sock_set_nonblk(sock);
-        if (rc) {
-            close(sock_fd);
-            sock->fd = -1;
-            return rc;
-        }
+    sock->fin_sent = 1;
+    if (sock->send_fin) {
+        // send done
+        sock->send_fin = 0;
     }
 
-    // all done
     return 0;
 }
 
+// close the socket fd
+int sock_close(struct simple_sock *sock, int can_log)
+{
+    if (sock->fd != -1) {
+        int ec = close(sock->fd);
+        if (ec && can_log) {
+            log_error("close fd=%d failed", sock->fd);
+        }
+        sock->fd = -1;
+        if (ec) return -1;
+    }
+
+    return 0;
+}
+
+/* 
+ * Change fd state
+ * -----------------------
+ * sock_set_mode   - change socket mode flags
+ * sock_set_nonblk - set socket non blocking
+ * sock_set_sndto  - set socket send timeout in ms
+ * sock_set_rcvto  - set socket recv timeout in ms:
+ */
 int sock_set_mode(struct simple_sock *sock, uint32_t mode)
 {
     if (mode & SOCK_NONBLK && (sock->mode & SOCK_NONBLK) == 0) {
@@ -470,8 +520,8 @@ ssize_t sock_send_data(struct simple_sock *sock, void *data, size_t len)
     return rc == SOCK_DATA ? twrite : ec;
 }
 
-// send iov data to socket fd
-ssize_t sock_send_iovs(struct simple_sock *sock, int nbuf, struct iovec iovs[nbuf])
+// send iovec array data to socket fd
+ssize_t sock_send_iovs(struct simple_sock *sock, int niov, struct iovec iovs[static niov])
 {
     // joker checks
     if (sock->sys_err) return SOCK_ERROR;
@@ -481,13 +531,13 @@ ssize_t sock_send_iovs(struct simple_sock *sock, int nbuf, struct iovec iovs[nbu
     int ec = SOCK_OK;
 
     // calc total-length
-    size_t write_len = iovs_len(nbuf, iovs);
+    size_t write_len = iovs_len(niov, iovs);
     struct iovec *iov = iovs;
     ssize_t twrite = 0;
 
     while (write_len) {
 
-        ssize_t nw = writev(sock->fd, iov, nbuf);
+        ssize_t nw = writev(sock->fd, iov, niov);
 
         if (nw == -1) {
             // write failed
@@ -515,15 +565,15 @@ ssize_t sock_send_iovs(struct simple_sock *sock, int nbuf, struct iovec iovs[nbu
         twrite += nw;
         
         // update vectors for next write
-        while (nbuf > 0 && (size_t) nw >= iov->iov_len) {
+        while (niov > 0 && (size_t) nw >= iov->iov_len) {
             nw -= iov->iov_len;
             iov->iov_len = 0;
             iov++;
-            nbuf--;
+            niov--;
         }
 
         // check for partial write
-        if (nbuf > 0 && nw > 0) {
+        if (niov > 0 && nw > 0) {
             iov->iov_base = (char *) iov->iov_base + nw;
             iov->iov_len -= nw;
         }
@@ -583,7 +633,7 @@ int sock_send(struct simple_sock *sock)
     return SOCK_DATA;
 }
 
-// read a line from our recv buffer
+// extract line from recv-buffer (return terminal fragment if eof)
 int sock_readline(struct simple_sock *sock, struct str_slice *line, int eof)
 {
     int flags = RWBUF_NOLOG;
@@ -599,24 +649,12 @@ int sock_readline(struct simple_sock *sock, struct str_slice *line, int eof)
     return rc;
 }
 
-// buffer now - send later
-int sock_write_data(struct simple_sock *sock, struct str_slice data)
-{
-    int rc = rwbuf_write(&sock->send_buf, data.ptr, data.len);
-    if (rc) {
-        sock->sys_err = 1;
-        return rc;
-    }
-
-    return 0;
-}
-
-// buffer line - send later
-int sock_write_line(struct simple_sock *sock, struct str_slice line)
+// write line + CRLF to send-buffer - uses rwbuf_writev
+int sock_writeline(struct simple_sock *sock, struct str_slice line)
 {
     struct iovec iovs[2];
 
-    // load backlog + data + CRLF
+    // load line + CRLF
     iov_load(iovs + 0, line.ptr, line.len);
     iov_load(iovs + 1, STR_LIT("\r\n"));
 
@@ -629,42 +667,8 @@ int sock_write_line(struct simple_sock *sock, struct str_slice line)
     return 0;
 }
 
-// send now - buffer unsent
-int sock_send_str(struct simple_sock *sock, struct str_slice str)
-{
-    struct iovec iovs[2];
-
-    // load backlog + data 
-    iov_load(iovs + 0, rwbuf_rptr(&sock->send_buf), rwbuf_used(&sock->send_buf));
-    iov_load(iovs + 1, str.ptr, str.len);
-
-    // write backlog + data
-    ssize_t rc = sock_send_iovs(sock, 2, iovs);
-    if (rc < 0) return rc;
-    if (rc == 0) return 0;
-
-    // update backlog
-    rc = rwbuf_rdinc(&sock->send_buf, iovs[0].iov_len);
-    if (rc) return rc;
-
-    // add partial data
-    if (iovs[1].iov_len) {
-        rc = rwbuf_write(&sock->send_buf, iovs[1].iov_base, iovs[1].iov_len);
-        if (rc) return rc;
-    }
-
-    return 0;
-}
-
-// send now - buffer unsent
-int sock_send_mem(struct simple_sock *sock, void *mem, size_t len)
-{
-    struct str_slice str = slice_make(mem, len);
-    return sock_send_str(sock, str);
-}
-
-// send now - buffer unsent
-int sock_send_line(struct simple_sock *sock, struct str_slice line)
+// write send-buffer + line + CRLF to fd, buffer remaining
+int sock_sendline(struct simple_sock *sock, struct str_slice line)
 {
     struct iovec iovs[3];
 
@@ -697,42 +701,55 @@ int sock_send_line(struct simple_sock *sock, struct str_slice line)
     return 0;
 }
 
-// shutdown writes on socket
-int sock_sendfin(struct simple_sock *sock) 
+// append memory to send-buffer
+int sock_write_mem(struct simple_sock *sock, void *buf, size_t len)
 {
-    if (sock->sys_err) return SOCK_ERROR;
-    if (sock->fin_sent) return 0;
+    int rc = rwbuf_write(&sock->send_buf, buf, len);
+    if (rc) sock->sys_err = 1;
+    return rc;
+}
 
-    int rc = shutdown(sock->fd, SHUT_WR);
-    if (rc != 0 && errno != ENOTSOCK) {
-        sock->sys_err = 1;
-        return log_errno_rf("shutdown write fd=%d failed", sock->fd);
-    }
+// append str to send-buffer
+int sock_write_str(struct simple_sock *sock, struct str_slice str)
+{
+    return sock_write_mem(sock, str.ptr, str.len);
+}
 
-    sock->fin_sent = 1;
-    if (sock->send_fin) {
-        // send done
-        sock->send_fin = 0;
+// write send buffer + mem to fd, buffer remaining
+int sock_send_mem(struct simple_sock *sock, void *mem, size_t len)
+{
+    struct iovec iovs[2];
+
+    // load backlog + data 
+    iov_load(iovs + 0, rwbuf_rptr(&sock->send_buf), rwbuf_used(&sock->send_buf));
+    iov_load(iovs + 1, mem, len);
+
+    // write backlog + data
+    ssize_t rc = sock_send_iovs(sock, 2, iovs);
+    if (rc < 0) return rc;
+    if (rc == 0) return 0;
+
+    // update backlog
+    rc = rwbuf_rdinc(&sock->send_buf, iovs[0].iov_len);
+    if (rc) return rc;
+
+    // add partial data
+    if (iovs[1].iov_len) {
+        rc = rwbuf_write(&sock->send_buf, iovs[1].iov_base, iovs[1].iov_len);
+        if (rc) return rc;
     }
 
     return 0;
 }
 
-// close the socket fd
-int sock_close(struct simple_sock *sock, int can_log)
+// write send buffer + str to fd, buffer remaining
+int sock_send_str(struct simple_sock *sock, struct str_slice str)
 {
-    if (sock->fd != -1) {
-        int ec = close(sock->fd);
-        if (ec && can_log) {
-            log_error("close fd=%d failed", sock->fd);
-        }
-        sock->fd = -1;
-        if (ec) return -1;
-    }
-
-    return 0;
+    return sock_send_mem(sock, str.ptr, str.len);
 }
 
+
+// format addr to address:port string
 char *sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len)
 {
     static char bufs[16][40];
@@ -748,6 +765,7 @@ char *sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len)
     return buf;
 }
 
+// format sock to address:port or fd info string
 char *sock_tostr(struct simple_sock *sock)
 {
     if (sock->mode & SOCK_FILE) {

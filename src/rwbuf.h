@@ -1,49 +1,20 @@
 /* 
- * A simple read|write buffer API
- * ------------------------------
- *
- * rwbuf_init    : init buffer state  e.g rwbuf_init(buf, 1024, 4096)
- * rwbuf_deinit  : free memory 
- * rwbuf_mkspace : reserve write space in buffer e.g rwbuf_mkspace(buf, 128)
- *
- * rwbuf_write   : write data to buffer  e.g rwbuf_write(buf, data, len)
- * rwbuf_writev  : write iovec array to buffer e.g. rwbuf(buf, niov, iovs)
- *
- * int rwbuf_readline(buf, line, max, flags)
- *
- *  read a line (CRLF or LF terminated)
- *  
- *  Args:
- *  -----
- *  buf   - addr of rwbuf
- *  line  - addr of str slice
- *  max   - max line size
- *  flags - bit mask or flags
- *
- *  RWBUF_EOF    - EOF read rest of buffer as line
- *  RWBUF_NOLOG  - dont log max line error
- *  RWBUF_ADDNUL - add nul terminator to str
- *
- *  e.g 
- *   rc = rwbuf_readline(sock->recv_buf, &line, 128, flags)
- *
- * Helpers
- * -------
- * rwbuf_rptr : return ptr to readable data
- * rwbuf_used : return size of readable data
- * rwbuf_wptr : return ptr to write space
- * rwbuf_space : return size of write space
- * rwbuf_rdinc : increment read buffer index by len  
- *
- * iovs_len  : calc total iov_len of iovec array
- * iovs_load : load data into iovec
- * 
+ * RWBUF -  A simple memory buffer API
+ * -----------------------------------
+ * A simple API for memory buffer management featuring
+ * - Structure-composable: built for inline embedding, object compostion & memory locality
+ * - Flexible memory: Support dynamic or user supplied static buffers
+ * - Dynamic limits : support for locked or max_size limits
+ * - Position independent: size_t read|write offsets for safe memory relocation/resizing
+ * - scatter-gather - vectorzed memory tranfers via writev   
+ * - support for readline with max length enforcement
  */
 #ifndef _RWBUF_H_
 #define _RWBUF_H_
 
 #include <sys/uio.h>
 
+// state structure
 struct rwbuf {
     uint8_t *data; // memory buffer
     size_t max_size;  // max size buffer can reach
@@ -54,9 +25,14 @@ struct rwbuf {
     unsigned int is_grow    : 1; // can realloc
 };
 
-// api
-
-#define RWBUF_LOAD(_buf, _len)  { \
+/*
+ * Initialization
+ * --------------
+ * RWBUF_INIT(buf, len) : setup static buffer
+ * rwbuf_init(buf, init_size, max_size) : setup dynamic buffer
+ * rwbuf_deinit(buf) : free memory
+ */
+#define RWBUF_INIT(_buf, _len)  { \
     .data = _buf, \
     .max_size = 0, \
     .size = _len, \
@@ -66,48 +42,67 @@ struct rwbuf {
     .is_grow = 0 \
 }
 
-// Create, res
 int rwbuf_init(struct rwbuf *buf, size_t init_size, size_t max_size);
 void rwbuf_deinit(struct rwbuf *buf);
 void *rwbuf_mkspace(struct rwbuf *buf, size_t need);
 
+/*
+ * read and write
+ * ---------------
+ * rwbuf_mkspace(buf, need_len)   : reserve write space in buffer
+ * rwbuf_write(buf, buf, len)     : append memory buffer
+ * rwbuf_writev(buf, niov, ivovs) : append memory buffers
+ */
 int rwbuf_write(struct rwbuf *buf, void *data, size_t len);
 int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf]);
 
-// readline flags
-#define RWBUF_EOF    0x1
-#define RWBUF_NOLOG  0x2
-#define RWBUF_ADDNUL 0x4
+/*
+ * readline flags
+ */
+#define RWBUF_EOF    0x1 // return terminal fragment if eof
+#define RWBUF_NOLOG  0x2 // dont log max_line error
+#define RWBUF_ADDNUL 0x4 // add nul terminator to line
+
+/*
+ * rwbuf_readline(buf, str, max_line, flags) : read a line (CRLF or LF terminated)
+ *  e.g 
+ *   rc = rwbuf_readline(sock->recv_buf, &line, 128, RWBUF_NOLOG)
+ */
 int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32_t flags);
 
-/*  inline helpers */
-
-
-// return pointer to readable data
+/*
+ * Helpers
+ * -------
+ * rwbuf_rptr(buf)  : return ptr to readable dataq
+ * rwbuf_wptr(buf)  : return ptr to writable space
+ * rwbuf_used(buf)  : return size of readable data
+ * rwbuf_space(buf) : return size of writeable space 
+ * rwbuf_rdinc(buf) : increment read buffer index by len
+ *
+ * iovs_len(niov, iovs)    : calc total iov_len of iovs
+ * iov_load(iov, buf, len) : load buffer address into iovec 
+ */
 static inline uint8_t *rwbuf_rptr(struct rwbuf *buf)
 {
     return buf->data + buf->ridx;
 }
 
-// return size of readable data
-static inline size_t rwbuf_used(struct rwbuf *buf)
-{
-    return buf->widx - buf->ridx;
-}
-
-// return ptr to write space
 static inline uint8_t *rwbuf_wptr(struct rwbuf *buf)
 {
     return buf->data + buf->widx;
 }
 
-// return size of write space
+static inline size_t rwbuf_used(struct rwbuf *buf)
+{
+    return buf->widx - buf->ridx;
+}
+
+
 static inline size_t rwbuf_space(struct rwbuf *buf)
 {
     return buf->size - buf->widx;
 }
 
-// increment read buffer index by len
 static inline int rwbuf_rdinc(struct rwbuf *buf, size_t len)
 {
     if (buf->ridx + len > buf->size) {
@@ -126,20 +121,20 @@ static inline int rwbuf_rdinc(struct rwbuf *buf, size_t len)
     return 0;
 }
 
-// calc total iov_len of iovec array
-static inline size_t iovs_len(int nbuf, struct iovec iovs[nbuf])
+static inline size_t iovs_len(int niov, const struct iovec iovs[static niov])
 {
     size_t len = 0;
-    for (int i = 0; i < nbuf; i++)  {
+
+    for (int i = 0; i < niov; i++)  {
         len += iovs[i].iov_len;
     }
+
     return len;
 }
 
-// load data into iovec 
-static inline void iov_load(struct iovec *iov, void *data, size_t len)
+static inline void iov_load(struct iovec *iov, void *buf, size_t len)
 {
-    iov->iov_base = data;
+    iov->iov_base = buf;
     iov->iov_len = len;
 }
 

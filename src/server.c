@@ -62,10 +62,7 @@ static void client_close(struct simple_client *client, int force);
 
 static int send_line(struct simple_client *client, struct str_slice line)
 {
-    int rc = sock_write_line(&client->sock, line);
-    if (rc) return rc;
-
-    return 0;
+    return sock_writeline(&client->sock, line);
 }
 
 static int send_rsp(struct simple_client *client, struct str_slice rsp)
@@ -182,7 +179,7 @@ int process_cmd(struct simple_client *client, struct str_slice cmd)
 static void client_close(struct simple_client *client, int force)
 {
     // close writes
-    sock_wrclose(&client->sock, force);
+    sock_write_close(&client->sock, force);
 }
 
 static void client_destroy(struct simple_client *client, int can_log)
@@ -453,8 +450,8 @@ static int server_run(struct simple_server *serv)
 
 static int setup_listener(struct simple_server *server)
 {
-    uint32_t mode = SOCK_LISTEN | SOCK_TCP;
-    int rc = sock_listen(&server->sock, mode, server->hostname, server->port);
+    uint32_t mode = SOCK_LISTEN | SOCK_NONBLK | SOCK_TCP;
+    int rc = sock_server(&server->sock, mode, server->hostname, server->port);
     if (rc) return rc;
 
     server->epoll_fd = epoll_create1(0);
