@@ -16,6 +16,7 @@ int verbose = 0;
 // signal handling
 static struct simple_sig *glob_sig = NULL;
 
+// catch the signal and set run to 0
 static void handle_signal(int signo, siginfo_t *info, void *ucontext)
 {
     (void) ucontext;
@@ -35,7 +36,7 @@ static void handle_signal(int signo, siginfo_t *info, void *ucontext)
     glob_sig->run = 0;
 }
 
-// setup signal handld for app
+// setup signal handler for app
 int setup_signals(struct simple_sig *sig)
 {
     if (!sig) return -1;

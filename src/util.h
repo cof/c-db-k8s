@@ -63,9 +63,18 @@ static inline size_t min(size_t x, size_t y)
     return x < y ? x : y;
 }
 
-/* signal handler API */
+/* signal handler API 
+ * -----------------
+ * Simpe single hander API for apps featuring
+ * - Structure-composable: built for inline embedding, object compostion & memory locality
+ * - uses sigaction
+ * - catchs  SIGINT|SIGTERM 
+ * - ignores SIGPIPE
+ * - logs signal, sender uid and pid for app
+ * - simple set run to 1 to 0 design
+ */
 
-// signal state 
+// signal handler state 
 struct simple_sig {
     volatile sig_atomic_t run;
     int signo;
@@ -74,8 +83,11 @@ struct simple_sig {
 };
 
 /*
+ * signal handler API
+ * -------------------
+ *
  * simple_sig API
- * -------------
+ * --------------
  * setup_signals(sig) - setup signal handler
  */
 int setup_signals(struct simple_sig *sig);
