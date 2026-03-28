@@ -65,7 +65,7 @@ static inline size_t min(size_t x, size_t y)
 
 /* signal handler API 
  * -----------------
- * Simpe single hander API for apps featuring
+ * Simple single hander API for apps featuring
  * - Structure-composable: built for inline embedding, object compostion & memory locality
  * - uses sigaction
  * - catchs  SIGINT|SIGTERM 

@@ -26,14 +26,8 @@
 #include "log.h"
 #include "sock.h"
 
-struct client_config {
-    const char *prog_name;
-    const char *hostname;
-    const char *port;
-    int log;
-};
-
-struct my_conn {
+// pipe state
+struct my_pipe {
     struct simple_sock socks[2];
     struct simple_sock *sock_send;
     struct simple_sock *sock_recv;
@@ -43,7 +37,7 @@ struct my_conn {
     uint8_t wdata[BUFSIZ];
 };
 
-#define MY_CONN_INIT(_conn, _rfd, _wfd) \
+#define my_pipe_INIT(_conn, _rfd, _wfd) \
     { \
       .socks[0] = SOCK_INIT(_rfd, MAX_LINE, 0, _conn.rdata, sizeof(_conn.rdata), _conn.wdata, sizeof(_conn.wdata)), \
       .socks[1] = SOCK_INIT(_wfd, MAX_LINE, 0, _conn.rdata, sizeof(_conn.rdata), _conn.wdata, sizeof(_conn.wdata)), \
@@ -55,18 +49,20 @@ struct my_conn {
       .wdata = { 0 } \
     }
 
-static inline int my_conn_isbusy(struct my_conn *conn)
+// true if send-sock is busy or send_sock must be closed
+static inline int my_pipe_isbusy(struct my_pipe *conn)
 {
     return sock_isbusy(conn->sock_send) && !sock_mustclose(conn->sock_send);
 }
 
-// has read end finished
-static inline int my_conn_iseof(struct my_conn *conn)
+// true if recv-sock finised reading or must close
+static inline int my_pipe_iseof(struct my_pipe *conn)
 {
     return sock_read_done(conn->sock_recv) || sock_mustclose(conn->sock_recv);
 }
 
-static void my_conn_pipe(struct my_conn *src, struct my_conn *dst, 
+// pipe read from src and write to dst
+static void my_pipe_readwrite(struct my_pipe *src, struct my_pipe *dst, 
     struct pollfd *fds, int *prompt, 
     const char *sender,
     const char *log_line)
@@ -107,7 +103,8 @@ static void my_conn_pipe(struct my_conn *src, struct my_conn *dst,
     }
 }
 
-static void my_conn_drain(struct my_conn *conn, struct pollfd *fds)
+// pipe check if send-sock buffer is drained
+static void my_pipe_drain(struct my_pipe *conn, struct pollfd *fds)
 {
     int rc = sock_send(conn->sock_send);
     if (rc < 0) {
@@ -119,7 +116,7 @@ static void my_conn_drain(struct my_conn *conn, struct pollfd *fds)
     fds[conn->poll_out].events = sock_sendbuf_used(conn->sock_send) ? POLLOUT : 0;
 }
 
-static int my_conn_stop(struct my_conn *user, struct my_conn *serv, struct pollfd *fds)
+static int my_pipe_stop(struct my_pipe *user, struct my_pipe *serv, struct pollfd *fds)
 {
     if (sock_write_done(serv->sock_send)) {
         // nothing left to write
@@ -135,8 +132,8 @@ static int my_conn_stop(struct my_conn *user, struct my_conn *serv, struct pollf
         fds[user->poll_out].fd = -1;
     }
 
-    int ingress_done = my_conn_iseof(user) && !my_conn_isbusy(serv);
-    int egress_done  = my_conn_iseof(serv) && !my_conn_isbusy(user);
+    int ingress_done = my_pipe_iseof(user) && !my_pipe_isbusy(serv);
+    int egress_done  = my_pipe_iseof(serv) && !my_pipe_isbusy(user);
 
     if (egress_done && !ingress_done) {
         // server path gone
@@ -155,7 +152,7 @@ static int set_fd(struct simple_sock *sock, int idx, struct pollfd *fds, int eve
     return idx;
 }
 
-static void my_conn_prompt(struct my_conn *conn)
+static void my_pipe_prompt(struct my_pipe *conn)
 {
     struct str_slice prompt = slice_make(STR_LIT("> "));
     sock_send_str(conn->sock_send, prompt);
@@ -207,7 +204,7 @@ int main(int argc, char *argv[])
     if (rc) fatal_error("setup signals");
 
     // server connect
-    struct my_conn serv = MY_CONN_INIT(serv, -1, -1);
+    struct my_pipe serv = my_pipe_INIT(serv, -1, -1);
     rc = sock_client(&serv.socks[0], SOCK_TCP | SOCK_NONBLK, hostname, port);
     if (rc) fatal_error("No connection");
     serv.sock_send = serv.sock_recv = serv.socks;
@@ -219,7 +216,7 @@ int main(int argc, char *argv[])
     const char *log_rsp = log ? "recv rsp" : NULL;
         
     // setup stdout,stdin for send,recv
-    struct my_conn user = MY_CONN_INIT(user, STDOUT_FILENO, STDIN_FILENO);
+    struct my_pipe user = my_pipe_INIT(user, STDOUT_FILENO, STDIN_FILENO);
     if (sock_set_mode(user.sock_send, SOCK_FILE | SOCK_NONBLK)) exit(1);
     if (sock_set_mode(user.sock_recv, SOCK_FILE | SOCK_NONBLK)) exit(1);
 
@@ -230,7 +227,7 @@ int main(int argc, char *argv[])
     serv.poll_out = set_fd(serv.sock_send, 3, fds, 0);
 
     int prompt = 0;
-    my_conn_prompt(&user);
+    my_pipe_prompt(&user);
 
     while (sig.run) {
         // block until fd event or signal
@@ -244,32 +241,33 @@ int main(int argc, char *argv[])
         // server
         if (fds[3].revents & POLLOUT) {
             // backlog
-            my_conn_drain(&serv, fds);
+            my_pipe_drain(&serv, fds);
         }
         if (fds[2].revents & (POLLIN | POLLHUP | POLLERR)) {
             // recv server -> send user
-            my_conn_pipe(&serv, &user, fds, &prompt, "server", log_rsp);
+            my_pipe_readwrite(&serv, &user, fds, &prompt, "server", log_rsp);
         }
 
         if (prompt) {
-            my_conn_prompt(&user);
+            my_pipe_prompt(&user);
             prompt = 0;
         }
 
         // user
         if (fds[1].revents & POLLOUT) {
             // backlog
-            my_conn_drain(&user, fds);
+            my_pipe_drain(&user, fds);
         }
         if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
             // recv user -> send server
-            my_conn_pipe(&user, &serv, fds, NULL, "client", log_req);
+            my_pipe_readwrite(&user, &serv, fds, NULL, "client", log_req);
             //raise(SIGSTOP);
         }
 
-        if (my_conn_stop(&user, &serv, fds)) break;
+        if (my_pipe_stop(&user, &serv, fds)) break;
     }
 
+    // close server socket
     sock_close(serv.sock_recv, 1);
 
     return 0;
