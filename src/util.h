@@ -6,14 +6,14 @@
  * - gen macros : array len, string literal, aligment, rmconst
  * - ptr macros : ptr manipulation
  * - str macros : Stringification
- * - min-max   : safe min/max funcs
- * - signal    : simple signal handler api
- * - string    : misc string api
- * - codec     : simple encoders and decoders
- * - strbuf    : api for string write buffer
- * - str_slice : api for memory view (buf+len)
- * - setter    : api for setting string and int values
- * - cmd-line  : a cmd-line parser
+ * - min-max    : safe min/max funcs
+ * - signal     : simple signal handler api
+ * - string     : misc string api
+ * - codec      : simple encoders and decoders
+ * - strbuf     : for simple string write buffer
+ * - str_slice  : for a memory view (buf+len)
+ * - setter     : for setting string and int values
+ * - cmd-line   : cmd-line parser api
  */
 #ifndef _UTIL_H_
 #define _UTIL_H_
@@ -83,9 +83,6 @@ struct simple_sig {
 };
 
 /*
- * signal handler API
- * -------------------
- *
  * simple_sig API
  * --------------
  * setup_signals(sig) - setup signal handler
@@ -96,21 +93,20 @@ int setup_signals(struct simple_sig *sig);
  * String API
  * ----------
  * ec_tostr(len, estrs, ec, def) : lookup a string for ec or return default
- * dbj2a_hash(key, len)  : return dbj2a hash of key buffer
- * dbj2a_hash_str(str)   : return dbj2a hash of string
- * gen_str(buf,len,fmt,..) : generate a string to buffer
- * get_basename(path)  : return basename of path if found
+ * dbj2a_hash(key, len)     : return dbj2a hash of key buffer
+ * dbj2a_hash_str(str)      : return dbj2a hash of string
+ * gen_str(buf,len,fmt,..)  : generate a string to buffer
+ * get_basename(path)       : return basename of path if found
  * itoa(buf, len, val)      : store an ascii repr of int to string buffer
  * int_tostr(buf, len, val) : convert int val to string repr
- * safe_strlen(str)      : return strlen if not null else 0
- * str_def(str, def_str) : return str if set else default
- * str_tolower(str, len) : lower case a string
- * str_toupper(str, len) : upper case a string
- * iswhite(ch)    : char is whitespace (SP|TAB|VTAB|CR|LF)
- * is_numeric(ch) : char is a number (0-9)
- * str_isnumeric(str, len): str is numeric
+ * safe_strlen(str)         : return strlen if not null else 0
+ * str_def(str, def_str)    : return str if set else default
+ * str_tolower(str, len)    : lower case a string
+ * str_toupper(str, len)    : upper case a string
+ * iswhite(ch)              : char is whitespace (SP|TAB|VTAB|CR|LF)
+ * is_numeric(ch)           : char is a number (0-9)
+ * str_isnumeric(str, len)  : str is numeric
  */
-
 static inline const char *ec_tostr(int len, const char *estr[len], int ec, const char *def)
 {
     const char *str;
@@ -140,7 +136,6 @@ static inline uint64_t dbj2a_hash_str(const char *name)
     return dbj2a_hash(name, strlen(name));
 }
 
-// generate a string
 int gen_str(char *buf, size_t len, const char *fmt, ...)
     __attribute__((format(printf, 3, 4)));
 
@@ -194,7 +189,6 @@ static inline int is_numeral(int ch)
     return ch >= '0' && ch <= '9' ? 1 : 0;
 }
 
-// is memory block all numeric chars
 static inline int str_isnumeric(const char *str, size_t len)
 {
     if (!len) return 0;
@@ -270,6 +264,7 @@ static inline uint16_t dec_u16(const unsigned char *buf)
  * a simple string write buffer API
  */
 
+// strbuf state
 struct strbuf {
     char *data;
     char *wptr;
@@ -331,7 +326,7 @@ static inline struct strbuf *strbuf_putsep(struct strbuf *buf, int sep, const ch
  * - Can return by value a ptr + len
  */
 
-// siice structure
+// slice state
 struct str_slice {
     char *ptr;
     size_t len;
@@ -339,21 +334,21 @@ struct str_slice {
 
 /* str_slice API 
  * -------------
- * SLICE(str) : macro to extract the slice len and ptr
- * slice_make(str, len) : return a slice set with str and len
- * slice_make_cstr(str) : return a slice set with str
- * slice_copy(str)      : return a copy of str 
- * slice_cmp_cstr(str, cstr, len) : return 1 if strs match else 0
- * slice_unbracket(str, left, right) : stripe left,right chars from str
- * slice_rsplit(src, ch) : split string from right at ch if found
- * slice_split(src, ch)  : split string from left if ch found
- * slice_isnumeric(str)  : true if slice is numeric 
- * slice_ltrim(str) : left trim leading whitespace
- * slice_rtrim(str) : right trim trailing whitespace    
- * slice_trim(str)  : trim left and right whitespace
- * slice_toupper(str) : upper case str
- * slice_tolower(str) : lowwer case str
- * slice_strdup(str)  : create a memory copy of str
+ * SLICE(str)             : macro to extract the slice len and ptr
+ * slice_make(str, len)   : return a slice set with str and len
+ * slice_make_cstr(str)   : return a slice set with str
+ * slice_copy(str)        : return a copy of str 
+ * slice_cmp_cstr(str, cstr, len)    : return 1 if strs match else 0
+ * slice_unbracket(str, left, right) : strip left and right chars from str
+ * slice_rsplit(src, ch)  : split string from right at ch if found
+ * slice_split(src, ch)   : split string from left if ch found
+ * slice_isnumeric(str)   : true if slice is numeric 
+ * slice_ltrim(str)       : left trim leading whitespace
+ * slice_rtrim(str)       : right trim trailing whitespace    
+ * slice_trim(str)        : trim left and right whitespace
+ * slice_toupper(str)     : upper case str
+ * slice_tolower(str)     : lowwer case str
+ * slice_strdup(str)      : create a memory copy of str
  * slice_dbj2a_hash(str)  : create a dbj2a hash of str
  */
 #define SLICE(x) (int) (x).len, (x).ptr
@@ -432,7 +427,6 @@ static inline struct str_slice slice_split(struct str_slice *src, int ch)
 static inline int slice_isnumeric(struct str_slice str)
 {
     return str_isnumeric(str.ptr, str.len);
-
 }
 
 static inline struct str_slice *slice_ltrim(struct str_slice *str)
