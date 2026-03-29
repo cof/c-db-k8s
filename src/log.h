@@ -6,7 +6,7 @@
  * Overview
  * --------
  * Basic idea is you use logger to report information to users, log what a process
- * is give detailed error message if something fails.
+ * is doing and report useful error messages if something fails.
  *
  * There are 3 basic log types:
  *
@@ -14,14 +14,14 @@
  *  error - "[ERROR] file:line (func): fmt-str"
  *  fatal - "[FATAL] file:line (func): fmt-str
  *
- * Logger use fmt-str to allow complete control of what logged.
+ * Logger use fmt-str to allow complete control of whats logged.
  *
  * e.g
  *  log_info("+", "The service is up");
  *  log_info("INFO", "did %s","something");
  *
- * Logger also has a range of macros that report the file, line and func
- * where an error has occured allowing devs to easily trace problems in
+ * Logger also has error macros that report the file, line and func
+ * where an error has occured allowing users to easily trace problems in
  * the code base.
  *
  * Logger also has a range of macros that can be used to both log a msg

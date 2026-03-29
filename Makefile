@@ -90,7 +90,7 @@ GCC_DEPS      := -MMD -MP -MT
 CPP_FLAGS     := -D_GNU_SOURCE -Isrc
 EXTRA_CFLAGS  := -Wextra -Wno-missing-field-initializers
 COMMON_CFLAGS := -Wall  -Werror=implicit-function-declaration $(CPP_FLAGS) $(GCC_DEPS)
-DEBUG_CFLAGS   := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
+DEBUG_CFLAGS  := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
 
 # release build
 # -----------
@@ -779,7 +779,6 @@ test-client: client
 .PHONY: test-lau
 test-lau: $(INSTALL_DONE) vm-create
 	$(Q)echo "[+] Running $@"; \
-	> $(TEST_LOGFILE); \
 	VM_IP=$$($(GET_VM_IP)); \
 	if [ -z "$$VM_IP" ]; then echo "[ERROR] No VM ip address"; exit 1; fi; \
 	VM_SSH_ADDR="$(VM_USER)@$$VM_IP"; \
