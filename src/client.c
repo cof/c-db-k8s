@@ -37,7 +37,7 @@ struct my_pipe {
     uint8_t wdata[BUFSIZ];
 };
 
-#define my_pipe_INIT(_conn, _rfd, _wfd) \
+#define MY_PIPE_INIT(_conn, _rfd, _wfd) \
     { \
       .socks[0] = SOCK_INIT(_rfd, MAX_LINE, 0, _conn.rdata, sizeof(_conn.rdata), _conn.wdata, sizeof(_conn.wdata)), \
       .socks[1] = SOCK_INIT(_wfd, MAX_LINE, 0, _conn.rdata, sizeof(_conn.rdata), _conn.wdata, sizeof(_conn.wdata)), \
@@ -205,7 +205,7 @@ int main(int argc, char *argv[])
     if (rc) fatal_error("setup signals");
 
     // server connect
-    struct my_pipe serv = my_pipe_INIT(serv, -1, -1);
+    struct my_pipe serv = MY_PIPE_INIT(serv, -1, -1);
     rc = sock_client(&serv.socks[0], SOCK_TCP | SOCK_NONBLK, hostname, port);
     if (rc) fatal_error("No connection");
     serv.sock_send = serv.sock_recv = serv.socks;
@@ -217,7 +217,7 @@ int main(int argc, char *argv[])
     const char *log_rsp = log ? "recv rsp" : NULL;
         
     // setup stdout,stdin for send,recv
-    struct my_pipe user = my_pipe_INIT(user, STDOUT_FILENO, STDIN_FILENO);
+    struct my_pipe user = MY_PIPE_INIT(user, STDOUT_FILENO, STDIN_FILENO);
     if (sock_set_mode(user.sock_send, SOCK_FILE | SOCK_NONBLK)) exit(1);
     if (sock_set_mode(user.sock_recv, SOCK_FILE | SOCK_NONBLK)) exit(1);
 
