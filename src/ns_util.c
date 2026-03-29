@@ -69,38 +69,37 @@
 int run_cmd(const char *fmt, ...)
 {
     va_list args;
-    char *cmd;
+    char *cmd_str;
     int rc;
 
+    // create cmd str
     va_start(args, fmt);
-    rc = vasprintf(&cmd, fmt, args);
+    rc = vasprintf(&cmd_str, fmt, args);
     va_end(args);
 
-    if (rc < 0) {
-        return log_errno_rf("vsnprintf failed");
-    }
+    if (rc < 0) return log_errno_rf("vsnprintf failed");
+    if (verbose) log_info("LOG", "%s", cmd_str);
 
-    if (verbose) {
-        log_info("LOG", "%s", cmd);
-    }
-
-    rc = system(cmd);
+    rc = system(cmd_str);
     if (rc == -1) {
-        log_errno("system(%s) failed", cmd);
+        // system() failed ?
+        log_errno("system(%s) failed", cmd_str);
     }
     else if (!WIFEXITED(rc)) {
-        log_error("cmd (%s) interupted", cmd);
+        // cmd was interrupted by signal 
+        log_error("cmd (%s) interrupted", cmd_str);
         rc = -1;
     }
     else if (WEXITSTATUS(rc) != 0) {
-        log_error("cmd (%s) exited %d" , cmd, WEXITSTATUS(rc));
+        // cmd non-zero exit code
+        log_error("cmd (%s) exited %d", cmd_str, WEXITSTATUS(rc));
         rc = -1;
     }
     else {
         rc = 0;
     }
 
-    free(cmd);
+    free(cmd_str);
 
     // all done
     return rc; 
@@ -128,21 +127,17 @@ char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc)
     wordexp_t p = { 0 };
 
     if (exec_args && wordexp(exec_args, &p, WRDE_NOCMD) != 0) {
-        log_error("wordexp failed");
         if (argc) *argc = 0;
-        return NULL;
+        return log_error_rn("wordexp failed");
     }
 
     char **argv = malloc((p.we_wordc + 2) * sizeof(char *));
-    if (argv == NULL) {
-        log_errno("malloc failed");
-        return NULL;
-    }
+    if (!argv) return log_errno_rn("malloc failed");
 
     argv[0] = strdup(exec_path);
     if (!argv[0]) {
-        log_errno("strdup failed");
-        return NULL;
+        free(argv);
+        return log_errno_rn("strdup failed");
     }
 
     for (size_t i = 0; i < p.we_wordc; i++) {
@@ -198,11 +193,11 @@ int sync_pipe_close(int *rd_fd, int *wr_fd,
     pid_t pid)
 {
     if (close_fd(rd_fd) != 0) {
-        return log_errno_rf("%s close rd %s for child %s pid %d failed", who, what, name, pid);
+        return log_errno_rf("%s pipe-close rd %s for child %s pid %d failed", who, what, name, pid);
     }
 
     if (close_fd(wr_fd) != 0) {
-        return log_errno_rf("%s close wr %s for child %s pid %d failed", who, what, name, pid);
+        return log_errno_rf("%s pipe-close wr %s for child %s pid %d failed", who, what, name, pid);
     }
 
     return 0;
@@ -229,13 +224,13 @@ int sync_pipe_read(int *fd,
         return log_errno_rf("%s pipe-read %s failed for %s pid %d", who, what, name, pid);
     }
 
-    // close our end
+    // read done - close our end
     if (close_fd(fd)) {
-        return log_errno_rf("%s pipe-read close %s failed for %s pid %d", who, what, name, pid);
+        return log_errno_rf("%s pipe-close %s failed for %s pid %d", who, what, name, pid);
     }
     // peer gone ?
     if (nr == 0) {
-        return log_error_rc(LAU_EOF, "%s pipe-read %s eof for %s", who, what, name);
+        return log_error_rc(LAU_EOF, "%s pipe-read %s eof for %s pid %d", who, what, name, pid);
     }
     if (verbose) {
         log_info("LOG", "%s pipe-read done %s (name=%s pid=%d)", who, what, name, pid);
@@ -264,9 +259,9 @@ int sync_pipe_write(int *fd,
         return log_errno_rc(ec, "%s pipe-write %s  failed for %s", who, what, name);
     }
 
-    // close our end
+    // write-done - close our end
     if (close_fd(fd)) {
-        return log_errno_rf("%s pipe-write close %s failed for %s", who, what, name);
+        return log_errno_rf("%s pipe-close %s failed for %s pid %d", who, what, name, pid);
     }
 
     if (verbose)  {
@@ -277,45 +272,7 @@ int sync_pipe_write(int *fd,
     return 0;
 }
 
-/* not used - remove ?
-char *validate_dir(const char *key, const char *dir)
-{
-    char *path = realpath(dir, NULL);
-    if (!path) {
-        return log_errno_rn("%s realpath %s failed", key, dir);
-    }
-
-    // Check if the path exists
-    int rc = -1;
-
-    struct stat st;
-    if (stat(path, &st) != 0) {
-       log_error("%s path %s does not exist", key, path);
-       goto done;
-    }
-
-    // check file is a directory
-    if (!S_ISDIR(st.st_mode)) {
-        log_error("%s path %s is not a dir", key, path);
-        goto done;
-    }
-
-    // check dir is accesible
-    if (access(path, R_OK | X_OK) != 0) {
-        log_error("%s path %s is not accesible", key, path);
-        goto done;
-    }
-
-    // okay
-    rc = 0;
-
-done:
-    if (rc != 0) free(path);
-    // all done
-    return path;
-}
-*/
-
+// create a folder
 int create_dir(const char *path, mode_t mode, bool can_exist)
 {
     int rc = mkdir(path, mode);
@@ -353,10 +310,9 @@ int create_path_nocopy(char *path, mode_t mode)
 // aka mkdir -p
 int create_path(const char *path, mode_t mode)
 {
+    // dupe path as we need to modify it
     char *tmp = strdup(path);
-    if (!tmp) {
-        return log_errno_rf("create_path strdup %s failed", path);
-    }
+    if (!tmp) return log_errno_rf("create_path strdup %s failed", path);
 
     int rc = create_path_nocopy(tmp, mode);
     free(tmp);
@@ -366,29 +322,27 @@ int create_path(const char *path, mode_t mode)
 
 int create_path_for_file(const char *file, mode_t mode)
 {
-    if (!file) {
-        return log_error_rf("file name is null");
-    }
+    if (!file) return log_error_rf("file name is null");
 
     char *tmp = strdup(file);
-    if (!tmp) {
-        return log_errno_rf("strdup %s failed", file);
-    }
+    if (!tmp) return log_errno_rf("strdup %s failed", file);
 
+    // chop the file name fro, path
     char *ptr = strrchr(tmp, '/');
     if (!ptr) {
         free(tmp);
         return log_error_rf("Not a file name %s", file);
     }
-
     *ptr = '\0';
 
+    // create file path
     int rc = create_path_nocopy(tmp, mode);
     free(tmp);
 
     return rc;
 }
 
+// create new sub-folder in dir
 char *create_subdir(const char *dir, const char *subdir, mode_t mode)
 {
     char *path = gen_path(dir, subdir);
@@ -494,7 +448,7 @@ int switch_child_netns(int *fd, const char *name)
     return 0;
 }
 
-// create a file for a netns
+// create an file for a netns
 int create_netns_file(const char *netns_path)
 {
     int fd = open(netns_path, O_RDONLY | O_CREAT | O_EXCL, 0600);
@@ -504,7 +458,7 @@ int create_netns_file(const char *netns_path)
         if (errno != EEXIST) {
             return log_errno_rf("open %s failed", netns_path);
         }
-        // file alredy exists - possible crash ?
+        // file already exists - possible crash ?
         if (umount2(netns_path, MNT_DETACH) == -1) {
             if (errno != EINVAL && errno != ENOENT) {
                 return log_errno_rf("unmount2  %s failed", netns_path);
@@ -532,15 +486,14 @@ int create_netns_file(const char *netns_path)
     return 0;
 }
 
-
 // mount an OverlayFS
 int mount_overlay(const char *path, 
     const char *lowerdir, const char *upperdir, 
     const char *workdir,
     const char *who)
 {
-    char *opts = NULL;
-    int rc = asprintf(&opts, 
+    char *opts_str = NULL;
+    int rc = asprintf(&opts_str, 
         "lowerdir=%s,upperdir=%s,workdir=%s", 
         lowerdir, upperdir, workdir
     );
@@ -548,8 +501,8 @@ int mount_overlay(const char *path,
         return log_errno_rf("mount overlay genopts failed for %s", who);
     }
 
-    rc = mount("overlay", path, "overlay", 0, opts);
-    free(opts);
+    rc = mount("overlay", path, "overlay", 0, opts_str);
+    free(opts_str);
 
     if (rc == -1) {
         return log_errno_rf("mount overlay %s for %s failed", path, who);
@@ -567,7 +520,6 @@ int unmount_overlay(const char *path, const char *name)
 
     return 0;
 }
-
 
 // mount roofs_dir into container root
 int mount_rootfs(const char *rootfs_dir, const char *rootfs_path)
@@ -658,9 +610,10 @@ int mount_netns(const char *netns_path)
         return -1;
     }
 
-    // spawn a child for bind mount
+    // fork a child process to do the bind mount
     pid_t pid = fork();
     if (pid < 0) {
+        // fork failed
         int _errno = errno;
         umount2(netns_path, MNT_DETACH);
         unlink(netns_path);
@@ -684,10 +637,11 @@ int mount_netns(const char *netns_path)
         _exit(0);
     }
 
-    // parent 
+    // parent process
     int status; 
     pid_t p = waitpid(pid, &status, 0);
     if (p == -1) {
+        // waitpid failed ?
         int _errno = errno;
         umount2(netns_path, MNT_DETACH);
         unlink(netns_path);
@@ -696,6 +650,7 @@ int mount_netns(const char *netns_path)
     }
 
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        // child failed
         int _errno = errno;
         umount2(netns_path, MNT_DETACH);
         unlink(netns_path);
@@ -779,6 +734,8 @@ int veth_setup(const char *cont_name, const char *netns)
     return 0;
 }
 
+/* namespace : child process namepace changes */
+
 // set container hostname
 int set_identity(const char *name)
 {
@@ -791,7 +748,7 @@ int set_identity(const char *name)
 }
 
 /*
- * set_rootfs - swith child process to new root file system
+ * set_rootfs - switch child process to new root file system
  *
  * 7 steps:
  * ========
@@ -865,6 +822,8 @@ int create_network(const char *veth_name, const char *ip_addr)
 
     return 0;
 }
+
+/* security  : child process security changes */
 
 // child - drop all capabilities
 int drop_bounding_set(const char *name)

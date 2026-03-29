@@ -3,7 +3,7 @@
 #
 # First run just do:
 #
-#  	make test-full
+#  make test-full
 #
 # Important targets
 # 

@@ -43,8 +43,7 @@
 
 // launcher state
 struct lau_ctx {
-    const char *prog_name; // argv[0]
-    char *cur_dir;     // cwd where laucher start
+    char *cur_dir;      // cwd where laucher start
     char *base_dir;     // root dir for all launcher state
     char *src_dir;      // location of host cmd files live
     char *run_dir;      // location of launcher pid run file

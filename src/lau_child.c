@@ -154,7 +154,7 @@ int lau_child_set_veth(struct lau_child *child, const char *name, const char *pr
 }
 
 /* 
- * bring veth up inside child namespace 
+ * parent brings veth up inside child namespace 
  * - rename veth to eth0
  * - add ip addr
  * - set lo up 
@@ -252,7 +252,6 @@ int lau_child_run(struct lau_child *child)
 /* postrun - release child state after we clone child process.
  * note child process inherits all memory and file descriptors
  * from the parent so we release here what we no longer need.
- * TODO move code into lau_child.
  */
 int lau_child_postrun(struct lau_child *child, int netns_fd)
 {
@@ -297,6 +296,8 @@ int lau_child_postrun(struct lau_child *child, int netns_fd)
 
     return num_err;
 }
+
+/* child process code */
 
 // child process - set security
 static int setup_priv(struct lau_child *child)
@@ -357,7 +358,7 @@ int lau_child_start(void *arg)
     if (child->need_network && create_network(child->veth_name, child->ip_addr) != 0) _exit(5);
     if (child_send_ready(child) != 0) _exit(6);
 
-    // XXX close remaing fds other than stdio,stdout,stderr
+    // close all remaining fds other than stdio,stdout,stderr
     if (syscall(SYS_close_range, 3, ~0U, 0) == -1) {
         log_errno("child %s pid=%d close_range failed", child->name, child->pid);
         _exit(7); 
