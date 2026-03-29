@@ -2,6 +2,13 @@
  * RWBUF - A simple memory buffer API
  * ----------------------------------
  * See rwbuf.h for API description.
+ *
+ * API sections
+ * ------------
+ * Init : init buffer state
+ * Data I/O : read and write data to buffer
+ * Line I/O : read and write line to buffer
+ * Helpers  : buffer status and iov loader
  */
 #include <stdio.h>
 #include <stdlib.h> 

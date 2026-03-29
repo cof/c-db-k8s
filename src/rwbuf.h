@@ -8,6 +8,13 @@
  * - Position independent: size_t read|write offsets for safe memory relocation/resizing
  * - scatter-gather - vectorzed memory tranfers via writev   
  * - support for readline with max length enforcement
+ *
+ * API sections
+ * ------------
+ * Init : init buffer state
+ * Data I/O : read and write data to buffer
+ * Line I/O : read and write line to buffer
+ * Helpers  : buffer status and iov loader
  */
 #ifndef _RWBUF_H_
 #define _RWBUF_H_
@@ -47,8 +54,8 @@ void rwbuf_deinit(struct rwbuf *buf);
 void *rwbuf_mkspace(struct rwbuf *buf, size_t need);
 
 /*
- * read and write
- * ---------------
+ * BUF I/O : read and write data to buffer
+ * ---------------------------------------
  * rwbuf_mkspace(buf, need_len)   : reserve write space in buffer
  * rwbuf_write(buf, buf, len)     : append memory buffer
  * rwbuf_writev(buf, niov, ivovs) : append memory buffers
@@ -71,14 +78,14 @@ int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf]);
 int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32_t flags);
 
 /*
- * Helpers
- * -------
+ * Helpers : buffer status and iov loader
+ * -----------------------------------------
  * rwbuf_rptr(buf)  : return ptr to readable dataq
  * rwbuf_wptr(buf)  : return ptr to writable space
  * rwbuf_used(buf)  : return size of readable data
  * rwbuf_space(buf) : return size of writeable space 
  * rwbuf_rdinc(buf) : increment read buffer index by len
- *
+ * -
  * iovs_len(niov, iovs)    : calc total iov_len of iovs
  * iov_load(iov, buf, len) : load buffer address into iovec 
  */

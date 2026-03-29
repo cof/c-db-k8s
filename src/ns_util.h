@@ -1,7 +1,19 @@
 /*
- * Namespace util api for containers
+ * NameSpace Util api for containers
  * ---------------------------------
  *
+ * API sections
+ * ------------
+ * Macros  : error codes and helpers:
+ * Misc    : gen purpose helper funcs
+ * Pipe    : pipe close,read, write
+ * Dir     : create dir, copy file
+ * netns   : open,create netns file
+ * Mount   : mount overlay, rootfs cmd, file, netns
+ * veth    : add,delete, setns, setup
+ * child   : namepace changes
+ * child   : security
+ * helpers : status check, close func
  */
 #ifndef _NS_UTIL_H_
 #define _NS_UTIL_H_
@@ -33,13 +45,21 @@
     if (rc != 0) return rc; \
 } while(0);
 
-
 /*
- * Gen
- * ----
- * shutdown_pid(pid, wait) : terminate child process
+ * Misc - gen purpose helper funcs
+ * -------------------------------
+ * run_cmd(fmt, ...)       : printf a cmd and call system to run it
+ * shutdown_pid(pid, wait) : terminate a child process
+ * exec_args_parse : convert cmd-line exec_args str into argv array
+ * gen_id(buf, len, name)  : generate an id str based on hash of name
+ * gen_path(dir, name)     : generate a path string 
  */
+int run_cmd(const char *fmt, ...)
+    __attribute__((format(printf, 1, 2)));
 void shutdown_pid(int pid, int wait);
+char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc);
+char *gen_id(char *buf, int len, const char *name);
+char *gen_path(const char *dir, const char *name);
 
 /*
  * pipe
@@ -62,17 +82,9 @@ int sync_wrpipe(int *fd,
     const char *who, const char *what, const char *name,
     pid_t pid);
 
-// system run cmd wrapper
-int run_cmd(const char *fmt, ...)
-    __attribute__((format(printf, 1, 2)));
-
-char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc);
-char *gen_id(char *buf, int len, const char *name);
-char *gen_path(const char *dir, const char *name);
-
 /*
- * Create dir
- * ----------
+ * Dir - create dir
+ * ----------------
  * create_dir(path, mode, can_exist) : mkdir with mode
  * create_path_nocopy(path, mode)    : mkdir -p with mode
  * create_path(path, mode)           : mkdir -p (copys path) 
@@ -118,8 +130,8 @@ int mount_cmd(const char *host_path, const char *rootfs_path);
 int mount_netns(const char *netns_path);
 int mount_rootfs(const char *rootfs_dir, const char *rootfs_path);
 
-/* veth
- * ----
+/* veth : add,delete, setns, setup 
+ * --------------------------------
  * veth_add(veth,peer)     : create a new veth device
  * veth_del(veth)          : delete veth device
  * veth_setns(veth, netns) : set netns for veth
@@ -160,10 +172,8 @@ int apply_seccomp(const char *name);
 
 /* helpers
  * -------
- *
  * is_reaped(status) - true if status has exit or signal code
  * close_fd(fd) - close fd if open
- *
  */
 static inline int is_reaped(int status)
 {

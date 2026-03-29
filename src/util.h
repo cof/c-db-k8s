@@ -1,19 +1,27 @@
 /*
- * UTIL - a utility API for:
- * -----------------------
+ * UTIL api
+ * --------
  * A misc utility API for apps featuring:
- * - sys errors : general error codes
- * - gen macros : array len, string literal, aligment, rmconst
- * - ptr macros : ptr manipulation
- * - str macros : Stringification
- * - min-max    : safe min/max funcs
- * - signal     : simple signal handler api
- * - string     : misc string api
- * - codec      : simple encoders and decoders
- * - strbuf     : for simple string write buffer
- * - str_slice  : for a memory view (buf+len)
- * - setter     : for setting string and int values
- * - cmd-line   : cmd-line parser api
+ * - signal handling
+ * - string buffer
+ * - string parsing
+ * - codecs
+ * - cmd-line parsing
+ *
+ * API sections
+ * ------------
+ * sys errors : general error codes
+ * gen macros : array len, string literal, aligment, rmconst
+ * ptr macros : ptr manipulation
+ * str macros : Stringification
+ * min-max    : safe min/max funcs
+ * signal     : simple signal handler api
+ * string     : misc string api
+ * codec      : simple encoders and decoders
+ * strbuf     : for simple string write buffer
+ * str_slice  : for a memory view (buf+len)
+ * setter     : for setting string and int values
+ * cmd-line   : cmd-line parser api
  */
 #ifndef _UTIL_H_
 #define _UTIL_H_

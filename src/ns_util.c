@@ -1,14 +1,29 @@
 /* 
- * namespace utils
+ * NameSpace Util api for containers
+ * ---------------------------------
+ * See ns_uti.h for API description.
+ *
+ * API sections
+ * ------------
+ * Macros : error codes and helpers:
+ * Misc  : gen purpose helper funcs
+ * Pipe  : pipe close,read, write
+ * Dir   : create dir, copy file
+ * netns : open,create netns file
+ * Mount : mount overlay, rootfs cmd, file, netns
+ * veth  : add,delete, setns, setup
+ * child : namepace changes
+ * child : security
+ * helpers : status check, close func
  *
  * Refs:
- * - man 7 nampspaces
- * - man 2 clone
- * - man 2 pivot_root
- * - man 2 wait
- * - man 2 seccomp
- * - Kerrisk - TLPI - The Linux Progamming Interface
- *
+ * ----
+ * man 7 nampspaces
+ * man 2 clone
+ * man 2 pivot_root
+ * man 2 wait
+ * man 2 seccomp
+ * Kerrisk - TLPI - The Linux Progamming Interface
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,6 +63,48 @@
 #include "log.h"
 #include "ns_util.h"
 
+// system run cmd wrapper
+int run_cmd(const char *fmt, ...)
+{
+    va_list args;
+    char *cmd;
+    int rc;
+
+    va_start(args, fmt);
+    rc = vasprintf(&cmd, fmt, args);
+    va_end(args);
+
+    if (rc < 0) {
+        return log_errno_rf("vsnprintf failed");
+    }
+
+    if (verbose) {
+        log_info("LOG", "%s", cmd);
+    }
+
+    rc = system(cmd);
+    if (rc == -1) {
+        log_errno("system(%s) failed", cmd);
+    }
+    else if (!WIFEXITED(rc)) {
+        log_error("cmd (%s) interupted", cmd);
+        rc = -1;
+    }
+    else if (WEXITSTATUS(rc) != 0) {
+        log_error("cmd (%s) exited %d" , cmd, WEXITSTATUS(rc));
+        rc = -1;
+    }
+    else {
+        rc = 0;
+    }
+
+    free(cmd);
+
+    // all done
+    return rc; 
+}
+
+// terminate child process pid, wait usecs
 void shutdown_pid(int pid, int wait)
 {
     int status;
@@ -63,6 +120,77 @@ void shutdown_pid(int pid, int wait)
     }
 }
 
+// convert cmd-line exec_args str into argv array
+char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc) 
+{
+    wordexp_t p = { 0 };
+
+    if (exec_args && wordexp(exec_args, &p, WRDE_NOCMD) != 0) {
+        log_error("wordexp failed");
+        if (argc) *argc = 0;
+        return NULL;
+    }
+
+    char **argv = malloc((p.we_wordc + 2) * sizeof(char *));
+    if (argv == NULL) {
+        log_errno("malloc failed");
+        return NULL;
+    }
+
+    argv[0] = strdup(exec_path);
+    if (!argv[0]) {
+        log_errno("strdup failed");
+        return NULL;
+    }
+
+    for (size_t i = 0; i < p.we_wordc; i++) {
+        argv[i+1] = strdup(p.we_wordv[i]);
+        if (!argv[i+1]) {
+            log_errno("strdup failed");
+            return NULL;
+        }
+    }
+
+    argv[p.we_wordc + 1] = NULL; 
+    if (argc) *argc = p.we_wordc + 1;
+
+    wordfree(&p); 
+
+    return argv;
+}
+
+// generate an id str based on hash of name
+char *gen_id(char *buf, int len, const char *name)
+{
+    uint32_t id = dbj2a_hash_str(name) ^ (uint64_t) time(NULL);
+
+    int rc = snprintf(buf, len, "%08x", id);
+    if (rc < 0 || rc == 0 || rc >= len)  {
+        return log_error_rn("gen_id failed for %s", name);
+    }
+
+    return buf;
+}
+
+// generate a path string
+char *gen_path(const char *dir, const char *name)
+{
+    if (!dir || !name) return NULL;
+
+    if (*name == '/') name++;
+
+    char *path = NULL;
+    int rc = asprintf(&path, "%s/%s", dir, name);
+
+    if (rc == -1) {
+        // out of memory ?
+        return log_errno_rn("gen_path failed for %s", name);
+    }
+
+    return path;
+}
+
+// pipe - close both ends
 int sync_rdwr_close(int *rd_fd, int *wr_fd,
     const char *who, const char *what, const char *name, 
     pid_t pid)
@@ -149,114 +277,6 @@ int sync_wrpipe(int *fd,
     return 0;
 }
 
-// system run cmd wrapper
-int run_cmd(const char *fmt, ...)
-{
-    va_list args;
-    char *cmd;
-    int rc;
-
-    va_start(args, fmt);
-    rc = vasprintf(&cmd, fmt, args);
-    va_end(args);
-
-    if (rc < 0) {
-        return log_errno_rf("vsnprintf failed");
-    }
-
-    if (verbose) {
-        log_info("LOG", "%s", cmd);
-    }
-
-    rc = system(cmd);
-    if (rc == -1) {
-        log_errno("system(%s) failed", cmd);
-    }
-    else if (!WIFEXITED(rc)) {
-        log_error("cmd (%s) interupted", cmd);
-        rc = -1;
-    }
-    else if (WEXITSTATUS(rc) != 0) {
-        log_error("cmd (%s) exited %d" , cmd, WEXITSTATUS(rc));
-        rc = -1;
-    }
-    else {
-        rc = 0;
-    }
-
-    free(cmd);
-
-    // all done
-    return rc; 
-}
-
-// convert cmd-line exec_args str into argv array
-char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc) 
-{
-    wordexp_t p = { 0 };
-
-    if (exec_args && wordexp(exec_args, &p, WRDE_NOCMD) != 0) {
-        log_error("wordexp failed");
-        if (argc) *argc = 0;
-        return NULL;
-    }
-
-    char **argv = malloc((p.we_wordc + 2) * sizeof(char *));
-    if (argv == NULL) {
-        log_errno("malloc failed");
-        return NULL;
-    }
-
-    argv[0] = strdup(exec_path);
-    if (!argv[0]) {
-        log_errno("strdup failed");
-        return NULL;
-    }
-
-    for (size_t i = 0; i < p.we_wordc; i++) {
-        argv[i+1] = strdup(p.we_wordv[i]);
-        if (!argv[i+1]) {
-            log_errno("strdup failed");
-            return NULL;
-        }
-    }
-
-    argv[p.we_wordc + 1] = NULL; 
-    if (argc) *argc = p.we_wordc + 1;
-
-    wordfree(&p); 
-
-    return argv;
-}
-
-char *gen_id(char *buf, int len, const char *name)
-{
-    uint32_t id = dbj2a_hash_str(name) ^ (uint64_t) time(NULL);
-
-    int rc = snprintf(buf, len, "%08x", id);
-    if (rc < 0 || rc == 0 || rc >= len)  {
-        return log_error_rn("gen_id failed for %s", name);
-    }
-
-    return buf;
-}
-
-char *gen_path(const char *dir, const char *name)
-{
-    if (!dir || !name) return NULL;
-
-    if (*name == '/') name++;
-
-    char *path = NULL;
-    int rc = asprintf(&path, "%s/%s", dir, name);
-
-    if (rc == -1) {
-        // out of memory ?
-        return log_errno_rn("gen_path failed for %s", name);
-    }
-
-    return path;
-}
 
 char *validate_dir(const char *key, const char *dir)
 {

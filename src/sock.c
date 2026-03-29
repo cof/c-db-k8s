@@ -2,6 +2,16 @@
  * SOCK - A simple socket layer API
  * --------------------------------
  * See sock.h for API description.
+ *
+ * API sections
+ * ------------
+ * Init       : Init sock state
+ * Connection : Create or close client|server socket connections
+ * State      : Update socket mode or fd state
+ * FD I/O     : Read|Write memory buffers to|from file descriptor
+ * buffer I/O : send|recv sock buffers to|from file descriptor
+ * line   I/O : Read and write lines
+ * Status     : Socket status and info
  */
 #include <stdio.h>
 #include <stdlib.h> 
@@ -25,6 +35,7 @@
 #include "rwbuf.h"
 #include "sock.h"
 
+// conver sock_addr to str
 static int sockaddr_tobuf(struct sockaddr *addr, socklen_t addr_len, char *buf, size_t buf_len)
 {
     // convert address/port to string
@@ -79,21 +90,6 @@ static int sockaddr_tobuf(struct sockaddr *addr, socklen_t addr_len, char *buf, 
     buf[wlen] = '\0';
 
     return wlen;
-}
-
-int sockfd_get_addr(int sockfd, char *buf, int len)
-{
-    struct sockaddr_storage addr;
-    socklen_t addr_len = sizeof(addr);
-    int rc;
-
-    rc = getsockname(sockfd, (struct sockaddr *)&addr, &addr_len);
-    if (rc == -1) {
-        log_errno("get ip address");
-        return -1;
-    }
-
-    return sockaddr_tobuf((struct sockaddr *) &addr, addr_len, buf, len);
 }
 
 /*
@@ -748,7 +744,6 @@ int sock_send_str(struct simple_sock *sock, struct str_slice str)
     return sock_send_mem(sock, str.ptr, str.len);
 }
 
-
 // format addr to address:port string
 char *sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len)
 {
@@ -763,6 +758,22 @@ char *sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len)
     if (rc == -1) return "<null>";
 
     return buf;
+}
+
+//  get addr str for sock fd
+int sockfd_get_addr(int sock_fd, char *buf, int len)
+{
+    struct sockaddr_storage addr;
+    socklen_t addr_len = sizeof(addr);
+    int rc;
+
+    rc = getsockname(sock_fd, (struct sockaddr *)&addr, &addr_len);
+    if (rc == -1) {
+        log_errno("get ip address");
+        return -1;
+    }
+
+    return sockaddr_tobuf((struct sockaddr *) &addr, addr_len, buf, len);
 }
 
 // format sock to address:port or fd info string

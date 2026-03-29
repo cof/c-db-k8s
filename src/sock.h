@@ -13,6 +13,16 @@
  * - Diagnostics: robust error capture and trace logging
  * - Clean termination - graceful half close (FIN) and shutdown management
  * - Human-readable formatting: string repr of socket address or file descriptor
+ *
+ * API sections
+ * ------------
+ * Init       : Init sock state
+ * Connection : Create or close client|server socket connections
+ * State      : Update socket mode or fd state
+ * FD I/O     : Read|Write memory buffers to|from file descriptor
+ * buffer I/O : send|recv sock buffers to|from file descriptor
+ * line   I/O : Read and write lines
+ * Status     : Socket status and info
  */
 #ifndef _SOCK_H_
 #define _SOCK_H_
@@ -79,14 +89,12 @@ struct simple_sock {
     unsigned int sys_err      : 1; // read/write error
 };
 
-/* Initialization
- * --------------
+/* Init - Init socket state
+ * ------------------------
  * - SOCK_INIT(fd, max_line, min_size, buf1, len1, buf2, len2)  - init state for file or pipe stream
  * - sock_init(sock, fd, addr, max_line, buf_size, min_size, max_size) -  init state for new or accepted fd
  * - sock_deinit(sock, can_log) : close fd, free buffers
  */
-
-// init state for file or pipe stream
 #define SOCK_INIT(_fd, _max_line,  _min_size, _buf1, _len1, _buf2, _len2) { \
     .fd = _fd, \
     .max_line = _max_line, \
@@ -95,7 +103,6 @@ struct simple_sock {
     .send_buf = RWBUF_INIT(_buf2, _len2) \
 }
 
-// init state for new or accepted file descriptor
 int sock_init(struct simple_sock *sock,
     int fd, struct sockaddr_in6 *addr,
     size_t max_line, size_t buf_size,
@@ -115,12 +122,10 @@ void sock_deinit(struct simple_sock *sock, int can_log);
 int sock_client(struct simple_sock *sock, uint32_t mode, const char *host, const char *port);
 int sock_server(struct simple_sock *sock, uint32_t mode, const char *host, const char *port);
 int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr);
-
 int sock_sendfin(struct simple_sock *sock);
 int sock_close(struct simple_sock *sock, int can_log);
-
-/* Change socket state
- * -----------------------
+/* State : Change sock mode or fd state
+ * ------------------------------------
  * sock_set_mode(sock, mode) : Update mode flags
  * sock_set_nonblk(sock)     : Enable non-blocking on fd
  * sock_set_sndto(sock, ms)  : Set SO_SNDTIMEO timeout in milliseconds
@@ -130,8 +135,7 @@ int sock_set_mode(struct simple_sock *sock, uint32_t mode);
 int sock_set_nonblk(struct simple_sock *sock);
 int sock_set_sndto(struct simple_sock *sock, uint32_t ms);
 int sock_set_rcvto(struct simple_sock *sock, uint32_t ms);
-
-/*  read and write memory buffers to|from file descriptor
+/*  FD I/O - Read|Write memory blocks to|from file descriptor
  *  ------------------------------------------------------------
  *  sock_send_data(sock, buf, len) : write memory buffer to fd
  *  sock_recv_data(sock, bufd len) : read into memory buffer from fd 
@@ -140,19 +144,25 @@ int sock_set_rcvto(struct simple_sock *sock, uint32_t ms);
 ssize_t sock_send_data(struct simple_sock *sock, void *buf, size_t len);
 ssize_t sock_recv_data(struct simple_sock *sock, void *buf, size_t len);
 ssize_t sock_send_iovs(struct simple_sock *sock, int niov, struct iovec iovs[static niov]);
-
 /*
- * read and write buffered data to|from  file descriptor
- * ------------------------------------------
- * sock_recv(sock) - read from fd to recv buffer
- * sock_send(sock) - write to fd from send buffer
+ * buffer I/O - send and recv buffers to|from fd
+ * ----------------------------------------
+ * sock_send(sock)                : write from send-buffer to fd
+ * sock_recv(sock)                : read to recv-buffer from fd
+ * sock_write_mem(sock, buf, len) : append memory to send-buffer
+ * sock_write_str(sock, str)      : append str to send-buffer
+ * sock_send_mem(sock, buf, len)  : write send buffer + mem to fd, buffer remaining
+ * sock_send_str(sock, str)       : write send buffer + str to fd, buffer remaining
  */
 int sock_recv(struct simple_sock *sock);
 int sock_send(struct simple_sock *sock);
-
+int sock_write_mem(struct simple_sock *sock, void *buf, size_t len);
+int sock_write_str(struct simple_sock *sock, struct str_slice str);
+int sock_send_mem(struct simple_sock *sock, void *mem, size_t len);
+int sock_send_str(struct simple_sock *sock, struct str_slice str);
 /*
- * read and write line
- * ---------------------
+ * line I/O 
+ * -------------------------------
  * sock_readline(sock, line, eof) : extract line from recv-buffer (return terminal fragment if eof)
  * sock_writeline(sock, line)     : write line + CRLF to send-buffer
  * sock_sendline(sock, line)      : write send-buffer + line + CRLF to fd, buffer remaining
@@ -160,27 +170,12 @@ int sock_send(struct simple_sock *sock);
 int sock_readline(struct simple_sock *sock, struct str_slice *line, int eof);
 int sock_writeline(struct simple_sock *sock, struct str_slice line);
 int sock_sendline(struct simple_sock *sock, struct str_slice line);
-
-/*
- *
- * buffer now - send later
- * ------------------------
- * sock_write_mem(sock, buf, len) : append memory to send-buffer
- * sock_write_str(sock, str)      : append str to send-buffer
- * sock_send_mem(sock, buf, len)  : write send buffer + mem to fd, buffer remaining
- * sock_send_str(sock, str)       : write send buffer + str to fd, buffer remaining
- */
-int sock_write_mem(struct simple_sock *sock, void *buf, size_t len);
-int sock_write_str(struct simple_sock *sock, struct str_slice str);
-int sock_send_mem(struct simple_sock *sock, void *mem, size_t len);
-int sock_send_str(struct simple_sock *sock, struct str_slice str);
-
 /*
  * Status and info
- * -------------
+ * ---------------
  * sockaddr_tostr(addr, addr_len) : format addr to address:port str
  * sock_tostr(sock) : format sock to address:port str
- *
+ * -
  * sock_sendbuf_used(sock) : return pending bytes in send-buffer
  * sock_recvbuf_used(sock) : return available bytes in recv-buffer
  * sock_write_close(sock, force) : mark socket closed for writes
