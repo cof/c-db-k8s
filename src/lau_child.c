@@ -3,6 +3,12 @@
  * ---------------------
  * See lau_child.h for API description.
  *
+ * API sections
+ * ------------
+ * create child
+ * configure child
+ * run child
+ * helpers
  */
 #include <errno.h>
 #include <sched.h>

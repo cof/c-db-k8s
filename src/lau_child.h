@@ -1,6 +1,13 @@
 /*
  * launcher child API
  * -----------------
+ *
+ * API sections
+ * ------------
+ * create child
+ * configure child
+ * run child
+ * helpers
  */
 #ifndef _LAU_CHILD_
 #define _LAU_CHILD_
