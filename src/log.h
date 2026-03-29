@@ -1,3 +1,10 @@
+/*
+ * LOG - a logger API
+ * ------------------
+ *
+ * API sections
+ * ------------
+ */
 #ifndef _LOG_H_
 #define _LOG_H_
 

@@ -1,5 +1,10 @@
 /*
- * logger api
+ * LOG - a logger API
+ * -------------------
+ * See log.h for description.
+ *
+ * API sections
+ * ------------
  */
 #include <stdio.h>
 #include <stdarg.h>
@@ -8,7 +13,6 @@
 
 #include "util.h"
 #include "log.h"
-
 
 void log_msg(const char *msg)
 {
