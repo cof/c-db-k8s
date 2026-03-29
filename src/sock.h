@@ -111,8 +111,8 @@ int sock_init(struct simple_sock *sock,
 // close sock, free memory
 void sock_deinit(struct simple_sock *sock, int can_log);
 
-/* Connection Lifecycle 
- * ---------------------
+/* Connection : Create or close client|server socket connections
+ * -------------------------------------------------------------
  * - sock_client(sock, mode, hostname, port) : client connect to hostname and port 
  * - sock_server(sock, mode, hostname, port) : listen|bind on hostname and port
  * - sock_accept(sock, addr) : accept a pending fd from listener queue
@@ -124,6 +124,7 @@ int sock_server(struct simple_sock *sock, uint32_t mode, const char *host, const
 int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr);
 int sock_sendfin(struct simple_sock *sock);
 int sock_close(struct simple_sock *sock, int can_log);
+
 /* State : Change sock mode or fd state
  * ------------------------------------
  * sock_set_mode(sock, mode) : Update mode flags
@@ -135,18 +136,20 @@ int sock_set_mode(struct simple_sock *sock, uint32_t mode);
 int sock_set_nonblk(struct simple_sock *sock);
 int sock_set_sndto(struct simple_sock *sock, uint32_t ms);
 int sock_set_rcvto(struct simple_sock *sock, uint32_t ms);
-/*  FD I/O - Read|Write memory blocks to|from file descriptor
- *  ------------------------------------------------------------
- *  sock_send_data(sock, buf, len) : write memory buffer to fd
- *  sock_recv_data(sock, bufd len) : read into memory buffer from fd 
- *  sock_send_iovs(sock, niov, iovs) : scatter-gather writev to fd
+
+/* FD I/O - Read|Write memory blocks to|from file descriptor
+ * ------------------------------------------------------------
+ * sock_send_data(sock, buf, len) : write memory buffer to fd
+ * sock_recv_data(sock, bufd len) : read into memory buffer from fd 
+ * sock_send_iovs(sock, niov, iovs) : scatter-gather writev to fd
  */
 ssize_t sock_send_data(struct simple_sock *sock, void *buf, size_t len);
 ssize_t sock_recv_data(struct simple_sock *sock, void *buf, size_t len);
 ssize_t sock_send_iovs(struct simple_sock *sock, int niov, struct iovec iovs[static niov]);
+
 /*
  * buffer I/O - send and recv buffers to|from fd
- * ----------------------------------------
+ * ---------------------------------------------
  * sock_send(sock)                : write from send-buffer to fd
  * sock_recv(sock)                : read to recv-buffer from fd
  * sock_write_mem(sock, buf, len) : append memory to send-buffer
@@ -160,6 +163,7 @@ int sock_write_mem(struct simple_sock *sock, void *buf, size_t len);
 int sock_write_str(struct simple_sock *sock, struct str_slice str);
 int sock_send_mem(struct simple_sock *sock, void *mem, size_t len);
 int sock_send_str(struct simple_sock *sock, struct str_slice str);
+
 /*
  * line I/O 
  * -------------------------------
@@ -170,6 +174,7 @@ int sock_send_str(struct simple_sock *sock, struct str_slice str);
 int sock_readline(struct simple_sock *sock, struct str_slice *line, int eof);
 int sock_writeline(struct simple_sock *sock, struct str_slice line);
 int sock_sendline(struct simple_sock *sock, struct str_slice line);
+
 /*
  * Status and info
  * ---------------
