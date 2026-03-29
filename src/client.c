@@ -116,6 +116,7 @@ static void my_pipe_drain(struct my_pipe *conn, struct pollfd *fds)
     fds[conn->poll_out].events = sock_sendbuf_used(conn->sock_send) ? POLLOUT : 0;
 }
 
+// check if ingress and egress write paths done
 static int my_pipe_stop(struct my_pipe *user, struct my_pipe *serv, struct pollfd *fds)
 {
     if (sock_write_done(serv->sock_send)) {
