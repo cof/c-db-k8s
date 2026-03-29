@@ -179,11 +179,11 @@ STRACE_RAW = $(BUILD_DIR)/strace_raw.txt
 SECCOMP_H  = $(BUILD_DIR)/seccomp_rules.h
 gen-seccomp: client server
 	@echo "Generating seccomp rules..."
-	@strace -c -f -o $(STRACE_SRV) ./server $(TEST_ARGS) & STRACE_PID=$$!; \
+	@strace -c -f -o $(STRACE_SRV) ./server $(CMD_ARGS) & STRACE_PID=$$!; \
 	SERV_PID=$$(pgrep -P $$STRACE_PID); \
 	echo "Profiling Server (PID: $$SERV_PID) via Strace (PID: $$STRACE_PID)"; \
 	sleep 1; \
-	strace -c -f -o $(STRACE_CLI) ./client $(TEST_ARGS) < $(CMD_FILE) 1>/dev/null || true; \
+	strace -c -f -o $(STRACE_CLI) ./client $(CMD_ARGS) < $(CMD_FILE) 1>/dev/null || true; \
 	sleep 1; \
 	pgrep -ax server || true; \
 	kill $$SERV_PID  2>/dev/null || true; \
@@ -539,12 +539,13 @@ FAIL_STR := [$(RED) FAIL $(RESET)]
 ALLOW_STR := $(CHECK_MARK) ALLOWED
 DENY_STR  := $(CROSS_MARK) DENIED
 
-SERV_PORT = 6379
+DB_PORT = 6379
 TEST_PORT = 7379
 TEST_ADDR = 127.0.0.1
-TEST_ARGS = --hostname $(TEST_ADDR) --port $(TEST_PORT)
-TEST_LOG  = $(BUILD_DIR)/test.log
-TEST_WAIT_RUN = 0.5
+CMD_ARGS = --hostname $(TEST_ADDR) --port $(TEST_PORT)
+
+TEST_LOGFILE  = $(BUILD_DIR)/test.log
+TEST_WAITRUN = 0.5
 
 TEST_REPORT = \
 	passed=$$((total - errors)); \
@@ -554,7 +555,6 @@ TEST_REPORT = \
 # test-lau macros
 # ---------------
 GET_VM_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
-TEST_LAU = test-lau
 
 SSH_OPTS = \
 	-o StrictHostKeyChecking=no \
@@ -568,16 +568,41 @@ endif
 
 # run launcher in VM using doas
 LAUNCHER_CMD := stty -echo; \
-	doas $(VM_BIN_DIR)/launcher --base-dir $(VM_HOME)/$(TEST_LAU) --src-dir $(VM_BIN_DIR)
+	doas $(VM_BIN_DIR)/launcher --base-dir $(VM_HOME)/$(VM_NAME) --src-dir $(VM_BIN_DIR)
 
 # test-cmd macros
 # ---------------
-WAIT_UP   = timeout $(1) bash -c 'until nc -z $(2) $(3) 2>/dev/null; do sleep 0.1; done'
-KILL_WAIT = kill $(1) 2>/dev/null;  wait $(1) 2>/dev/null || true
+
+# 1=pid
+SHUTDOWN_PID = \
+	echo " => Shutting down PID $(1)"; \
+	kill $(1) 2>/dev/null; \
+	wait $(1) 2>/dev/null || true
+
+# 1=pid 2=name
+WAIT_PIDUP= \
+	echo " => Starting $(2) PID $(1)"; \
+	sleep $(TEST_WAITRUN); \
+	kill -0 $(1); \
+	if [ $$? -ne 0 ]; then \
+		echo " => $(2) died - check log"; \
+		exit 1; \
+	fi
+
+# 1=addr 2=port 3=timeout pid=4
+WAIT_CONNUP = \
+	echo " => Waiting for $(1):$(2)"; \
+	timeout $(3) bash -c 'until nc -z $(1) $(2) 2>/dev/null; do sleep 0.1; done'; \
+	if [ $$? -ne 0 ]; then \
+		 echo " => Wait failed to connect"; \
+		 $(call SHUTDOWN_PID,$(4)); \
+		 exit 1; \
+	fi; \
+	echo " => Connection is UP - starting tests"
 
 # test-server macros
-# -----------------
-TEST_CMD = \
+# ------------------
+CHK_SRVCMD = \
     total=$$((total + 1)); \
     echo "$(1)" | nc -w 1 -N $(TEST_ADDR) $(TEST_PORT) | grep -q "$$EXPECT"; \
     if [ $$? -eq 0 ]; then \
@@ -589,20 +614,28 @@ TEST_CMD = \
 
 # test-client macros
 # ------------------
-TEST_REQ_FILE = tests/test_req.txt
-TEST_RSP_FILE = tests/test_rsp.txt
-TEST_FILE = \
+TEST_REQFILE = tests/test_req.txt
+TEST_RSPFILE = tests/test_rsp.txt
+# 1=test-file 2=res-file 3=log-file
+DIFF_FILE = \
 	total=$$((total + 1));  \
-	diff --strip-trailing-cr $(1) $(2) 1>>$(TEST_LOG); \
+	diff --strip-trailing-cr $(1) $(2) 1>>$(3); \
     if [ $$? -eq 0 ]; then \
         printf " => TEST %s %s\n" "$(1)" "$(PASS_STR)"; \
     else \
         printf " => TEST '%s' %s\n" "$(1)" "$(FAIL_STR)"; \
         errors=$$((errors + 1)); \
     fi
-BUILD_REQ_FILE = $(BUILD_DIR)/$(notdir $(TEST_REQ_FILE))
-BUILD_RSP_FILE = $(BUILD_DIR)/$(notdir $(TEST_RSP_FILE))
+BUILD_REQFILE = $(BUILD_DIR)/$(notdir $(TEST_REQFILE))
+BUILD_RSPFILE = $(BUILD_DIR)/$(notdir $(TEST_RSPFILE))
 SIMPLE_SERVER = scripts/simple_server.awk
+
+# 1=cmd-file 2=res-file 3=log-file
+SND_CMDFILE = \
+	echo " => send $(1) via client"; \
+	cat $(1) | timeout 2s ./client $(CMD_ARGS) > $(2) 2>$(3); \
+	sed -i -e 's/^> //' -e '/^\[+]/d' $(2) \
+
 
 # test-pod / test-net 
 # ---------------------
@@ -611,17 +644,19 @@ DB_POD := db-pod
 
 # test-pod macros
 # ---------------
+TEST_POD_LOGFILE = $(BUILD_DIR)/test_pod.log
+TEST_POD_RESFILE = $(TEST_POD_LOGFILE).res
 
 # 1=file
 GREP_CONNOK = grep -Fc "[+] Connectivity test: OK" $(1) | wc -l
 # 1=req, 2=rsp, 3=file
 GREP_REQRSP  = grep -Fq "[LOG] send req: $(1) recv rsp: $(2)" $(3)
+
 # 1=cmd,2=file
-SND_CMD = echo $(1) | kubectl attach -qi $(2) 2>/dev/null
+SND_PODCMD = echo $(1) | kubectl attach -qi $(2) 2>/dev/null
 # 1=pod
 GET_PODS = kubectl get pods -l app=$(1) -o name
-GET_POD  = $(call GET_PODS,$(1)) | head -n 1
-GET_LOG  = kubectl logs $(1) --tail=20 >$(2) 2>/dev/null
+GET_POD  = kubectl get pods -l app=$(1) -o name | head -n 1
 # 1=pod 2=file
 GET_LOGS = \
 	POD_LIST=$$($(call GET_PODS,$(1))); \
@@ -629,15 +664,15 @@ GET_LOGS = \
 	for POD in $$POD_LIST; do \
 		kubectl logs $$POD >$(2) 2>/dev/null; \
 	done
-
-TEST_POD_LOG = $(BUILD_DIR)/testpod.txt
-TEST_POD_RES = $(TEST_POD_LOG).result
-DO_CLEAN = sed -e 's/^> //' -e '/^\[LOG\]/!d' $(1) | \
+# 1=pod 2=log
+GET_LOGFILE  = kubectl logs $(1) --tail=20 >$(2) 2>/dev/null
+# 1=log 2=file
+GET_RESFILE = sed -e 's/^> //' -e '/^\[LOG\]/!d' $(1) | \
 	sed -z 's/\n\[LOG\] recv rsp:/ recv rsp:/g' > $(2)
-
-CHK_CMDRES = \
-	total=$$((total + 1));  \
-	$(GREP_REQRSP) $(1) $(2) $(3); \
+# 1=cmd 2=res 3=file
+CHK_RESFILE = \
+	total=$$((total + 1)); \
+	$$($(call $(GREP_REQRSP) $(1) $(2) $(3))); \
 	if [ $$? -eq 0 ]; then \
 		printf " => check %s %b\n" "$(1)" "$(PASS_STR)"; \
 	else \
@@ -647,19 +682,44 @@ CHK_CMDRES = \
 
 # test-net macros
 # ---------------
-TEST_PRECONN = printf " => %-10s -> %-15s " $(1) $(2)
-TEST_CONNECT = \
-	total=$$((total + 1));  \
-	POD=$(shell $(call GET_POD,$(2))); \
-	kubectl exec $$POD -- nc -w 3 -zv $(3) $(4) >/dev/null 2>&1; \
-	exit_code=$$?; [ $$exit_code -ne 0 ] && exit_code=1; \
-	perm_str="$(ALLOW_STR)"; [ $(1) -ne 0 ] && perm_str="$(DENY_STR) "; \
-	if [ $$exit_code -eq $(1) ]; then \
+INET_HOST = google.com
+INET_PORT = 443
+INET_NAME = internet
+DB_NAME   = $(DB_POD):$(DB_PORT)
+RANDOM_NAME = random
+RANDOM_POD = random-pod
+
+# 1=name 2=label 3=timeout
+TEST_RUNPOD = \
+	kubectl run $(1) --image=busybox -l app=$(2) --restart=Never -- sleep 30 >/dev/null 2>&1; \
+	kubectl wait --for=condition=Ready pod/$(1) --timeout=$(3) >/dev/null 2>&1
+# 1=name
+TEST_DELPOD = kubectl delete pod $(1) --now >/dev/null 2>&1
+# 1=pod 2=name
+LOG_CHKCONN = printf " => %-10s -> %-15s " $(1) $(2)
+# 1=is_open 2=pod 3=label 4=hostname 5=port 6=log_chk
+CHK_CONNOPEN = \
+	log_chk=$(if $(6),$(6),1); \
+	if [ $$log_chk -eq 1 ]; then \
+		$(call LOG_CHKCONN,$(2),$(3)); \
+	fi; \
+	total=$$((total + 1)); \
+	POD=$$($(call GET_POD,$(2))); \
+	kubectl exec $$POD -- nc -w 3 -zv $(4) $(5) >/dev/null 2>&1; \
+	if [ $$? -eq 0 ]; then is_open=1; else is_open=0; fi; \
+	if [ $(1) -eq 0 ]; then perm_str="$(DENY_STR)"; else perm_str="$(ALLOW_STR)"; fi; \
+	if [ $$is_open -eq $(1) ]; then \
 		printf "%b %b\n" "$$perm_str" "$(PASS_STR)"; \
 	else \
 		printf "%b %b\n" "$$perm_str" "$(FAIL_STR)"; \
 		errors=$$((errors + 1)); \
 	fi
+# 1=is_open 2=pod 3=label 4=hostname 5=port
+CHK_RANDOPEN= \
+	$(call LOG_CHKCONN,$(2),$(3)); \
+	$(call TEST_RUNPOD,$(2),$(RANDOM_NAME),15s); \
+	$(call CHK_CONNOPEN,$(1),$(2),$(3),$(4),$(5),0); \
+	$(call TEST_DELPOD,$(2))
 
 .PHONY: test-full
 test-full: test-cmds test-lau test-k8s
@@ -681,25 +741,19 @@ test-cmds: test-server test-client
 .PHONY: test-server
 test-server: server
 	$(Q)echo "[+] Running $@"; \
-	./server $(TEST_ARGS) 1> $(TEST_LOG) 2>&1 & SRV_PID=$$!; \
-	echo " => Starting server PID $$SRV_PID"; \
-	sleep $(TEST_WAIT_RUN); \
-	kill -0 $$SRV_PID || { echo " => server died - check log"; exit 1; }; \
-	echo " => Waiting for $(TEST_ADDR):$(TEST_PORT)"; \
-	$(call WAIT_UP,3,$(TEST_ADDR),$(TEST_PORT)) || \
-		{ echo " => Wait failed";i $(call KILL_WAIT,$$SRV_PID); exit 1; }; \
-	echo " => Server is UP Running tests..."; \
+	./server $(CMD_ARGS) 1> $(TEST_LOGFILE) 2>&1 & SRV_PID=$$!; \
+	$(call WAIT_PIDUP,$$SRV_PID,server); \
+	$(call WAIT_CONNUP,$(TEST_ADDR),$(TEST_PORT),$$SRV_PID); \
 	total=0; errors=0; \
-	$(call TEST_CMD,SET foo bar,OK); \
-	$(call TEST_CMD,GET foo,bar); \
-	$(call TEST_CMD,DEL foo,OK); \
-	$(call TEST_CMD,GET foo,FAIL); \
-	$(call TEST_CMD,SET key value1,OK); \
-	$(call TEST_CMD,GET key,value1); \
-	$(call TEST_CMD,SET key value2, OK); \
-	$(call TEST_CMD,GET key,value2); \
-	echo " => Shutting down server PID $$SRV_PID"; \
-	$(call KILL_WAIT,$$SRV_PID); \
+	$(call CHK_SRVCMD,SET foo bar,OK); \
+	$(call CHK_SRVCMD,GET foo,bar); \
+	$(call CHK_SRVCMD,DEL foo,OK); \
+	$(call CHK_SRVCMD,GET foo,FAIL); \
+	$(call CHK_SRVCMD,SET key value1,OK); \
+	$(call CHK_SRVCMD,GET key,value1); \
+	$(call CHK_SRVCMD,SET key value2, OK); \
+	$(call CHK_SRVCMD,GET key,value2); \
+	$(call SHUTDOWN_PID,$$SRV_PID); \
 	$(call TEST_REPORT); \
 	if [ $$errors -gt 0 ]; then exit 1; fi
 
@@ -708,24 +762,17 @@ test-server: server
 .PHONY: test-client
 test-client: client
 	$(Q)echo "[+] Running $@"; \
-	rm -f $(BUILD_REQ_FILE) $(BUILD_RSP_FILE); \
+	rm -f $(BUILD_REQFILE) $(BUILD_RSPFILE); \
 	awk -f ./$(SIMPLE_SERVER) -v Port="$(TEST_PORT)" \
-		 -v LogFile="$(BUILD_REQ_FILE)" -v RespFile="$(TEST_RSP_FILE)" \
-		 1>$(TEST_LOG) 2>&1 & SRV_PID=$$!; \
-	echo " => Starting simple-server PID $$SRV_PID"; \
-	sleep $(TEST_WAIT_RUN); \
-	kill -0 $$SRV_PID || { echo " => simple-server died - check log"; exit 1; }; \
-	echo " => Waiting for $(TEST_ADDR):$(TEST_PORT)"; \
-	$(call WAIT_UP,3,$(TEST_ADDR),$(TEST_PORT)) || \
-		{ echo " => Wait failed";i $(call KILL_WAIT,$$SRV_PID); exit 1; }; \
-	echo " => Server is UP send $(TEST_REQ_FILE) via client"; \
-	cat $(TEST_REQ_FILE) | timeout 2s ./client $(TEST_ARGS) > $(BUILD_RSP_FILE) 2>$(TEST_LOG); \
-	sed -i -e 's/^> //' -e '/^\[+]/d' $(BUILD_RSP_FILE); \
-	echo " => Shutting down simple-server PID $$SRV_PID"; \
-	$(call KILL_WAIT,$$SRV_PID); \
+		 -v LogFile="$(BUILD_REQFILE)" -v RespFile="$(TEST_RSPFILE)" \
+		 1>$(TEST_LOGFILE) 2>&1 & SRV_PID=$$!; \
+	$(call WAIT_PIDUP,$$SRV_PID,simple-server); \
+	$(call WAIT_CONNUP,$(TEST_ADDR),$(TEST_PORT),$$SRV_PID); \
+	$(call SND_CMDFILE,$(TEST_REQFILE),$(BUILD_RSPFILE),$(TEST_LOGFILE)) ; \
+	$(call SHUTDOWN_PID,$$SRV_PID); \
 	total=0; errors=0; \
-	$(call TEST_FILE,$(TEST_REQ_FILE),$(BUILD_REQ_FILE)); \
-	$(call TEST_FILE,$(TEST_RSP_FILE),$(BUILD_RSP_FILE)); \
+	$(call DIFF_FILE,$(TEST_REQFILE),$(BUILD_REQFILE),$(TEST_LOGFILE)); \
+	$(call DIFF_FILE,$(TEST_RSPFILE),$(BUILD_RSPFILE),$(TEST_LOGFILE)); \
 	$(call TEST_REPORT); \
 	if [ $$errors -gt 0 ]; then exit 1; fi
 
@@ -734,14 +781,14 @@ test-client: client
 .PHONY: test-lau
 test-lau: $(INSTALL_DONE) vm-create
 	$(Q)echo "[+] Running $@"; \
-	> $(TEST_LOG); \
+	> $(TEST_LOGFILE); \
 	VM_IP=$$($(GET_VM_IP)); \
 	if [ -z "$$VM_IP" ]; then echo "[ERROR] No VM ip address"; exit 1; fi; \
 	VM_SSH_ADDR="$(VM_USER)@$$VM_IP"; \
 	echo " => Copying $(BIN_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
 	scp -q $(SSH_OPTS) -r $(BIN_DIR) $$VM_SSH_ADDR:$(VM_HOME); \
 	echo " => Running $(VM_BIN_DIR)/launcher ..."; \
-	ssh $(SSH_OPTS) -tt $$VM_SSH_ADDR "$(LAUNCHER_CMD)" < ./$(TEST_REQ_FILE) > $(TEST_LOG); \
+	ssh $(SSH_OPTS) -tt $$VM_SSH_ADDR "$(LAUNCHER_CMD)" < ./$(TEST_REQFILE) > $(TEST_LOGFILE); \
 	echo "$(CHECK) $@ complete."
 
 # run all k8s tests
@@ -750,9 +797,8 @@ test-lau: $(INSTALL_DONE) vm-create
 test-k8s:wait-pods test-pod test-net
 	@echo "$(CHECK) $@ complete."
 
-
-# wait for all pods to be ready
-# ----------------------------
+# wait for pods to be ready
+# -------------------------
 .PHONY:wait-pods
 wait-pods: deploy
 	$(Q)echo "[+] Running $@"
@@ -763,8 +809,8 @@ wait-pods: deploy
 	$(Q)NEED_OK=1; NUM_OK=0; \
 	echo " => Wait for $$NEED_OK $(CLIENT_POD) connected ..."; \
 	for i in { 1..3}; do \
-		$(call GET_LOGS,$(CLIENT_POD),$(TEST_POD_LOG)); \
-		NUM_OK=$$($(call GREP_CONNOK,$(TEST_POD_LOG))); \
+		$(call GET_LOGS,$(CLIENT_POD),$(TEST_POD_LOGFILE)); \
+		NUM_OK=$$($(call GREP_CONNOK,$(TEST_POD_LOGFILE))); \
 		if [ "$$NUM_OK" -ge "$$NEED_OK" ]; then break; fi; \
 		sleep 2; \
 	done; \
@@ -776,24 +822,24 @@ wait-pods: deploy
 .PHONY: test-pod
 test-pod: deploy
 	$(Q)echo "[+] Running $@"; \
-	CLIENT_POD=$(shell $(call GET_POD,$(CLIENT_POD))); \
-	echo " => Using $(CLIENT_POD): $$CLIENT_POD"; \
+	POD=$$($(call GET_POD,$(CLIENT_POD))); \
+	echo " => Using $(CLIENT_POD): $$POD"; \
 	RAND_STR=$$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 30); \
 	CMD1="SET test-pod $$RAND_STR"; \
 	CMD2="GET test-pod"; \
 	CMD3="DEL test-pod"; \
 	echo " => Sending cmds"; \
-	$(call SND_CMD,$$CMD1,$$CLIENT_POD); \
-	$(call SND_CMD,$$CMD2,$$CLIENT_POD); \
-	$(call SND_CMD,$$CMD3,$$CLIENT_POD); \
+	$(call SND_PODCMD,$$CMD1,$$POD); \
+	$(call SND_PODCMD,$$CMD2,$$POD); \
+	$(call SND_PODCMD,$$CMD3,$$POD); \
 	echo " => Fetching logs"; \
-	$(call GET_LOG,$$CLIENT_POD,$(TEST_POD_LOG)); \
-	$(call DO_CLEAN,$(TEST_POD_LOG),$(TEST_POD_RES)); \
+	$(call GET_LOGFILE,$$CLIENT_POD,$(TEST_POD_LOGFILE)); \
+	$(call GET_RESFILE,$(TEST_POD_LOGFILE),$(TEST_POD_RESFILE)); \
 	echo " => Checking results"; \
 	total=0; errors=0; \
-	$(call CHK_CMDRES,$$CMD1,OK,$(TEST_POD_RES)); \
-	$(call CHK_CMDRES,$$CMD2,$$RAND_STR,$(TEST_POD_RES)); \
-	$(call CHK_CMDRES,$$CMD3,OK,$(TEST_POD_RES)); \
+	$(call CHK_RESFILE,$$CMD1,OK,$(TEST_POD_RESFILE)); \
+	$(call CHK_RESFILE,$$CMD2,$$RAND_STR,$(TEST_POD_RESFILE)); \
+	$(call CHK_RESFILE,$$CMD3,OK,$(TEST_POD_RESFILE)); \
 	$(call TEST_REPORT); \
 	if [ $$errors -gt 0 ]; then exit 1; fi
 
@@ -803,20 +849,12 @@ test-pod: deploy
 test-net: deploy
 	$(Q)echo "[+] Runing $@"; \
 	total=0; errors=0; \
-	$(call TEST_PRECONN,$(DB_POD),internet); \
-	$(call TEST_CONNECT,1,$(DB_POD),google.com,443); \
-	$(call TEST_PRECONN,$(CLIENT_POD),internet); \
-	$(call TEST_CONNECT,1,$(CLIENT_POD),google.com,443); \
-	$(call TEST_PRECONN,$(CLIENT_POD),$(DB_POD)); \
-	$(call TEST_CONNECT,0,$(CLIENT_POD),db-service,$(SERV_PORT)); \
-	$(call TEST_PRECONN,random-pod,$(DB_POD):$(SERV_PORT)); \
-	kubectl run random-pod --image=busybox -l app=random --restart=Never -- sleep 30 >/dev/null 2>&1; \
-	kubectl wait --for=condition=Ready pod/random-pod --timeout=15s >/dev/null 2>&1; \
-	$(call TEST_CONNECT,1,random-pod,db-service,$(SERV_PORT)); \
-	kubectl delete pod random-pod --now >/dev/null 2>&1; \
+	$(call CHK_CONNOPEN,0,$(DB_POD),$(INET_NAME),$(INET_HOST),$(INET_PORT)); \
+	$(call CHK_CONNOPEN,0,$(CLIENT_POD),$(INET_NAME),$(INET_HOST),$(INET_PORT)); \
+	$(call CHK_CONNOPEN,1,$(CLIENT_POD),$(DB_NAME),db-service,$(DB_PORT)); \
+	$(call CHK_RANDOPEN,0,$(RANDOM_POD),$(DB_NAME),db-service,$(DB_PORT)); \
 	$(call TEST_REPORT); \
 	if [ $$errors -gt 0 ]; then exit 1; fi
-
 
 # ################
 # --- Cleanup ----
