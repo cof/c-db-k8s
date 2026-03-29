@@ -86,17 +86,16 @@ endif
 
 # compiler flags
 # --------------
-GCC_DEPS      := -MMD -MP
+GCC_DEPS      := -MMD -MP -MT
 CPP_FLAGS     := -D_GNU_SOURCE -Isrc
 EXTRA_CFLAGS  := -Wextra -Wno-missing-field-initializers
-COMMON_CFLAGS := -Wall $(CPP_FLAGS) $(GCC_DEPS) -Werror=implicit-function-declaration
+COMMON_CFLAGS := -Wall  -Werror=implicit-function-declaration $(CPP_FLAGS) $(GCC_DEPS)
 DEBUG_CFLAGS   := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
 
 # release build
 # -----------
 CFLAGS  = -O2 $(COMMON_CFLAGS) $(EXTRA_CFLAGS)
 LDFLAGS = --static
-
 
 MAKEFLAGS += --no-print-directory
 
@@ -149,7 +148,6 @@ client: $(CLIENT_OBJS)
 
 # launcher
 # --------
-LAUNCHER_LIBS = $(SECURITY_LIBS)
 LAUNCHER_SRCS = src/util.c src/log.c src/ns_util.c src/lau_child.c src/launcher.c
 LAUNCHER_OBJS = $(LAUNCHER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 LAUNCHER_DEPS = $(LAUNCHER_OBJS:.o=.d)

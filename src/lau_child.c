@@ -80,10 +80,8 @@ void lau_child_free(struct lau_child *child)
     if (child->overlay_mounted) {
         umount2(child->rootfs_path, MNT_DETACH);
         child->overlay_mounted = 0;
-        if (child->cmd_mounted) {
-            // XXX an rootfs unmout clears all mounts
-            child->cmd_mounted = 0;
-        }
+        // overlay unmount clears all mounts
+        child->cmd_mounted = 0;
     }
 
     // release cmd mount
@@ -220,23 +218,23 @@ int lau_child_prep(struct lau_child *child)
     return 0;
 }
 
-// run - switch to child netns
-int lau_child_switch_netns(struct lau_child *child) 
+/* prerun - parent calls this to setup child before we call clone.
+ * note parent MUST switch to the child netns before calling clone
+ * for the child process to start inside its own netns.
+ */
+int lau_child_prerun(struct lau_child *child)
 {
-    int rc = setns(child->netns_fd, CLONE_NEWNET);
-    if (rc != 0) {
-        return log_errno_rf("setns(%d,'%s') failed", child->netns_fd, child->netns_path);
+    int num_err = 0;
+
+    if (child->netns_mounted && switch_child_netns(&child->netns_fd, child->name)) {
+        // switch failed
+        num_err++;
     }
 
-    rc = close_fd(&child->netns_fd);
-    if (rc != 0) {
-        return log_errno_rf("close netns for child %s failed", child->name);
-    }
-
-    return 0;
+    return num_err;
 }
 
-// run - clone child aka fork parent process
+// run - clone child aka fork the parent process
 int lau_child_run(struct lau_child *child)
 {
     child->pid = clone(lau_child_start, child->stack + child->stack_size, child->clone_flags, child);
@@ -249,6 +247,55 @@ int lau_child_run(struct lau_child *child)
     child->run = 1;
 
     return 0;
+}
+
+/* postrun - release child state after we clone child process.
+ * note child process inherits all memory and file descriptors
+ * from the parent so we release here what we no longer need.
+ * TODO move code into lau_child.
+ */
+int lau_child_postrun(struct lau_child *child, int netns_fd)
+{
+    int num_err = 0;
+    int rc;
+
+    // release netns
+    if (child->netns_mounted) {
+        rc = restore_host_netns(netns_fd);
+        if (rc) num_err++;
+    }
+
+    // release unused pipe ends
+    rc = sync_pipe_close(&child->go_read_fd, 
+        &child->ready_write_fd,
+        "lau", "post-run", child->name, child->pid
+    );
+    if (rc) num_err++;
+
+    // release overlay
+    if (child->overlay_mounted) {
+        rc = unmount_overlay(child->rootfs_path, child->name);
+        if (rc) num_err++;
+        child->overlay_mounted = 0;
+        // overlay unmount clears all mounts
+        child->cmd_mounted = 0;
+    }
+
+    // release cmd mount
+    if (child->cmd_mounted) {
+        rc = umount2(child->dst_path, MNT_DETACH);
+        if (rc) num_err++;
+        child->cmd_mounted = 0;
+    }
+
+    // release stack
+    if (child->stack && !(child->clone_flags & CLONE_VM)) {
+        rc = munmap(child->stack, child->stack_size);
+        if (rc) num_err++;
+        child->stack = NULL;
+    }
+
+    return num_err;
 }
 
 // child process - set security
@@ -268,25 +315,25 @@ static int setup_priv(struct lau_child *child)
     return 0; 
 }
 
-// child process - send ready signal
+// child process - send ready signal to parent
 static int child_send_ready(struct lau_child *child)
 {
-    return sync_wrpipe(
+    return sync_pipe_write(
         &child->ready_write_fd, child->sig, 
         "Container", "send-ready", child->name, child->pid
     );
 }
 
-// child process - wait go signal
+// child process - wait for go signal from parent
 static int child_wait_go(struct lau_child *child)
 {
     // close the pipe ends we don't need
-    int rc = sync_rdwr_close(&child->ready_read_fd, &child->go_write_fd,
+    int rc = sync_pipe_close(&child->ready_read_fd, &child->go_write_fd,
         "Container", "wait-go", child->name, child->pid
     );
     if (rc) return rc;
 
-    rc = sync_rdpipe(&child->go_read_fd, child->sig,
+    rc = sync_pipe_read(&child->go_read_fd, child->sig,
         "Container", "wait-go", child->name, child->pid
     );
 

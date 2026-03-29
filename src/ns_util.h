@@ -1,19 +1,20 @@
 /*
- * NameSpace Util api for containers
+ * NameSpace Util API for containers
  * ---------------------------------
+ * An api to manage namepsaces.
  *
  * API sections
  * ------------
- * Macros  : error codes and helpers:
- * Misc    : gen purpose helper funcs
- * Pipe    : pipe close,read, write
- * Dir     : create dir, copy file
- * netns   : open,create netns file
- * Mount   : mount overlay, rootfs cmd, file, netns
- * veth    : add,delete, setns, setup
- * child   : namepace changes
- * child   : security
- * helpers : status check, close func
+ * Macros    : error codes and helpers:
+ * Misc      : gen purpose helper funcs
+ * Sync      : parent and child pipe sync
+ * Dir       : create dir, copy file
+ * netns     : open,create netns file
+ * Mount     : mount overlay, rootfs cmd, file, netns
+ * veth      : add,delete, setns, setup
+ * namespace : child process namepace changes
+ * security  : child process security changes
+ * helpers   : status check, close func
  */
 #ifndef _NS_UTIL_H_
 #define _NS_UTIL_H_
@@ -62,22 +63,22 @@ char *gen_id(char *buf, int len, const char *name);
 char *gen_path(const char *dir, const char *name);
 
 /*
- * pipe
- * ----
- * sync_rdwr_close(rd_fd, rw_fd, who, what, name, pid) : close read|write pipe
- * sync_rdpipe(fd, sig, who, name pid) : read from sync pipe
- * sync_wrpipe(fd, sig, who, name pid) : write to sync pipe
+ * Sync - parent and child pipe sync
+ * ---------------------------------
+ * sync_pipe_close(rd_fd, rw_fd, who, what, name, pid) : parent|child close its pipe end
+ * sync_pipe_read(fd, sig, who, name pid)  : parent|child process reads from its pipe end
+ * sync_pipe_write(fd, sig, who, name pid) : parent|child process writes to its pipe end
  */
-int sync_rdwr_close(int *rd_fd, int *wr_fd, 
+int sync_pipe_close(int *rd_fd, int *wr_fd, 
     const char *who, const char *what, const char *name, 
     pid_t pid);
 
-int sync_rdpipe(int *fd, 
+int sync_pipe_read(int *fd, 
     struct simple_sig *sig, 
     const char *who, const char *what, const char *name, 
     pid_t pid);
 
-int sync_wrpipe(int *fd, 
+int sync_pipe_write(int *fd, 
     struct simple_sig *sig, 
     const char *who, const char *what, const char *name,
     pid_t pid);
@@ -105,10 +106,12 @@ char *validate_dir(const char *key, const char *dir);
  * netns 
  * -----
  * open_host_netns : open a fd to default host netns
+ * switch_child_netns(fd, name) - switch to child netns
  * restore_host_netns(fd) : switch back to host netns
  * create_netns_file(path) : create a file for a netns
  */
 int open_host_netns(void);
+int switch_child_netns(int *fd, const char *name);
 int restore_host_netns(int fd);
 int create_netns_file(const char *netns_path);
 
@@ -143,8 +146,8 @@ int veth_del(const char *veth);
 int veth_setns(const char *veth, const char *netns);
 int veth_setup(const char *cont_name, const char *netns);
 
-/* chlld - namespace
- * -----------------------
+/* namespace : child process namepace changes
+ * ------------------------------------------
  * set_identity(name) : set container hostname
  * set_rootfs(rootfs) : swith child process to new root file system
  * set_proc() : create proc dir
@@ -156,8 +159,8 @@ int set_proc(void);
 int create_network(const char *veth_name, const char *ip_addr);
 
 /*
- * child - Security
- * ---------------------------
+ * security : child process security changes
+ * -----------------------------------------
  * drop_bounding_set : drop all capabilities 
  * clear_all_caps : wipe existing capabilities
  * drop_sudo : drop sudo right
@@ -172,8 +175,8 @@ int apply_seccomp(const char *name);
 
 /* helpers
  * -------
- * is_reaped(status) - true if status has exit or signal code
- * close_fd(fd) - close fd if open
+ * is_reaped(status) : true if status has exit or signal code
+ * close_fd(fd)      : close fd if open
  */
 static inline int is_reaped(int status)
 {

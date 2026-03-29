@@ -105,14 +105,16 @@ int lau_child_net_setup(struct lau_child *child);
 /*
  * run child
  * ---------
- * lau_child_prep(child) : create pipe,stack,clone flags
- * lau_child_switch_netns(child) : switch to child netns
- * lau_child_run(child) : clone child aka fork parent process
- * lau_child_start(child) : clone entry point
+ * lau_child_prep(child)    : create pipe,stack,clone flags
+ * lau_child_prerun(child)  : parent sets up child state
+ * lau_child_run(child)     : parent clones a child - aka fork parent process
+ * lau_child_postrun(child,netns_fd) : parent release child state
+ * lau_child_start(child)   : clone entry point
  */
 int lau_child_prep(struct lau_child *child);
-int lau_child_switch_netns(struct lau_child *child);
+int lau_child_prerun(struct lau_child *child);
 int lau_child_run(struct lau_child *child);
+int lau_child_postrun(struct lau_child *child, int netns_fd);
 int lau_child_start(void *arg);
 
 /*

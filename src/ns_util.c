@@ -1,24 +1,26 @@
 /* 
- * NameSpace Util api for containers
+ * NameSpace Util API for containers
  * ---------------------------------
- * See ns_uti.h for API description.
+ * An api to manage namepspaces
+ * See ns_uti.h for description.
+ * --------------------------------
  *
  * API sections
  * ------------
- * Macros : error codes and helpers:
- * Misc  : gen purpose helper funcs
- * Pipe  : pipe close,read, write
- * Dir   : create dir, copy file
- * netns : open,create netns file
- * Mount : mount overlay, rootfs cmd, file, netns
- * veth  : add,delete, setns, setup
- * child : namepace changes
- * child : security
- * helpers : status check, close func
+ * Macros    : error codes and helpers:
+ * Misc      : gen purpose helper funcs
+ * Sync      : parent and child pipe sync
+ * Dir       : create dir, copy file
+ * netns     : open,create netns file
+ * Mount     : mount overlay, rootfs cmd, file, netns
+ * veth      : add,delete, setns, setup
+ * namespace : child process namepace changes
+ * security  : child process security changes
+ * helpers   : status check, close func
  *
  * Refs:
- * ----
- * man 7 nampspaces
+ * -----
+ * man 7 namespaces
  * man 2 clone
  * man 2 pivot_root
  * man 2 wait
@@ -190,8 +192,8 @@ char *gen_path(const char *dir, const char *name)
     return path;
 }
 
-// pipe - close both ends
-int sync_rdwr_close(int *rd_fd, int *wr_fd,
+// parent|child close its pipe end
+int sync_pipe_close(int *rd_fd, int *wr_fd,
     const char *who, const char *what, const char *name, 
     pid_t pid)
 {
@@ -206,14 +208,14 @@ int sync_rdwr_close(int *rd_fd, int *wr_fd,
     return 0;
 }
 
-// read from sync pipe
-int sync_rdpipe(int *fd, 
+// parent|child process reads from its pipe end
+int sync_pipe_read(int *fd, 
     struct simple_sig *sig, 
     const char *who, const char *what, const char *name,
     pid_t pid)
 {
     if (verbose)  {
-        log_info("LOG", "%s read-now %s (name=%s pid=%d)", who, what, name, pid);
+        log_info("LOG", "%s pipe-read %s (name=%s pid=%d)", who, what, name, pid);
     }
 
     // wait for peer to write
@@ -224,34 +226,32 @@ int sync_rdpipe(int *fd,
             if (!sig->run) return LAU_INTR;
             continue;
         }
-        return log_errno_rf("%s read %s failed for %s pid %d", who, what, name, pid);
+        return log_errno_rf("%s pipe-read %s failed for %s pid %d", who, what, name, pid);
     }
 
     // close our end
-    if (close_fd(fd) != 0) {
-        return log_errno_rf("%s close %s failed for %s pid %d", who, what, name, pid);
+    if (close_fd(fd)) {
+        return log_errno_rf("%s pipe-read close %s failed for %s pid %d", who, what, name, pid);
     }
-
+    // peer gone ?
     if (nr == 0) {
-        // peer gone ?
-        return log_error_re(LAU_EOF, "%s read %s eof for %s", who, what, name);
+        return log_error_rc(LAU_EOF, "%s pipe-read %s eof for %s", who, what, name);
     }
-
     if (verbose) {
-        log_info("LOG", "%s read-ok %s (name=%s pid=%d)", who, what, name, pid);
+        log_info("LOG", "%s pipe-read done %s (name=%s pid=%d)", who, what, name, pid);
     }
 
     return 0;
 }
 
-// write to sync pipe
-int sync_wrpipe(int *fd, 
+// parent|child process writes to its pipe end
+int sync_pipe_write(int *fd, 
     struct simple_sig *sig, 
     const char *who, const char *what, const char *name,
     pid_t pid)
 {
     if (verbose)  {
-        log_info("LOG", "%s write-now %s (name=%s pid=%d)", who, what, name, pid);
+        log_info("LOG", "%s pipe-write %s (name=%s pid=%d)", who, what, name, pid);
     }
 
     // wake up peer
@@ -261,23 +261,23 @@ int sync_wrpipe(int *fd,
             continue;
         }
         int ec = errno = EPIPE ? LAU_PIPE : LAU_ERR;
-        return log_errno_re(ec, "%s write %s  failed for %s", who, what, name);
+        return log_errno_rc(ec, "%s pipe-write %s  failed for %s", who, what, name);
     }
 
     // close our end
-    if (close_fd(fd) != 0) {
-        return log_errno_rf("%s close %s failed for %s", who, what, name);
+    if (close_fd(fd)) {
+        return log_errno_rf("%s pipe-write close %s failed for %s", who, what, name);
     }
 
     if (verbose)  {
-        log_info("LOG", "%s write-ok %s (name=%s pid=%d)", who, what, name, pid);
+        log_info("LOG", "%s pipe-write done %s (name=%s pid=%d)", who, what, name, pid);
     }
 
     // all done
     return 0;
 }
 
-
+/* not used - remove ?
 char *validate_dir(const char *key, const char *dir)
 {
     char *path = realpath(dir, NULL);
@@ -314,6 +314,7 @@ done:
     // all done
     return path;
 }
+*/
 
 int create_dir(const char *path, mode_t mode, bool can_exist)
 {
@@ -477,6 +478,18 @@ int restore_host_netns(int netns_fd)
     if (rc) {
         return log_errno_rf("restore netns %s failed", HOST_NETNS_PATH);
     }
+
+    return 0;
+}
+
+// switch to a child netns
+int switch_child_netns(int *fd, const char *name)
+{
+    int rc = setns(*fd, CLONE_NEWNET);
+    if (rc) return log_errno_rf("switch setns %d for %s failed", *fd, name);
+
+    rc = close_fd(fd);
+    if (rc) return log_errno_rf("close netns for child %s failed", name);
 
     return 0;
 }

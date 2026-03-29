@@ -237,7 +237,7 @@ int cmd_argv_next(struct cmd_argv *parse)
     parse->name = parse->argv[parse->argv_idx++];
     parse->opt_idx = find_opt(parse->name, parse->opts);
     if (parse->opt_idx == -1) {
-        return log_error_re(OPT_UNSUPP, "Error: Unknown option %s", parse->name);
+        return log_error_rc(OPT_UNSUPP, "Error: Unknown option %s", parse->name);
     }
     parse->opt = parse->opts + parse->opt_idx;
 
@@ -245,10 +245,10 @@ int cmd_argv_next(struct cmd_argv *parse)
     parse->value = NULL;
     if (parse->opt->has_arg) {
         if (parse->argv_idx >= parse->argc) {
-            return log_error_re(OPT_MISSVAL, "Option: --%s Missing a value", parse->name);
+            return log_error_rc(OPT_MISSVAL, "Option: --%s Missing a value", parse->name);
         }
         if (parse->argv[parse->argv_idx][0] == '-') { 
-            return log_error_re(OPT_MISSVAL, "Option: --%s Missing value", parse->name);
+            return log_error_rc(OPT_MISSVAL, "Option: --%s Missing value", parse->name);
         }
         // save value
         parse->value = parse->argv[parse->argv_idx++];

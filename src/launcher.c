@@ -9,18 +9,18 @@
  *
  * Bascially:
  * - Create a folder for each container to hold its rootfs
- * - create veth devices for containter
- * - creates a network namespace (netns) for each container
- * - creates a child process for each container
+ * - create a veth device for client and db container
+ * - create a network namespace (netns) for each container
+ * - create a child process for each container
  * - child switches to its private rootfs
  * - child creates proc
  * - child applys security settings
  * - child execs the client or server binary
  *
- * Notes
- * - uses mount to create netns
+ * Note:
+ * - uses bind  mount to create netns (not ip netns add)
  * - uses clone to create container child process
- * - uses pipes to parent/child sync
+ * - uses pipes for parent/child process sync
  */
 #include <sys/wait.h>
 
@@ -61,9 +61,9 @@ struct lau_ctx {
     int num_proc;
     struct lau_child *procs[MAX_PROC];
     unsigned int num_run; // take a wild guess reader
-    int host_netns_fd;    // default host netns
-    mode_t dir_mode;      // mode for createing dirs
-    pid_t pid;            // our pid
+    int netns_fd;      // default host netns
+    mode_t dir_mode;   // mode for createing dirs
+    pid_t pid;         // our pid
     // security
     char *sudo_user; // SUDO_USER value
     int sudo_uid;    // SUDO_UID value
@@ -84,8 +84,9 @@ struct lau_ctx {
     unsigned int child_add_ip : 1; // child process sets up network
 };
 
-
 /* wait pids code */
+
+// check if child mut be reaped - if exitted or recv a signal
 static int lau_check_reaped(struct lau_ctx *lau, struct lau_child *child, int status)
 {
     child->status = status;
@@ -118,7 +119,7 @@ static int lau_check_reaped(struct lau_ctx *lau, struct lau_child *child, int st
         snprintf(why, sizeof(why), "unknown 0x%08x", child->status);
     }
 
-    return log_error_re(rc, "Container '%s' reaped (pid=%d why=%s)", child->name, child->pid, why);
+    return log_error_rc(rc, "Container '%s' reaped (pid=%d why=%s)", child->name, child->pid, why);
 }
 
 // find child with matching pid
@@ -172,21 +173,21 @@ static int lau_wait_pids(struct lau_ctx *lau)
     return status == LAU_EXIT_OK ? 0 : -1;
 }
 
-/* sync all code */
+/* sync code */
 
-// send go signal to child
+// parent - send go signal to child
 static int lau_child_send_go(struct lau_ctx *lau, struct lau_child *child)
 {
-    return sync_wrpipe(
+    return sync_pipe_write(
         &child->go_write_fd, &lau->sig, 
         "lau", "send-go", child->name, child->pid
     );
 }
 
-// wait for ready signal from child
+// parent - wait for ready signal from child
 static int lau_child_wait_ready(struct lau_ctx *lau, struct lau_child *child)
 {
-    return sync_rdpipe(
+    return sync_pipe_read(
         &child->ready_read_fd, &lau->sig,
         "lau", "wait-ready", child->name, child->pid
     );
@@ -231,47 +232,7 @@ static int lau_sync_parallel(struct lau_ctx *lau)
     return 0;
 }
 
-// setup state before we run child
-int lau_child_prerun(struct lau_ctx *lau, struct lau_child *child)
-{
-    (void) lau;
-
-    int num_err = 0;
-
-    if (child->netns_mounted && lau_child_switch_netns(child)) {
-        num_err++;
-    }
-
-    return 0;
-}
-
-// cleanup state after we run child
-int lau_child_postrun(struct lau_ctx *lau, struct lau_child *child)
-{
-    int num_err = 0;
-    int rc;
-
-    if (child->netns_mounted) {
-        rc = restore_host_netns(lau->host_netns_fd);
-        if (rc) num_err++;
-    }
-
-    rc = sync_rdwr_close(&child->go_read_fd, 
-        &child->ready_write_fd,
-        "lau", "post-run", child->name, child->pid
-    );
-    if (rc) num_err++;
-
-    if (child->overlay_mounted) {
-        rc = unmount_overlay(child->rootfs_path, child->name);
-        if (rc) num_err++;
-        child->overlay_mounted = 0;
-    }
-
-    return num_err;
-}
-
-// start a child container
+// start a child container - return error count
 static int lau_start_child(struct lau_ctx *lau, struct lau_child *child)
 {
     if (verbose) {
@@ -279,18 +240,16 @@ static int lau_start_child(struct lau_ctx *lau, struct lau_child *child)
     }
 
     int num_err = 0;
-
-    if (lau_child_prerun(lau, child)) num_err++;
+    if (lau_child_prerun(child)) num_err++;
     if (!num_err && lau_child_run(child)) num_err++;
-    if (lau_child_postrun(lau, child)) num_err++;
+    if (lau_child_postrun(child, lau->netns_fd)) num_err++;
 
     if (child->run) lau->num_run++;
 
-    // done
     return num_err;
 }
 
-// start all child containers
+// start all child containers - any errors will fail start
 static int lau_start_all(struct lau_ctx *lau)
 {
     if (verbose) {
@@ -310,7 +269,7 @@ static int lau_start_all(struct lau_ctx *lau)
     return 0;
 }
 
-// link two children together using a single veth
+// link two containers using a single veth
 static int lau_link_veths(struct lau_ctx *lau, struct lau_child *x, struct lau_child *y)
 {
     if (verbose) {
@@ -409,8 +368,8 @@ static int lau_load_cmd(struct lau_ctx *lau, struct lau_child *child)
     rc = create_path_for_file(dst_path, lau->dir_mode);
     if (rc) goto done;
 
-    // mount or copy the file into container store-dir
     if (lau->mount_cmds) {
+        // mount the cmd into container store-dir
         rc = mount_cmd(cmd_path, dst_path);
         if (rc == 0) {
             child->cmd_mounted = 1;
@@ -420,6 +379,7 @@ static int lau_load_cmd(struct lau_ctx *lau, struct lau_child *child)
         }
     }
     else {
+        // copy file into child store-dir
         rc = copy_file(cmd_path, dst_path);
     }
 
@@ -560,8 +520,7 @@ static int lau_open_host_netns(struct lau_ctx *lau)
 {
     int rc = open_host_netns();
     if (rc < 0) return rc;
-
-    lau->host_netns_fd = rc;
+    lau->netns_fd = rc;
 
     return 0;
 }
@@ -795,7 +754,7 @@ static void lau_destroy(struct lau_ctx *lau)
     }
     lau->num_proc = 0;
 
-    close_fd(&lau->host_netns_fd);
+    close_fd(&lau->netns_fd);
 
     if (lau->cur_dir) free(lau->cur_dir);
     if (lau->src_dir) free(lau->src_dir);
@@ -821,7 +780,7 @@ static struct lau_ctx *lau_create(void)
     memset(lau, 0, sizeof(*lau));
 
     // init all fds to -1
-    lau->host_netns_fd = -1;
+    lau->netns_fd = -1;
 
     return lau;
 }
