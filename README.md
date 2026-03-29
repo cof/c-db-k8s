@@ -54,9 +54,9 @@ A custom linux container launcher for running applications inside isolated names
 
 **Design**
 
-- use UTIL api to read cmd-line args
-- create dirs/inftrastructure before running containers
-- Create a folder (rootfs) for each container to hold its rootfs
+- single-threaded applicaton written in C with no 3rd party libs
+- create run-time dirs before running containers
+- Create a folder for each container to hold its rootfs
 - create veth devices for container
 - creates a network namespace for each container
 - creates a child process for each container
@@ -66,9 +66,9 @@ A custom linux container launcher for running applications inside isolated names
 - child execs the client or server binary
 - uses mount and clone to create netns and containers
 
-**Testing **
+**Testing**
 
-- A launcher that modifies its host namespaces *needs* a VM to safely test
+- A launcher that modifies its host namespaces **needs** a VM to safely test
 - Makefile supports provisioning a test VM called test-lau based on Alpine Linux 
 - Simply run make test-lau to download, create, install and run VM
 - Uses cloud-config user-data.yaml template file to configure VM
@@ -164,16 +164,17 @@ Client's simply connect to server  and send commands to modify key/value store.
 
 - telnet style cli SET|GET|DEL  cmds
 - DB backend use mmap to provide crash proof database file
+- Uses Multiplexing and non-blocking I/O for all read/writes
+- scales easily well beyond 100k+ connections using an mmap DB and event-driven I/O
 
 **Design**
 
-- code is single threaded
-- Use dual stack sockets that support both IPv4 and IPv6
-- Uses SOCK-API to create non blocking listener and client sockets
+- single-threaded applicaton written in C with no 3rd party libs
 - Uses epoll (level triggered) to monitor all socket events
+- Uses SOCK-API to create non-blocking dual-stack (IPv4|6) sockets
 - Uses RWBUG api to read and write lines to sockets
 - Uses DB backend api to update key,value store
-- DB backend support both an inn memory store or mmap database file
+- DB backend support both an in memory store or mmap database file
 - listens by default using wildcard [::]:6379
 - cmd-line supports --help
 
@@ -208,11 +209,11 @@ Client simply reads and writes lines betwen stdio and server socket.
 
 **Design**
 
+- single-threaded application written in C with no 3rd party libs
 - Uses a TCP wrapper or socket bridge between stdio/socket
-- Client acts a 4 way pipe between stdio/socket
+- Uses a 4 way pipe to exchange lines between stdio/socket
 - Reads lines from stdin and writes then to socket
 - Reads lines from socket  and writes then to stdout
-- Uses a 4 way pipe design to read and write lines:
 - Uses SOCK api to create socket and manage stdin,stdout fds
 - Uses poll() to monitor fd activity (stdin,stdout,socket)
 - Captures all error and logs them to stderr

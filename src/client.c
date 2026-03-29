@@ -168,7 +168,7 @@ static struct cmd_opt opts[] = {
     { "--hostname", "hostname to connect to", 0, 1 },
     { "--port",     "port to listen on", SERV_PORT_STR, 1 },
     { "--log",      "log request/response", 0, 0 },
-    { "--argv",     "Dump argv to stdout", 0,  0 },
+    { "--argv",     "Dump argv to stdout",  0,  0 },
     { NULL }
 };
 

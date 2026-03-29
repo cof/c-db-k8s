@@ -237,20 +237,19 @@ static int sock_listen_addr(struct simple_sock *sock, struct addrinfo *res)
     // copy addr
     memcpy(&sock->addr, res->ai_addr, sizeof(sock->addr));
 
-    // turn off IPV6_ONLY - request dual stack
-    int opt = 0;
-    if (setsockopt(sock->fd, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)) == -1)  {
-        log_errno("disable IPV6_ONLY");
-        goto err;
+    int opt;
+    if (sock->mode & SOCK_ANY) {
+        // dual-stack requested - turn off IPV6_ONLY
+        opt = 0;
+        rc = setsockopt(sock->fd, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt));
+        if (rc == -1) log_errno("disable IPV6_ONLY");
     }
 
-    // resuse addr
     if (sock->mode & SOCK_REUSE) {
+        // resuse-addr requested
         opt = 1;
-        if (setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
-            log_errno("enable reuse_addr");
-            goto err;
-        }
+        rc = setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        if (rc == -1) log_errno("enable SO_REUSEADDR");
     }
 
     if (sock->mode & SOCK_PASSIVE) {
@@ -311,7 +310,6 @@ int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr)
     return fd;
 }
 
-
 // shutdown writes on socket
 int sock_sendfin(struct simple_sock *sock) 
 {
@@ -366,6 +364,7 @@ int sock_set_mode(struct simple_sock *sock, uint32_t mode)
     return 0;
 }
 
+// set non-blocking
 int sock_set_nonblk(struct simple_sock *sock)
 {
     int flags = fcntl(sock->fd, F_GETFL, 0);
@@ -383,6 +382,7 @@ int sock_set_nonblk(struct simple_sock *sock)
     return 0;
 }
 
+// set fd send timeout
 int sock_set_sndto(struct simple_sock *sock, uint32_t ms)
 {
     struct timeval tv = {
@@ -398,6 +398,7 @@ int sock_set_sndto(struct simple_sock *sock, uint32_t ms)
     return 0;
 }
 
+// set fd recv timeout
 int sock_set_rcvto(struct simple_sock *sock, uint32_t ms)
 {
     struct timeval tv = {
