@@ -5,7 +5,7 @@
  *
  * Overview
  * -------
- * Implements a TCP server that supports CMD to update a key value store.
+ * Implements a TCP server that supports CLI cmds to update a key value store.
  *
  * Supported commands:
  *
@@ -45,7 +45,6 @@ struct simple_server {
     struct simple_sock sock;
     struct simple_sig sig;
     struct list_elem clients;
-    const char *prog_name;
     pid_t pid;
     // user config
     char *hostname;
@@ -162,7 +161,7 @@ static int find_cmd(struct str_slice cmd)
     return 0;
 }
 
-int process_cmd(struct simple_client *client, struct str_slice cmd)
+static int process_cmd(struct simple_client *client, struct str_slice cmd)
 {
     struct str_slice name = slice_copy(cmd);
     struct str_slice args = slice_split(&name, ' ');
@@ -293,6 +292,7 @@ static void handle_client(struct simple_client *client, uint32_t events)
     }
 }
 
+// add or remove socket fd from epoll ctrl
 static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uint32_t events) 
 {
     struct epoll_event ev = { 0 };
@@ -319,6 +319,7 @@ static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uin
     return 0;
 }
 
+// accept a new client 
 struct simple_client *server_accept(struct simple_server *server)
 {
     struct sockaddr_in6 addr;
