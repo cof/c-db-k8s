@@ -845,7 +845,7 @@ test-pod: deploy
 # -----------------------
 .PHONY: test-net
 test-net: deploy
-	$(Q)echo "[+] Runing $@"; \
+	$(Q)echo "[+] Running $@"; \
 	total=0; errors=0; \
 	$(call CHK_CONNOPEN,0,$(DB_POD),$(INET_NAME),$(INET_HOST),$(INET_PORT)); \
 	$(call CHK_CONNOPEN,0,$(CLIENT_POD),$(INET_NAME),$(INET_HOST),$(INET_PORT)); \

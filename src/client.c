@@ -173,7 +173,7 @@ static struct cmd_opt opts[] = {
 };
 
 static const char *examples[] = {
-    "--hostname locahost --port 6379",
+    "--hostname localhost --port 6379",
     NULL
 };
 
