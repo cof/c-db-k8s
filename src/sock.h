@@ -14,6 +14,19 @@
  * - Clean termination - graceful half close (FIN) and shutdown management
  * - Human-readable formatting: string repr of socket address or file descriptor
  *
+ * Example usage:
+ * -------------
+ * 
+ *  char line[BUFSIZ];
+ *  struct simple_sock sock;
+ *  sock_client(&sock, SOCK_TCP, "localhost", 10000);
+ *  sock_send_data(&sock, STR_LIT("hello world\n"));
+ *  sock_recv_data(&sock, line, sizeof(line));
+ *  sock_close(&sock);
+ *  printf("%s", buf);
+ *
+ * See full API below.
+ *
  * API sections
  * ------------
  * Init       : Init sock state
