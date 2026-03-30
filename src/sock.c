@@ -414,8 +414,8 @@ int sock_set_rcvto(struct simple_sock *sock, uint32_t ms)
     return 0;
 }
 
-// receive data from socket fd
-ssize_t sock_recv_data(struct simple_sock *sock, void *data, size_t space)
+// read into data-buffer from fd
+ssize_t sock_read_data(struct simple_sock *sock, void *data, size_t len)
 {
     // joker checks
     if (sock->sys_err) return SOCK_ERROR;
@@ -427,11 +427,10 @@ ssize_t sock_recv_data(struct simple_sock *sock, void *data, size_t space)
     ssize_t tread = 0;
     uint8_t *wptr = data;
 
-    while (space) {
-        
-        // read as much as we can
-        ssize_t nread = read(sock->fd, wptr, space);
+    while (len) {
 
+        // read as much as we can
+        ssize_t nread = read(sock->fd, wptr, len);
         if (nread == -1)  {
             // read failed
             ec = SOCK_ERROR;
@@ -458,7 +457,7 @@ ssize_t sock_recv_data(struct simple_sock *sock, void *data, size_t space)
         // read data
         rc = SOCK_DATA;
         wptr  += nread;
-        space -= nread;
+        len -= nread;
         tread += nread;
 
         // UDP is one shot
@@ -469,8 +468,8 @@ ssize_t sock_recv_data(struct simple_sock *sock, void *data, size_t space)
     return rc == SOCK_DATA ? tread : ec;
 }
 
-// send data to socket fd
-ssize_t sock_send_data(struct simple_sock *sock, void *data, size_t len)
+// write data to socket fd
+ssize_t sock_write_data(struct simple_sock *sock, void *data, size_t len)
 {
     // joker checks
     if (sock->sys_err) return SOCK_ERROR;
@@ -517,8 +516,8 @@ ssize_t sock_send_data(struct simple_sock *sock, void *data, size_t len)
     return rc == SOCK_DATA ? twrite : ec;
 }
 
-// send iovec array data to socket fd
-ssize_t sock_send_iovs(struct simple_sock *sock, int niov, struct iovec iovs[static niov])
+// write data-buffers to socket fd
+ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[static niov])
 {
     // joker checks
     if (sock->sys_err) return SOCK_ERROR;
@@ -580,74 +579,24 @@ ssize_t sock_send_iovs(struct simple_sock *sock, int niov, struct iovec iovs[sta
     return rc == SOCK_DATA ? twrite : ec;
 }
 
-// read from socket fd into our recv buffer
-int sock_recv(struct simple_sock *sock)
+/* buffer I/O - send and recv buffers */
+
+// append mem-block to send-buffer
+int sock_write_mem(struct simple_sock *sock, void *mem, size_t len)
 {
-    void *buf = rwbuf_wptr(&sock->recv_buf);
-    size_t space = rwbuf_space(&sock->recv_buf);
-
-    // ensure space to read
-    if (sock->min_size && space < sock->min_size) {
-        buf = rwbuf_mkspace(&sock->recv_buf, space - sock->min_size);
-        if (!buf) {
-            // no space
-            sock->sys_err = 1;
-            return SOCK_ERROR;
-        }
-        space = rwbuf_space(&sock->recv_buf);
-    }
-
-    // recv now
-    ssize_t nread = sock_recv_data(sock, buf, space);
-    if (nread <= 0) return nread;
-
-    // update our read buffer
-    sock->recv_buf.widx += nread;
-
-    // data recv
-    return SOCK_DATA;
-}
-
-// write to socket fd our send buffer
-int sock_send(struct simple_sock *sock)
-{
-    size_t len = rwbuf_used(&sock->send_buf);
-    void *buf = rwbuf_rptr(&sock->send_buf);
-
-    // send now
-    ssize_t nwrite = sock_send_data(sock, buf, len);
-    if (nwrite <= 0) return nwrite;
-
-    // update our send buffer
-    sock->send_buf.ridx += nwrite;
-    if (sock->send_buf.ridx == sock->send_buf.widx) {
-        // all sent - empty buffer
-        sock->send_buf.ridx = 0;
-        sock->send_buf.widx = 0;
-    }
-
-    // data sent
-    return SOCK_DATA;
-}
-
-// extract line from recv-buffer (return terminal fragment if eof)
-int sock_readline(struct simple_sock *sock, struct str_slice *line, int eof)
-{
-    int flags = RWBUF_NOLOG;
-    if (eof) flags |= RWBUF_EOF;
-
-    int rc = rwbuf_readline(&sock->recv_buf, line, sock->max_line, flags);
-    if (rc < 0) {
-        // line too big
-        sock->sys_err = 1;
-        return log_error_rf("peer %s exceed max line length %zu", 
-            sock_tostr(sock), sock->max_line);
-    }
+    int rc = rwbuf_write(&sock->send_buf, mem, len);
+    if (rc) sock->sys_err = 1;
     return rc;
 }
 
-// write line + CRLF to send-buffer - uses rwbuf_writev
-int sock_writeline(struct simple_sock *sock, struct str_slice line)
+// append str-slice to send-buffer
+int sock_write_str(struct simple_sock *sock, struct str_slice str)
+{
+    return sock_write_mem(sock, str.ptr, str.len);
+}
+
+// append str-slice + CRLF to send-buffer
+int sock_write_line(struct simple_sock *sock, struct str_slice line)
 {
     struct iovec iovs[2];
 
@@ -664,8 +613,63 @@ int sock_writeline(struct simple_sock *sock, struct str_slice line)
     return 0;
 }
 
-// write send-buffer + line + CRLF to fd, buffer remaining
-int sock_sendline(struct simple_sock *sock, struct str_slice line)
+// write send-buffer to fd
+int sock_send(struct simple_sock *sock)
+{
+    size_t len = rwbuf_used(&sock->send_buf);
+    void *buf = rwbuf_rptr(&sock->send_buf);
+
+    // send now
+    ssize_t nwrite = sock_write_data(sock, buf, len);
+    if (nwrite <= 0) return nwrite;
+
+    // update our send buffer
+    sock->send_buf.ridx += nwrite;
+    if (sock->send_buf.ridx == sock->send_buf.widx) {
+        // all sent - empty buffer
+        sock->send_buf.ridx = 0;
+        sock->send_buf.widx = 0;
+    }
+
+    // data sent
+    return SOCK_DATA;
+}
+
+// write send-buffer + mem to fd, buffer remaining
+int sock_send_mem(struct simple_sock *sock, void *mem, size_t len)
+{
+    struct iovec iovs[2];
+
+    // load backlog + data 
+    iov_load(iovs + 0, rwbuf_rptr(&sock->send_buf), rwbuf_used(&sock->send_buf));
+    iov_load(iovs + 1, mem, len);
+
+    // write backlog + data
+    ssize_t rc = sock_write_iovs(sock, 2, iovs);
+    if (rc < 0) return rc;
+    if (rc == 0) return 0;
+
+    // update backlog
+    rc = rwbuf_rdinc(&sock->send_buf, iovs[0].iov_len);
+    if (rc) return rc;
+
+    // add partial data
+    if (iovs[1].iov_len) {
+        rc = rwbuf_write(&sock->send_buf, iovs[1].iov_base, iovs[1].iov_len);
+        if (rc) return rc;
+    }
+
+    return 0;
+}
+
+// write send-buffer + str-slice to fd, buffer remaining
+int sock_send_str(struct simple_sock *sock, struct str_slice str)
+{
+    return sock_send_mem(sock, str.ptr, str.len);
+}
+
+// write send-buffer + str-slice + CRLF to fd, buffer remaining
+int sock_send_line(struct simple_sock *sock, struct str_slice line)
 {
     struct iovec iovs[3];
 
@@ -675,7 +679,7 @@ int sock_sendline(struct simple_sock *sock, struct str_slice line)
     iov_load(iovs + 2, STR_LIT("\r\n"));
 
     // write it
-    ssize_t rc = sock_send_iovs(sock, 3, iovs);
+    ssize_t rc = sock_write_iovs(sock, 3, iovs);
     if (rc < 0) return rc;
     if (rc == 0) return 0;
 
@@ -698,52 +702,50 @@ int sock_sendline(struct simple_sock *sock, struct str_slice line)
     return 0;
 }
 
-// append memory to send-buffer
-int sock_write_mem(struct simple_sock *sock, void *buf, size_t len)
+// read into recv-buffer from fd
+int sock_recv(struct simple_sock *sock)
 {
-    int rc = rwbuf_write(&sock->send_buf, buf, len);
-    if (rc) sock->sys_err = 1;
+    void *buf = rwbuf_wptr(&sock->recv_buf);
+    size_t space = rwbuf_space(&sock->recv_buf);
+
+    // ensure space to read
+    if (sock->min_size && space < sock->min_size) {
+        buf = rwbuf_mkspace(&sock->recv_buf, space - sock->min_size);
+        if (!buf) {
+            // no space
+            sock->sys_err = 1;
+            return SOCK_ERROR;
+        }
+        space = rwbuf_space(&sock->recv_buf);
+    }
+
+    // read now from fd
+    ssize_t nread = sock_read_data(sock, buf, space);
+    if (nread <= 0) return nread;
+
+    // update our read buffer
+    sock->recv_buf.widx += nread;
+
+    // data recv
+    return SOCK_DATA;
+}
+
+// extract a line from recv-buffer - return fragment if eof
+int sock_recv_line(struct simple_sock *sock, struct str_slice *line, int eof)
+{
+    int flags = RWBUF_NOLOG;
+    if (eof) flags |= RWBUF_EOF;
+
+    int rc = rwbuf_readline(&sock->recv_buf, line, sock->max_line, flags);
+    if (rc < 0) {
+        // line too big
+        sock->sys_err = 1;
+        return log_error_rf("peer %s exceed max line length %zu", 
+            sock_tostr(sock), sock->max_line);
+    }
     return rc;
 }
 
-// append str to send-buffer
-int sock_write_str(struct simple_sock *sock, struct str_slice str)
-{
-    return sock_write_mem(sock, str.ptr, str.len);
-}
-
-// write send buffer + mem to fd, buffer remaining
-int sock_send_mem(struct simple_sock *sock, void *mem, size_t len)
-{
-    struct iovec iovs[2];
-
-    // load backlog + data 
-    iov_load(iovs + 0, rwbuf_rptr(&sock->send_buf), rwbuf_used(&sock->send_buf));
-    iov_load(iovs + 1, mem, len);
-
-    // write backlog + data
-    ssize_t rc = sock_send_iovs(sock, 2, iovs);
-    if (rc < 0) return rc;
-    if (rc == 0) return 0;
-
-    // update backlog
-    rc = rwbuf_rdinc(&sock->send_buf, iovs[0].iov_len);
-    if (rc) return rc;
-
-    // add partial data
-    if (iovs[1].iov_len) {
-        rc = rwbuf_write(&sock->send_buf, iovs[1].iov_base, iovs[1].iov_len);
-        if (rc) return rc;
-    }
-
-    return 0;
-}
-
-// write send buffer + str to fd, buffer remaining
-int sock_send_str(struct simple_sock *sock, struct str_slice str)
-{
-    return sock_send_mem(sock, str.ptr, str.len);
-}
 
 // format addr to address:port string
 char *sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len)

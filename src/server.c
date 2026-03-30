@@ -39,6 +39,7 @@ struct simple_client {
     struct simple_server *parent;
     unsigned int log_req : 1; // log request
     unsigned int log_rsp : 1; // log response
+    unsigned int snd_prompt : 1; // send prompt after rsp
 };
 
 struct simple_server {
@@ -59,9 +60,14 @@ static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uin
 static void client_destroy(struct simple_client *client, int can_log);
 static void client_close(struct simple_client *client, int force);
 
+static int send_prompt(struct simple_client *client) 
+{
+    return sock_write_mem(&client->sock, STR_LIT("> "));
+}
+
 static int send_line(struct simple_client *client, struct str_slice line)
 {
-    return sock_writeline(&client->sock, line);
+    return sock_write_line(&client->sock, line);
 }
 
 static int send_rsp(struct simple_client *client, struct str_slice rsp)
@@ -70,9 +76,15 @@ static int send_rsp(struct simple_client *client, struct str_slice rsp)
         log_info("LOG", "send-rsp: %.*s", SLICE(rsp));
     }
 
-    return send_line(client, rsp);
+    int rc = send_line(client, rsp);
+    if (!rc && client->snd_prompt) {
+        rc = send_prompt(client);
+    }
+
+    return rc;
 }
 
+// handler - SET key value
 static int cmd_set(struct simple_client *client, struct str_slice args)
 {
     struct str_slice key = slice_copy(args);
@@ -92,6 +104,7 @@ static int cmd_set(struct simple_client *client, struct str_slice args)
     return send_rsp(client, res);
 }
 
+// handler - GET key
 static int cmd_get(struct simple_client *client, struct str_slice key)
 {
     struct str_slice res = db_get(key);
@@ -103,6 +116,7 @@ static int cmd_get(struct simple_client *client, struct str_slice key)
     return send_rsp(client, res);
 }
 
+// handler - DEL key
 static int cmd_del(struct simple_client *client, struct str_slice key)
 {
     struct str_slice res;
@@ -117,18 +131,20 @@ static int cmd_del(struct simple_client *client, struct str_slice key)
     return send_rsp(client, res);
 }
 
+// handler - QUIT
 static int cmd_quit(struct simple_client *client, struct str_slice args)
 {
     (void) args;
     struct str_slice res = slice_make(STR_LIT("OK"));
 
-    send_rsp(client, res);
+    client->snd_prompt = 0;
+    int rc = send_rsp(client, res);
+    client_close(client, rc == 0);
 
-    client_close(client, 0);
-
-    return 0;
+    return rc;
 }
 
+// take a wild guess
 static int cmd_unsupp(struct simple_client *client, struct str_slice args)
 {
     (void) args;
@@ -141,7 +157,7 @@ static struct {
     const char *name;
     size_t len;
     int (*func)(struct simple_client *client, struct str_slice args);
-} cmds[] = {
+} cli_cmds[] = {
     { 0, 0,  cmd_unsupp },
     { STR_LIT("SET"),  cmd_set },
     { STR_LIT("GET"),  cmd_get },
@@ -149,10 +165,10 @@ static struct {
     { STR_LIT("QUIT"), cmd_quit },
 };
 
-static int find_cmd(struct str_slice cmd)
+static int find_cli_cmd(struct str_slice cmd)
 {
-    for (size_t i = 1; i < ARR_LEN(cmds); i++) {
-        if (slice_cmp_cstr(cmd, cmds[i].name, cmds[i].len)) {
+    for (size_t i = 1; i < ARR_LEN(cli_cmds); i++) {
+        if (slice_cmp_cstr(cmd, cli_cmds[i].name, cli_cmds[i].len)) {
             return i;
         }
     }
@@ -161,7 +177,7 @@ static int find_cmd(struct str_slice cmd)
     return 0;
 }
 
-static int process_cmd(struct simple_client *client, struct str_slice cmd)
+static int process_cli_cmd(struct simple_client *client, struct str_slice cmd)
 {
     struct str_slice name = slice_copy(cmd);
     struct str_slice args = slice_split(&name, ' ');
@@ -169,8 +185,8 @@ static int process_cmd(struct simple_client *client, struct str_slice cmd)
     name = slice_toupper(name);
     slice_trim(&args);
 
-    int cmd_idx = find_cmd(name);
-    int rc = cmds[cmd_idx].func(client, args);
+    int cmd_idx = find_cli_cmd(name);
+    int rc = cli_cmds[cmd_idx].func(client, args);
 
     return rc;
 }
@@ -196,6 +212,7 @@ static void client_destroy(struct simple_client *client, int can_log)
     free(client);
 }
 
+// create client for fd + addr
 struct simple_client *client_create(int fd, struct sockaddr_in6 *addr)
 {
     struct simple_client *client;
@@ -206,10 +223,12 @@ struct simple_client *client_create(int fd, struct sockaddr_in6 *addr)
     }
     memset(client, 0,  sizeof(*client));
 
+    // use config.h settings
     sock_init(&client->sock, fd, addr, 
         MAX_LINE, SOCK_INIT_BUFSIZE, SOCK_MIN_BUFSIZE, SOCK_MAX_BUFSIZE
     );
 
+    // self link
     list_init(&client->node);
 
     return client;
@@ -218,7 +237,8 @@ struct simple_client *client_create(int fd, struct sockaddr_in6 *addr)
 #define RDWR_EVENTS (EPOLLOUT | EPOLLIN | EPOLLRDHUP)
 #define RD_EVENTS (EPOLLIN | EPOLLRDHUP)
 
-static void do_client_write(struct simple_client *client)
+// flush send-buffer to socket fd
+static void do_client_send(struct simple_client *client)
 {
     int rc = sock_send(&client->sock);
     if (rc < 0) return;
@@ -241,30 +261,32 @@ static void do_client_write(struct simple_client *client)
     }
 }
 
-void do_client_read(struct simple_client *client)
+// recv-data from sock
+void do_client_recv(struct simple_client *client)
 {
-    int eof = 0;
-    int rc = sock_recv(&client->sock);
-    if (rc < 0) {
-        // read error (SOCK_ERR|SOCK_CLOSED|SOCK_AGAIN)
-        if (rc != SOCK_CLOSED) return;
-         // client closed its end
-         log_info("+", "client-disconnect %s", sock_tostr(&client->sock));
-         client_close(client, 0);
-         eof = 1;
-    }
+    int rc;
 
-    // loop until no more lines or error
-    struct str_slice line;
-    while ((rc = sock_readline(&client->sock, &line, eof)) > 0) {
-        if (client->log_req) log_info("LOG", "recv-req: %.*s", SLICE(line));
-        rc = process_cmd(client, line);
-        if (rc != 0) break;
+    while ((rc = sock_recv(&client->sock)) == SOCK_DATA) {
+        struct str_slice line;
+        int is_eof = sock_iseof(&client->sock);
+        // recv cmd-line
+        while ((rc = sock_recv_line(&client->sock, &line, is_eof)) > 0) {
+            if (client->log_req) log_info("LOG", "recv-req: %.*s", SLICE(line));
+            rc = process_cli_cmd(client, line);
+            if (rc != 0) break;
+        }
+        if (rc < 0) break;
     }
 
     if (rc < 0) {
-        // error - mark conn for close
-       client_close(client, 1);
+        // error
+        if (rc == SOCK_AGAIN) return;
+        if (rc == SOCK_CLOSED) {
+            // client closed its end
+            log_info("+", "client-disconnect %s", sock_tostr(&client->sock));
+        }
+        // close now
+        client_close(client, rc != SOCK_CLOSED);
     }
 }
 
@@ -273,18 +295,15 @@ static int client_must_close(struct simple_client *client)
     return sock_canclose(&client->sock);
 }
 
-static void handle_client(struct simple_client *client, uint32_t events)
+static void client_recv_event(struct simple_client *client, uint32_t events)
 {
     if (events & (EPOLLOUT | EPOLLHUP | EPOLLERR)) {
-        // send buffer is writable or error
-        do_client_write(client);
+        do_client_send(client);
     }
 
     if (events & (EPOLLIN | EPOLLHUP | EPOLLRDHUP | EPOLLERR)) {
-        // read buffer has data/fin or error
-        do_client_read(client);
-        // start sending any reponse
-        do_client_write(client);
+        do_client_recv(client);
+        do_client_send(client);
     }
 
     if (client_must_close(client)) {
@@ -319,7 +338,7 @@ static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uin
     return 0;
 }
 
-// accept a new client 
+// accept incoming client 
 struct simple_client *server_accept(struct simple_server *server)
 {
     struct sockaddr_in6 addr;
@@ -341,7 +360,7 @@ struct simple_client *server_accept(struct simple_server *server)
     client->log_req = server->log_line;
     client->log_rsp = server->log_line;
 
-    // register with epoll - XXX readable events only
+    // register with epoll - readable events only
     if (poll_ctrl(server, &client->sock, RD_EVENTS) != 0) { 
         // register failed ?
         client_destroy(client, 1);
@@ -350,6 +369,11 @@ struct simple_client *server_accept(struct simple_server *server)
 
     // add to servers client list 
     list_append(&server->clients, &client->node);
+
+    // send welcome banner
+    client->snd_prompt = 1;
+    send_prompt(client);
+    do_client_send(client);
 
     log_info("+", "Client connected from %s", sock_tostr(&client->sock));
 
@@ -378,21 +402,23 @@ static void do_server_err(struct simple_server *server)
         log_errno("get socket error for listener %d", server->sock.fd);
     }
 
+    // set error state
     server->sock.sys_err = 1;
 }
 
+// check if we stop server
 static void do_server_check(struct simple_server *server)
 {
     if (!server->sock.sys_err) return;
-    if (server->sock.fd == -1) return;
 
-    close(server->sock.fd);
-    server->sock.fd = -1;
+    // stop server
+    sock_close(&server->sock, 0);
+    server->sig.run = 0;
 
     log_info("+", "Database stopped listening on %s", sock_tostr(&server->sock));
 }
 
-static void handle_server(struct simple_server *server, uint32_t events)
+static void server_recv_event(struct simple_server *server, uint32_t events)
 {
     if (events & (EPOLLERR | EPOLLHUP)) {
         // interface gone down ?
@@ -407,6 +433,7 @@ static void handle_server(struct simple_server *server, uint32_t events)
     do_server_check(server);
 }
 
+// wait for I/O event
 static int server_poll(struct simple_server *server)
 {
     struct epoll_event events[MAX_EVENTS];
@@ -421,10 +448,10 @@ static int server_poll(struct simple_server *server)
     for (int i = 0; i < nfd; i++) {
         struct simple_sock *sock = events[i].data.ptr;
         if (sock->is_server) {
-            handle_server(server, events[i].events);
+            server_recv_event(server, events[i].events);
         }
         else {
-            handle_client((struct simple_client *) sock, events[i].events);
+            client_recv_event((struct simple_client *) sock, events[i].events);
         }
     }
 
@@ -432,6 +459,7 @@ static int server_poll(struct simple_server *server)
     return 0;
 }
 
+// main loop for server events
 static int server_run(struct simple_server *serv)
 {
     while (serv->sig.run) {
@@ -449,6 +477,7 @@ static int server_run(struct simple_server *serv)
     return 0;
 }
 
+// add a socket listener
 static int setup_listener(struct simple_server *server)
 {
     uint32_t mode = SOCK_LISTEN | SOCK_NONBLK | SOCK_TCP;
@@ -539,7 +568,6 @@ static void server_free(struct simple_server *server)
 static void server_destroy(struct simple_server *server)
 {
     db_deinit();
-
     server_free(server);
 }
 

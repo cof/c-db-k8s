@@ -7,7 +7,7 @@
  * - FD-agnostic: allows seamless handling of sockets, pipes and standard I/O
  * - Multiplexor-agnostic : pure I/O primitives for poll, epoll or blocking loops
  * - Non-blocking I/O : built-in state tracking  asynchronous, event-driven flows
- * - Line-bufferd I/O : integrated readline and writeline with max length enforcement
+ * - Line-buffered I/O : integrated read and write line with max length enforcement
  * - Integratd DNS : resolver support for hostname and service port lookups
  * - Zero-copy scatter-gather - vectorzed tranfers via writev
  * - Diagnostics: robust error capture and trace logging
@@ -150,43 +150,54 @@ int sock_set_nonblk(struct simple_sock *sock);
 int sock_set_sndto(struct simple_sock *sock, uint32_t ms);
 int sock_set_rcvto(struct simple_sock *sock, uint32_t ms);
 
-/* FD I/O - Read|Write memory blocks to|from file descriptor
+/* FD I/O - Read|Write data-buffers to|from file descriptor
  * ------------------------------------------------------------
- * sock_send_data(sock, buf, len) : write memory buffer to fd
- * sock_recv_data(sock, bufd len) : read into memory buffer from fd 
- * sock_send_iovs(sock, niov, iovs) : scatter-gather writev to fd
+ * sock_read_data(sock, data, len)   : read into data-buffer from fd
+ * sock_write_data(sock, data, len)  : write data-buffer to fd
+ * sock_write_iovs(sock, niov, iovs) : write data-buffers to socket fd
  */
-ssize_t sock_send_data(struct simple_sock *sock, void *buf, size_t len);
-ssize_t sock_recv_data(struct simple_sock *sock, void *buf, size_t len);
-ssize_t sock_send_iovs(struct simple_sock *sock, int niov, struct iovec iovs[static niov]);
+ssize_t sock_read_data(struct simple_sock *sock, void *buf, size_t len);
+ssize_t sock_write_data(struct simple_sock *sock, void *buf, size_t len);
+ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[static niov]);
 
 /*
- * buffer I/O - send and recv buffers to|from fd
+ * buffer I/O - send and recv buffers
  * ---------------------------------------------
- * sock_send(sock)                : write from send-buffer to fd
- * sock_recv(sock)                : read to recv-buffer from fd
- * sock_write_mem(sock, buf, len) : append memory to send-buffer
- * sock_write_str(sock, str)      : append str to send-buffer
- * sock_send_mem(sock, buf, len)  : write send buffer + mem to fd, buffer remaining
- * sock_send_str(sock, str)       : write send buffer + str to fd, buffer remaining
+ * sock_write_mem(sock, mem, len) : append mem-block to send-buffer
+ * sock_write_str(sock, str)      : append str-slice to send-buffer
+ * sock_write_line(sock, line)    : append str-slice + CRLF to send-buffer
+ * -
+ * sock_send(sock)                : write send-buffer to fd
+ * sock_send_mem(sock, buf, len)  : write send-buffer + mem to fd, buffer remaining
+ * sock_send_str(sock, str)       : write send-buffer + str-slice to fd, buffer remaining
+ * sock_send_line(sock, line)     : write send-buffer + str-sline + CRLF to fd, buffer remaining
+ * -
+ * sock_recv(sock)                 : read into recv-buffer from fd
+ * sock_recv_line(sock, line, eof) : read line from recv-buffer - return fragment if eof  
+ * sock_recv_str(sock,str)         : load str-slice with recv-buffer
+ * sock_recvbuf_consume(sock, len) : consume len bytes from recv-buffer
  */
-int sock_recv(struct simple_sock *sock);
-int sock_send(struct simple_sock *sock);
 int sock_write_mem(struct simple_sock *sock, void *buf, size_t len);
 int sock_write_str(struct simple_sock *sock, struct str_slice str);
+int sock_write_line(struct simple_sock *sock, struct str_slice line);
+
+int sock_send(struct simple_sock *sock);
 int sock_send_mem(struct simple_sock *sock, void *mem, size_t len);
 int sock_send_str(struct simple_sock *sock, struct str_slice str);
+int sock_send_line(struct simple_sock *sock, struct str_slice line);
 
-/*
- * line I/O 
- * -------------------------------
- * sock_readline(sock, line, eof) : extract line from recv-buffer (return terminal fragment if eof)
- * sock_writeline(sock, line)     : write line + CRLF to send-buffer
- * sock_sendline(sock, line)      : write send-buffer + line + CRLF to fd, buffer remaining
- */
-int sock_readline(struct simple_sock *sock, struct str_slice *line, int eof);
-int sock_writeline(struct simple_sock *sock, struct str_slice line);
-int sock_sendline(struct simple_sock *sock, struct str_slice line);
+int sock_recv(struct simple_sock *sock);
+int sock_recv_line(struct simple_sock *sock, struct str_slice *line, int eof);
+
+static inline struct str_slice sock_recv_str(struct simple_sock *sock)
+{
+    return slice_make((char *) rwbuf_rptr(&sock->recv_buf), rwbuf_used(&sock->recv_buf));
+}
+
+static inline int sock_recvbuf_consume(struct simple_sock *sock, size_t len)
+{
+    return rwbuf_rdinc(&sock->recv_buf, len);
+}
 
 /*
  * Status and info

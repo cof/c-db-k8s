@@ -63,44 +63,47 @@ static inline int my_pipe_iseof(struct my_pipe *conn)
 
 // pipe read from src and write to dst
 static void my_pipe_readwrite(struct my_pipe *src, struct my_pipe *dst, 
-    struct pollfd *fds, int *prompt, 
-    const char *sender,
-    const char *log_line)
+    struct pollfd *fds, const char *sender, const char *log_line)
 {
-    int read_eof = 0;
-    int rc = sock_recv(src->recv_sock);
-    rc = sock_dataeof(src->recv_sock, rc);
-    if (rc < 0) {
-        // read error (SOCK_ERR|SOCK_CLOSED|SOCK_AGAIN)
-        if (rc == SOCK_AGAIN) return;
-        fds[src->poll_in].fd = -1;
-        if (rc != SOCK_CLOSED) return;
-        read_eof = 1;
-        // push eof/es to dst
-        sock_write_close(dst->send_sock, 0);
-        log_info("+", "Connection closed by %s", sender);
-    }
+    int rc;
 
-    struct str_slice line;
-    int sent_line = 0;
-
-    while ((rc = sock_readline(src->recv_sock, &line, read_eof)) > 0) {
-        if (log_line) {
-            log_info("LOG", "%s: %.*s", log_line, SLICE(line));
-        }
-        rc = sock_sendline(dst->send_sock, line);
+    while ((rc = sock_recv(src->recv_sock)) == SOCK_DATA) {
+        // send src-data to dst
+        struct str_slice str = sock_recv_str(src->recv_sock);
+        rc = sock_send_str(dst->send_sock, str);
         if (rc < 0) {
-            // write error
+            // dst write error - bail
             fds[dst->poll_out].fd = -1;
             return;
         }
-        sent_line = sock_sendbuf_used(dst->send_sock) == 0 ? 1 : 0;
-        // enable writes if backlog has data
-        fds[dst->poll_out].events = sent_line ? 0: POLLOUT;
+        // enable write poll if backlog data
+        fds[dst->poll_out].events = sock_sendbuf_used(dst->send_sock) ? POLLOUT : 0;
+        if (!log_line) {
+            // discard buffer
+            sock_recvbuf_consume(src->recv_sock, str.len);
+            continue;
+        }
+        // log lines - reuse recv buffer
+        int is_eof = sock_iseof(src->recv_sock);
+        while ((rc = sock_recv_line(src->recv_sock, &str, is_eof)) > 0) {
+            log_info("LOG", "%s: %.*s", log_line, SLICE(str));
+        }
+        if (rc < 0) break;
+        str = sock_recv_str(src->recv_sock);
+        if (slice_cmp_cstr(str, STR_LIT("> "))) {
+            // discard prompt
+            sock_recvbuf_consume(src->recv_sock, str.len);
+        }
     }
 
-    if (!read_eof && prompt && sent_line) {
-        *prompt = 1;
+    if (rc < 0) {
+        // error
+        if (rc == SOCK_AGAIN) return;
+        fds[src->poll_in].fd = -1;
+        if (rc != SOCK_CLOSED) return;
+        // push eof/es to dst
+        sock_write_close(dst->send_sock, 0);
+        log_info("+", "Connection closed by %s", sender);
     }
 }
 
@@ -152,12 +155,6 @@ static int set_fd(struct simple_sock *sock, int idx, struct pollfd *fds, int eve
     fds[idx].events = events;
 
     return idx;
-}
-
-static void my_pipe_prompt(struct my_pipe *conn)
-{
-    struct str_slice prompt = slice_make(STR_LIT("> "));
-    sock_send_str(conn->send_sock, prompt);
 }
 
 /* cmd-line */
@@ -227,11 +224,8 @@ int main(int argc, char *argv[])
     serv.poll_in  = set_fd(serv.recv_sock, 2, fds, POLLIN);
     serv.poll_out = set_fd(serv.send_sock, 3, fds, 0);
 
-    int prompt = 0;
-    my_pipe_prompt(&user);
-
     while (sig.run) {
-        // block until fd event or signal
+        // block until event or signal
         rc = poll(fds, ARR_LEN(fds), -1);
         if (rc == -1) {
             if (errno == EINTR) continue;
@@ -239,29 +233,24 @@ int main(int argc, char *argv[])
             break;
         }
 
-        // server
+        // handle server events
         if (fds[3].revents & POLLOUT) {
             // backlog
             my_pipe_drain(&serv, fds);
         }
         if (fds[2].revents & (POLLIN | POLLHUP | POLLERR)) {
             // recv server -> send user
-            my_pipe_readwrite(&serv, &user, fds, &prompt, "server", log_rsp);
+            my_pipe_readwrite(&serv, &user, fds, "server", log_rsp);
         }
 
-        if (prompt) {
-            my_pipe_prompt(&user);
-            prompt = 0;
-        }
-
-        // user
+        // handle user events
         if (fds[1].revents & POLLOUT) {
             // backlog
             my_pipe_drain(&user, fds);
         }
         if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
             // recv user -> send server
-            my_pipe_readwrite(&user, &serv, fds, NULL, "client", log_req);
+            my_pipe_readwrite(&user, &serv, fds, "user", log_req);
             //raise(SIGSTOP);
         }
 

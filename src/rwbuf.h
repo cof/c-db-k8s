@@ -104,7 +104,6 @@ static inline size_t rwbuf_used(struct rwbuf *buf)
     return buf->widx - buf->ridx;
 }
 
-
 static inline size_t rwbuf_space(struct rwbuf *buf)
 {
     return buf->size - buf->widx;
