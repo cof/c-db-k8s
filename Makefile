@@ -424,6 +424,7 @@ CLUSTER_DONE=$(BUILD_DIR)/.cluster_done
 LOAD_DONE=$(BUILD_DIR)/.load_done
 DEPLOY_DONE=$(BUILD_DIR)/.deploy_done
 DONE_FILES = $(DOCKER_DONE) $(CLUSTER_DONE) $(LOAD_DONE) $(DEPLOY_DONE) $(WAIT_DONE)
+K8S_FILES = k8s/client.yaml k8s/database.yaml k8s/network-policy.yaml k8s/kustomization.yaml
 
 # create docker images
 # --------------------
@@ -452,11 +453,12 @@ $(LOAD_DONE): $(DOCKER_DONE) $(CLUSTER_DONE) | $(BUILD_DIR)
 	k3d image import $(CLIENT_IMG) -c $(CLUSTER_NAME)
 	touch $(LOAD_DONE)
 
+
 # deploy the pods
 # ---------------
 .PHONY: deploy
 deploy : $(DEPLOY_DONE)
-$(DEPLOY_DONE): $(LOAD_DONE) | $(BUILD_DIR)
+$(DEPLOY_DONE): $(LOAD_DONE) $(K8S_FILES) | $(BUILD_DIR)
 	@echo "Applying k8s manifest..."
 	kubectl apply -k k8s/
 	@echo "Restarting pods..."
@@ -542,8 +544,11 @@ TEST_PORT = 7379
 TEST_ADDR = 127.0.0.1
 CMD_ARGS = --hostname $(TEST_ADDR) --port $(TEST_PORT)
 
-
 TEST_LOGFILE  = $(BUILD_DIR)/test.log
+TEST_REQFILE = tests/test_req.txt
+TEST_RSPFILE = tests/test_rsp.txt
+RES_REQFILE  = $(BUILD_DIR)/test_req.txt
+RES_RSPFILE  = $(BUILD_DIR)/test_rsp.txt
 TEST_WAITRUN = 0.5
 
 TEST_REPORT = \
@@ -553,40 +558,6 @@ TEST_REPORT = \
 
 # 1=log-file 2=out-file
 GET_REQRSP = sed -e 's/^> //' -e '/^\[+]/d' $(1) > $(2)
-
-# test-lau macros
-# ---------------
-
-# ah lau we hardly knew ye
-LAU_LOGFILE = $(BUILD_DIR)/test_lau.log
-LAU_RESFILE = $(BUILD_DIR)/test_lau.rsp
-LAU_BIN := $(VM_BIN_DIR)/launcher
-LAU_CMD := doas $(LAU_BIN) --base-dir $(VM_HOME)/$(VM_NAME) --src-dir $(VM_BIN_DIR)
-
-# 1=vm-name
-VM_GET_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
-
-# allow ssh be run without user input
-SSH_OPTS = \
-	-o StrictHostKeyChecking=no \
-	-o UserKnownHostsFile=/dev/null \
-	-o LogLevel=ERROR \
-	-o IdentitiesOnly=yes -i $(VM_SSH_KEYFILE)
-ifeq ($(V),1)
-  SSH_OPTS += -v
-endif
-
-# 1=cmd-file
-define SEND_CMDS
-	( \
-	  sleep 1.5; \
-	  while IFS= read -r line; do \
-	    echo "$$line"; \
-	    sleep 0.3; \
-	  done < $(1) \
-	)
-endef
-
 
 # test-cmd macros
 # ---------------
@@ -618,6 +589,17 @@ WAIT_CONNUP = \
 	fi; \
 	echo " => Connection is UP - starting tests"
 
+# 1=test-file 2=res-file 3=log-file
+DIFF_FILE = \
+	total=$$((total + 1));  \
+	diff -q --strip-trailing-cr $(1) $(2) >> $(3); \
+    if [ $$? -eq 0 ]; then \
+        printf " => TEST %s %s\n" "$(1)" "$(PASS_STR)"; \
+    else \
+        printf " => TEST '%s' %s\n" "$(1)" "$(FAIL_STR)"; \
+        errors=$$((errors + 1)); \
+    fi
+
 # test-server macros
 # ------------------
 CHK_SRVCMD = \
@@ -632,27 +614,40 @@ CHK_SRVCMD = \
 
 # test-client macros
 # ------------------
-TEST_REQFILE = tests/test_req.txt
-TEST_RSPFILE = tests/test_rsp.txt
-# 1=test-file 2=res-file 3=log-file
-DIFF_FILE = \
-	total=$$((total + 1));  \
-	diff --strip-trailing-cr $(1) $(2) 1>>$(3); \
-    if [ $$? -eq 0 ]; then \
-        printf " => TEST %s %s\n" "$(1)" "$(PASS_STR)"; \
-    else \
-        printf " => TEST '%s' %s\n" "$(1)" "$(FAIL_STR)"; \
-        errors=$$((errors + 1)); \
-    fi
-BUILD_REQFILE = $(BUILD_DIR)/$(notdir $(TEST_REQFILE))
-BUILD_RSPFILE = $(BUILD_DIR)/$(notdir $(TEST_RSPFILE))
+CLI_LOGFILE  = $(BUILD_DIR)/test_client.log
 SIMPLE_SERVER = scripts/simple_server.awk
 
-# 1=cmd-file 2=res-file 3=log-file
-SND_CMDFILE = \
-	echo " => send $(1) via client"; \
-	cat $(1) | timeout 2s ./client $(CMD_ARGS) > $(2) 2>$(3); \
-	sed -i -e 's/^> //' -e '/^\[+]/d' $(2) \
+# test-lau macros
+# ---------------
+# ah lau we hardly knew ye
+LAU_LOGFILE = $(BUILD_DIR)/test_lau.log
+LAU_RESFILE = $(BUILD_DIR)/test_lau.rsp
+LAU_BIN := $(VM_BIN_DIR)/launcher
+LAU_CMD := doas $(LAU_BIN) --base-dir $(VM_HOME)/$(VM_NAME) --src-dir $(VM_BIN_DIR)
+
+# 1=vm-name
+VM_GET_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
+
+# allow ssh be run without user input
+SSH_OPTS = \
+	-o StrictHostKeyChecking=no \
+	-o UserKnownHostsFile=/dev/null \
+	-o LogLevel=ERROR \
+	-o IdentitiesOnly=yes -i $(VM_SSH_KEYFILE)
+ifeq ($(V),1)
+  SSH_OPTS += -v
+endif
+
+# 1=cmd-file
+define SEND_CMDS
+	( \
+	  sleep 1.5; \
+	  while IFS= read -r line; do \
+	    echo "$$line"; \
+	    sleep 0.3; \
+	  done < $(1) \
+	)
+endef
 
 # test-pod / test-net 
 # ---------------------
@@ -668,7 +663,6 @@ TEST_POD_RESFILE = $(TEST_POD_LOGFILE).res
 GREP_CONNOK = grep -Fc "[+] Connectivity test: OK" $(1) | wc -l
 # 1=req, 2=rsp, 3=file
 GREP_REQRSP  = grep -Fq "[LOG] send req: $(1) recv rsp: $(2)" $(3)
-
 # 1=cmd,2=file
 SND_PODCMD = echo $(1) | kubectl attach -qi $(2) 2>/dev/null
 # 1=pod
@@ -779,17 +773,16 @@ test-server: server
 .PHONY: test-client
 test-client: client
 	$(Q)echo "[+] Running $@"; \
-	rm -f $(BUILD_REQFILE) $(BUILD_RSPFILE); \
-	awk -f ./$(SIMPLE_SERVER) -v Port="$(TEST_PORT)" \
-		 -v LogFile="$(BUILD_REQFILE)" -v RespFile="$(TEST_RSPFILE)" \
-		 1>$(TEST_LOGFILE) 2>&1 & SRV_PID=$$!; \
+	awk -f ./$(SIMPLE_SERVER) -v Port="$(TEST_PORT)" -v RespFile="$(TEST_RSPFILE)" 1>$(RES_REQFILE) 2>&1 & SRV_PID=$$!; \
 	$(call WAIT_PIDUP,$$SRV_PID,simple-server); \
 	$(call WAIT_CONNUP,$(TEST_ADDR),$(TEST_PORT),$$SRV_PID); \
-	$(call SND_CMDFILE,$(TEST_REQFILE),$(BUILD_RSPFILE),$(TEST_LOGFILE)) ; \
+	echo " => send cmd-file to client"; \
+	cat $(TEST_REQFILE) | timeout 2s ./client $(CMD_ARGS) >$(CLI_LOGFILE) 2>&1; \
+	sed -e 's/^> //' -e '/^\[+]/d' $(CLI_LOGFILE) > $(RES_RSPFILE); \
 	$(call SHUTDOWN_PID,$$SRV_PID); \
 	total=0; errors=0; \
-	$(call DIFF_FILE,$(TEST_REQFILE),$(BUILD_REQFILE),$(TEST_LOGFILE)); \
-	$(call DIFF_FILE,$(TEST_RSPFILE),$(BUILD_RSPFILE),$(TEST_LOGFILE)); \
+	$(call DIFF_FILE,$(TEST_REQFILE),$(RES_REQFILE),$(CLI_LOGFILE)); \
+	$(call DIFF_FILE,$(TEST_RSPFILE),$(RES_RSPFILE),$(CLI_LOGFILE)); \
 	$(call TEST_REPORT); \
 	if [ $$errors -gt 0 ]; then exit 1; fi
 
@@ -804,10 +797,15 @@ test-lau: $(INSTALL_DONE) vm-create
 	echo " => Copying $(BIN_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
 	scp -q $(SSH_OPTS) -r $(BIN_DIR) $$VM_SSH_ADDR:$(VM_HOME); \
 	echo " => Sending cmds to $(TEST_LAU) ..."; \
-	$(call SEND_CMDS,$(TEST_REQFILE)) | ssh $(SSH_OPTS) -tt $$VM_SSH_ADDR "$(LAU_CMD)" 2>&1 | tee $(LAU_LOGFILE); \
+	$(call SEND_CMDS,$(TEST_REQFILE)) | ssh -tt $(SSH_OPTS) $$VM_SSH_ADDR "$(LAU_CMD)" 2>&1 | tr -d '\r' | tee $(LAU_LOGFILE); \
 	echo " => Fetching logs"; \
-	$(call GET_REQRSP,$(LAU_LOGFILE),$(LAU_RESFILE)); \
-	echo "$(CHECK) $@ complete."
+	sed -n -u -e 's/^> //p'  $(LAU_LOGFILE) >$(RES_REQFILE); \
+	sed -n -u -e '/^[A-Za-z0-9]/p' $(LAU_LOGFILE) >$(RES_RSPFILE); \
+	total=0; errors=0; \
+	$(call DIFF_FILE,$(TEST_REQFILE),$(RES_REQFILE),$(LAU_LOGFILE)); \
+	$(call DIFF_FILE,$(TEST_RSPFILE),$(RES_RSPFILE),$(LAU_LOGFILE)); \
+	$(call TEST_REPORT); \
+	if [ $$errors -gt 0 ]; then exit 1; fi
 
 # run all k8s tests
 # -----------------

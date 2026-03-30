@@ -4,19 +4,13 @@ BEGIN {
     # If variables weren't passed via -v, set defaults
     if (!Port) Port = "6379"
     if (!RespFile) RespFile = "rsp_file.txt"
-    if (!LogFile) LogFile = "recv_file.txt"
-    
     Service = "/inet/tcp/" Port "/0/0"
-
-    print "Server starting on port " Port "..."
-    print "Logging to: " LogFile
-    print "Responding with: " RespFile
 
     while (1) {
         if ((Service |& getline client_line) > 0) {
             # Log incoming
-            print client_line >> LogFile
-            fflush(LogFile)
+            print client_line
+            fflush(); 
 
             # Read and send response
             if ((getline resp_line < RespFile) > 0) {

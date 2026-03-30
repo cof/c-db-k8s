@@ -23,9 +23,9 @@ spec:
         tty: false   # allow user to attach
         readinessProbe:
           exec:
-            command: ["sh", "-c", "nc -zv db-service 6379"]
+            command: ["sh", "-c", "echo '' | nc -w 1  db-service 6379"]
           initialDelaySeconds: 2
-          periodSeconds: 5
+          periodSeconds: 10
         resources:
           limits:
             memory: "8Mi"
