@@ -81,31 +81,36 @@ A custom linux container launcher for running applications inside isolated names
 
 **Example usage**
 
-    $ make test-lau
-      CC    build/ns_util.o
-      CC    build/lau_child.o
-      CC    build/launcher.o
-      LD    launcher
-    [Installing files]
-    install -D -m 755 server bin/db/server
-    install -D -m 755 client bin/client/client
-    install -D -m 755 launcher bin
-    [+] Creating VM-DISK: vmdir/myalpine.qcow2
-    [+] Installing VM: test-lau
-    [+] Started VM: test-lau
-    [+] Waiting for VM test-lau to reach SSH
-     ... still waiting (1/30)
-     ... still waiting (2/30)
-     ... still waiting (3/30)
-     ... still waiting (4/30)
-     ... still waiting (5/30)
-     ... still waiting (6/30)
-     ... still waiting (7/30)
-     => VM is UP at 192.168.122.224.
-    [+] Running test-lau
-     => Copying bin to alpine@192.168.122.224:/home/alpine
-     => Running /home/alpine/bin/launcher ...
-    ✅ test-lau complete.
+	$ make test-lau
+	[+] Waiting for VM test-lau to reach SSH
+	 => VM is UP at 192.168.122.63.
+	[+] Running test-lau
+	 => Copying bin to alpine@192.168.122.63:/home/alpine
+	 => Sending cmds to  ...
+	[+] Created network namespace: db-ns
+	[+] Created network namespace: client-ns
+	[+] Created veth pair: veth-client <-> veth-db
+	[+] Database listening on [::]:6379
+	[+] Client connected from 10.0.0.2:49280
+	[+] Connectivity test: OK
+	> SET foo bar
+	OK
+	> GET foo
+	bar
+	> DEL foo
+	OK
+	> QUIT
+	[+] server-close 10.0.0.2:49280
+	OK
+	[+] Connection closed by server
+	[+] Container 'client' exit ok (pid=2504 why=exit 0)
+	[+] server PID:1 shutting down: got signal 15 (Terminated) from UID:0 PID:0 
+	 => Fetching logs
+	 => TEST tests/test_req.txt [ PASS ]
+	 => TEST tests/test_rsp.txt [ PASS ]
+	 => Ran 2 tests: 2 passed, 0 failed (100% success)
+	✅ test-lau complete.
+
     c-db-k8s$ ssh alpine@test-lau
     launcher:~$ ll
     total 2
@@ -324,11 +329,10 @@ Testing cmds, launcher and k8s requires a large test-suite.
 
 The test targets are listed below.
 
-
 - **make test**  run basic tests
 - **make test-full** run all tests (test-cmds,test-lau,test-k8s)   
 &nbsp;
-- **make test-cmds** run cmd tests client,server
+- **make test-cmds** run client,server tests
 - **make test-lau** run ./launcher tests (using VM)
 - **make test-k8s** run k8s tests (wait-pods, test-pod,test-net)   
 &nbsp;

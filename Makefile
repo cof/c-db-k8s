@@ -18,7 +18,7 @@
 #  test        : run basic tests (test-cmds)
 #  test-full   : run all tests (test-cmds,test-lau,test-k8s)
 #
-#  test-cmds   : run cmd tests (client,server)
+#  test-cmds   : run cmds(client,server) tests
 #  test-lau    : run launcher tests (using VM)
 #  test-k8s    : run k8s tests (wait-pods,test-pod,test-net)
 #
@@ -806,6 +806,7 @@ test-lau: $(INSTALL_DONE) vm-create
 	$(call DIFF_FILE,$(TEST_RSPFILE),$(RES_RSPFILE),$(LAU_LOGFILE)); \
 	$(call TEST_REPORT); \
 	if [ $$errors -gt 0 ]; then exit 1; fi
+	@echo "$(CHECK) $@ complete."
 
 # run all k8s tests
 # -----------------
