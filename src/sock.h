@@ -199,8 +199,9 @@ int sock_sendline(struct simple_sock *sock, struct str_slice line);
  * sock_write_close(sock, force) : mark socket closed for writes
  * sock_set_err(sock) : mark socket as failed
  * sock_iseof(sock)   : true if peer closed stream (read 0 from fd)
- * sock_read_done(sock)  : true if remote peer is closed and recv-buffer drained
- * sock_write_done(sock) : true if write-closed and send-buffer drained
+ * sock_dataeof(sock, rc)   : check if both data and eof received
+ * sock_read_done(sock)     : true if remote peer is closed and recv-buffer drained
+ * sock_write_done(sock)    : true if write-closed and send-buffer drained
  * sock_write_closing(sock) : true if write-closed is set
  * sock_isbusy(sock)    : true if send-buffer is non-empty or pending FIN
  * sock_isclosed(sock)  : true if both local and remote streams are closed
@@ -235,6 +236,11 @@ static inline void sock_set_err(struct simple_sock *sock)
 static inline int sock_iseof(struct simple_sock *sock)
 {
     return sock->recv_fin;
+}
+
+static inline int sock_dataeof(struct simple_sock *sock, int rc)
+{
+    return rc == SOCK_DATA && sock_iseof(sock) ? SOCK_CLOSED : rc;
 }
 
 static inline int sock_read_done(struct simple_sock *sock)

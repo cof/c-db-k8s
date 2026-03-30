@@ -86,7 +86,7 @@ endif
 
 # compiler flags
 # --------------
-GCC_DEPS      := -MMD -MP -MT
+GCC_DEPS      := -MMD -MP
 CPP_FLAGS     := -D_GNU_SOURCE -Isrc
 EXTRA_CFLAGS  := -Wextra -Wno-missing-field-initializers
 COMMON_CFLAGS := -Wall  -Werror=implicit-function-declaration $(CPP_FLAGS) $(GCC_DEPS)
@@ -542,6 +542,7 @@ TEST_PORT = 7379
 TEST_ADDR = 127.0.0.1
 CMD_ARGS = --hostname $(TEST_ADDR) --port $(TEST_PORT)
 
+
 TEST_LOGFILE  = $(BUILD_DIR)/test.log
 TEST_WAITRUN = 0.5
 
@@ -550,23 +551,42 @@ TEST_REPORT = \
 	[ $$total -eq 0 ] && percent=100 || percent=$$(( (total - errors) * 100 / total )); \
 	echo " => Ran $$total tests: $$passed passed, $$errors failed ($$percent% success)"
 
+# 1=log-file 2=out-file
+GET_REQRSP = sed -e 's/^> //' -e '/^\[+]/d' $(1) > $(2)
+
 # test-lau macros
 # ---------------
-GET_VM_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
 
+# ah lau we hardly knew ye
+LAU_LOGFILE = $(BUILD_DIR)/test_lau.log
+LAU_RESFILE = $(BUILD_DIR)/test_lau.rsp
+LAU_BIN := $(VM_BIN_DIR)/launcher
+LAU_CMD := doas $(LAU_BIN) --base-dir $(VM_HOME)/$(VM_NAME) --src-dir $(VM_BIN_DIR)
+
+# 1=vm-name
+VM_GET_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
+
+# allow ssh be run without user input
 SSH_OPTS = \
 	-o StrictHostKeyChecking=no \
 	-o UserKnownHostsFile=/dev/null \
 	-o LogLevel=ERROR \
 	-o IdentitiesOnly=yes -i $(VM_SSH_KEYFILE)
-
 ifeq ($(V),1)
   SSH_OPTS += -v
 endif
 
-# run launcher in VM using doas
-LAUNCHER_CMD := stty -echo; \
-	doas $(VM_BIN_DIR)/launcher --base-dir $(VM_HOME)/$(VM_NAME) --src-dir $(VM_BIN_DIR)
+# 1=cmd-file
+define SEND_CMDS
+	( \
+	  sleep 1.5; \
+	  while IFS= read -r line; do \
+	    echo "$$line"; \
+	    sleep 0.3; \
+	  done < $(1) \
+	)
+endef
+
 
 # test-cmd macros
 # ---------------
@@ -633,7 +653,6 @@ SND_CMDFILE = \
 	echo " => send $(1) via client"; \
 	cat $(1) | timeout 2s ./client $(CMD_ARGS) > $(2) 2>$(3); \
 	sed -i -e 's/^> //' -e '/^\[+]/d' $(2) \
-
 
 # test-pod / test-net 
 # ---------------------
@@ -779,13 +798,15 @@ test-client: client
 .PHONY: test-lau
 test-lau: $(INSTALL_DONE) vm-create
 	$(Q)echo "[+] Running $@"; \
-	VM_IP=$$($(GET_VM_IP)); \
+	VM_IP=$$($(VM_GET_IP)); \
 	if [ -z "$$VM_IP" ]; then echo "[ERROR] No VM ip address"; exit 1; fi; \
 	VM_SSH_ADDR="$(VM_USER)@$$VM_IP"; \
 	echo " => Copying $(BIN_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
 	scp -q $(SSH_OPTS) -r $(BIN_DIR) $$VM_SSH_ADDR:$(VM_HOME); \
-	echo " => Running $(VM_BIN_DIR)/launcher ..."; \
-	ssh $(SSH_OPTS) -tt $$VM_SSH_ADDR "$(LAUNCHER_CMD)" < ./$(TEST_REQFILE) > $(TEST_LOGFILE); \
+	echo " => Sending cmds to $(TEST_LAU) ..."; \
+	$(call SEND_CMDS,$(TEST_REQFILE)) | ssh $(SSH_OPTS) -tt $$VM_SSH_ADDR "$(LAU_CMD)" 2>&1 | tee $(LAU_LOGFILE); \
+	echo " => Fetching logs"; \
+	$(call GET_REQRSP,$(LAU_LOGFILE),$(LAU_RESFILE)); \
 	echo "$(CHECK) $@ complete."
 
 # run all k8s tests
@@ -862,9 +883,9 @@ test-net: deploy
 .PHONY: clean-k8s
 clean-k8s:
 	@echo "Cleaning k8s config"
-	-k3d cluster delete $(CLUSTER_NAME)
-	-docker rmi $(SERVER_IMG) $(CLIENT_IMG)
-	-rm -f $(DONE_FILES)
+	k3d cluster delete $(CLUSTER_NAME) || true
+	docker rmi $(SERVER_IMG) $(CLIENT_IMG) || true
+	rm -f $(DONE_FILES)
 
 .PHONY: clean-rootfs
 clean-rootfs:

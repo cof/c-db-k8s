@@ -34,6 +34,7 @@ void log_info(const char *what, const char *fmt, ...)
     va_end(args);
 
     fprintf(stderr, "\n");
+    fflush(stderr);
 }
 
 int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
@@ -47,6 +48,7 @@ int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
     va_end(args);
 
     fprintf(stderr, "\n");
+    fflush(stderr);
     
     return -1;
 }
@@ -67,6 +69,7 @@ void _log_error(const char *file, int line, const char *func, int ec, const char
     }
 
     fprintf(stderr, "\n");
+    fflush(stderr);
 }
 
 void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
