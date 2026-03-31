@@ -186,7 +186,7 @@ int main(int argc, char *argv[])
     struct cmd_argv parser = { argc, argv, opts };
     while ( (rc = cmd_argv_next(&parser)) >= 0) {
         switch(rc) {
-        case opt_help: print_usage(argv[0], opts, examples); exit(0);
+        case opt_help: prog_usage(argv[0], opts, examples); exit(0);
         case opt_host: hostname = parser.value; break;
         case opt_port: port = parser.value; break;
         case opt_log:  log = 1; break;

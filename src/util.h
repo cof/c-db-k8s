@@ -21,7 +21,7 @@
  * strbuf     : for simple string write buffer
  * str_slice  : for a memory view (buf+len)
  * setter     : for setting string and int values
- * cmd-line   : cmd-line parser api
+ * cmd-line   : cmd-line api
  */
 #ifndef _UTIL_H_
 #define _UTIL_H_
@@ -493,8 +493,11 @@ int str_setval(char **str, const char *name, const char *val_str);
 int int_setval(int *ival, const char *name, const char *val_str);
 int uint_setval(uint32_t *uval, const char *name, const char *val_str);
 
+
+/* cmd-line */
+
 /*
- *  cmd-line parser API
+ *  cmd-argv parser API
  *  -------------------
  *  Uses a simple stateful iterator over cmd-line args.
  *  No malloc just pass it arg,argv and array of opts
@@ -554,12 +557,33 @@ struct cmd_argv {
  * opt_setstr(str, parser) : set string with option value
  * opt_setint(str, parser) : set int with option value
  * opt_setuint(str, parser) : set int with option value
- * print_usage(cmd, opts, examples) : print cmd-line options and examples
  */
 int cmd_argv_next(struct cmd_argv *parse);
 int opt_setstr(char **str, struct cmd_argv *parse);
 int opt_setint(int *iptr, struct cmd_argv *parse);
 int opt_setuint(uint32_t *uptr, struct cmd_argv *parse);
-void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[]);
+
+/*
+ * cmd-API
+ * -------
+ * cmd_mode = cmd_mode_find(mode, modes) : find cmd-mode entry
+ * prog_usage(prog_name, opts, examples) : print cmd usage
+ * mode_usage(prog_name, modes, examples) : print modes usage
+ */
+
+#define MODE_RUN(f) ((int (*)(void *))(f))
+
+// cmd runner
+struct cmd_mode {
+    int (*run)(void *state);
+    int mode;
+    struct cmd_opt *opts;
+    char *name;
+    char *desc;
+};
+
+struct cmd_mode *cmd_mode_find(char *mode, struct cmd_mode modes[]);
+void prog_usage(const char *prog_name, const struct cmd_opt opts[], const char *examples[]);
+void mode_usage(const char *prog_name, struct cmd_mode modes[], const char *examples[]);
 
 #endif

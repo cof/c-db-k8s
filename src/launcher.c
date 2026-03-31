@@ -676,7 +676,7 @@ static int lau_parse_argv(struct lau_ctx *lau, int argc, char *argv[])
 
     while ( (rc = cmd_argv_next(&parser)) >= 0) {
         switch(rc) {
-        case opt_help: print_usage(argv[0], opts, examples); exit(0);
+        case opt_help: prog_usage(argv[0], opts, examples); exit(0);
         case opt_log:  verbose = 1; break;
         case opt_base_dir:    rc = opt_setstr(&lau->base_dir, &parser); break;
         case opt_src_dir:     rc = opt_setstr(&lau->src_dir, &parser); break;

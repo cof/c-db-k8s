@@ -533,7 +533,7 @@ static int server_parse_argv(struct simple_server *serv, int argc, char *argv[])
 
     while ( (rc = cmd_argv_next(&parser)) >= 0) {
         switch(rc) {
-        case opt_help:  print_usage(argv[0], opts, examples); exit(0);
+        case opt_help:  prog_usage(argv[0], opts, examples); exit(0);
         case opt_host:  rc = opt_setstr(&serv->hostname, &parser); break;
         case opt_port:  rc = opt_setstr(&serv->port, &parser); break;
         case opt_dbase: rc = opt_setstr(&serv->database, &parser); break;

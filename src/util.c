@@ -258,13 +258,13 @@ int cmd_argv_next(struct cmd_argv *parse)
     return parse->opt->code ? parse->opt->code : parse->opt_idx;
 }
 
-// print cmd usage
-void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[])
+// print program usage
+void prog_usage(const char *prog_name, const struct cmd_opt opts[], const char *examples[])
 {
-    const char *prog_name = get_basename(cmd);
-    int w= 15;
+    const char *name = get_basename(prog_name) ?: "<null>";
+    int w = 15;
 
-    printf("Usage: %s [OPTIONS]\n\n", prog_name);
+    printf("Usage: %s [OPTIONS]\n\n", name);
     printf("Options:\n");
 
     for (int i = 0; opts[i].name; i++)  {
@@ -277,6 +277,50 @@ void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examp
 
     printf("\nExamples:\n");
     for (int i = 0; examples[i]; i++)  {
-        printf("  %s %s\n", prog_name, examples[i]);
+        printf("  %s %s\n", name, examples[i]);
     }
+}
+
+// find cmd_mode entry
+struct cmd_mode *cmd_mode_find(char *mode, struct cmd_mode modes[])
+{
+    for (size_t i = 0; modes[i].name; i++) {
+        if (!strcmp(mode, modes[i].name)) return &modes[i];
+    }
+
+    return NULL;
+}
+
+// print mode usage
+void mode_usage(const char *prog_name, struct cmd_mode modes[], const char *examples[])
+{
+    const char *name = get_basename(prog_name) ?: "<null>";
+    int w = 15;
+
+    printf("Usage: %s [MODE] [OPTIONS]\n\n", name);
+
+    // list modes
+    printf("MODE:\n");
+    for (size_t i = 0; modes[i].name; i++) {
+        printf("  %-*s %s\n", w, modes[i].name, modes[i].desc);
+    }
+    printf("\n");
+
+    // list options
+    for (size_t i = 0; modes[i].name; i++) {
+        printf("%s Options:\n", modes[i].name);
+        struct cmd_opt *opts = modes[i].opts;
+        for (size_t j = 0; opts[j].name; j++) {
+            struct cmd_opt *opt = &opts[j];
+            printf("  %-*s %s\n", w, opt->name, opt->desc);
+        }
+        printf("\n");
+    }
+
+    // list examples
+    printf("Examples:\n");
+    for (int i = 0; examples[i]; i++)  {
+        printf("  %s %s\n", name, examples[i]);
+    }
+
 }
