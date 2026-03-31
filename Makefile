@@ -725,6 +725,7 @@ CHK_CONNOPEN = \
 		printf "%b %b\n" "$$perm_str" "$(FAIL_STR)"; \
 		errors=$$((errors + 1)); \
 	fi
+
 # 1=is_open 2=pod 3=label 4=hostname 5=port
 CHK_RANDOPEN= \
 	$(call LOG_CHKCONN,$(2),$(3)); \
@@ -799,8 +800,8 @@ test-lau: $(INSTALL_DONE) vm-create
 	echo " => Sending cmds to $(TEST_LAU) ..."; \
 	$(call SEND_CMDS,$(TEST_REQFILE)) | ssh -tt $(SSH_OPTS) $$VM_SSH_ADDR "$(LAU_CMD)" 2>&1 | tr -d '\r' | tee $(LAU_LOGFILE); \
 	echo " => Fetching logs"; \
-	sed -n -u -e 's/^> //p'  $(LAU_LOGFILE) >$(RES_REQFILE); \
-	sed -n -u -e '/^[A-Za-z0-9]/p' $(LAU_LOGFILE) >$(RES_RSPFILE); \
+	sed -n 's/^> //; /GET \|SET \|DEL \|QUIT/p' $(LAU_LOGFILE) >$(RES_REQFILE); \
+	sed -n '/^[A-Za-z0-9]/p' $(LAU_LOGFILE) >$(RES_RSPFILE); \
 	total=0; errors=0; \
 	$(call DIFF_FILE,$(TEST_REQFILE),$(RES_REQFILE),$(LAU_LOGFILE)); \
 	$(call DIFF_FILE,$(TEST_RSPFILE),$(RES_RSPFILE),$(LAU_LOGFILE)); \
