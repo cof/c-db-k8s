@@ -8,9 +8,10 @@
  * Basic idea is you use logger to report information to users, log what a process
  * is doing and report useful error messages if something fails.
  *
- * There are 3 basic log types:
+ * There are 4 basic log types:
  *
- *  info  - "[what] fmt-str" 
+ *  info  - "[who] fmt-str" 
+ *  debug - "[DEBUG] file:line func: fmt-str
  *  error - "[ERROR] file:line (func): fmt-str"
  *  fatal - "[FATAL] file:line (func): fmt-str
  *
@@ -57,36 +58,38 @@
 
 #include <errno.h>
 
-extern int verbose;
+extern int log_level;
 
 /*
  * functions : direct functions
  * -----------------------------
- * log_msg(msg)             :  log msg - a simple fputs(msg)
- * log_info(what, fmt, ...) : log info  - "[what] fmt-str"
+ * log_init(dst,level) : setup up logger
  * log_cmd_err(cmd, opt, fmt) : FIXME this need to go
- * _log_error(file,line,unc, ec, fmt, ...) : log error - "[ERROR] file:line (func): fmt-str":
- * _fatal_error(file, line, func, ec, fmt, ...) : log fatal,exit(1) - "[FATAL] file:line (func): fmt-str
+ * _log_msg(file, line, func, what, ec, what, whatstr, fmt, ...) : log msg - "[what] file:line (func): fmt-str":
  * log_argv(what, argc, argv) : log_info cmd-line - useful for debuing pod exec issues
  */
-void log_msg(const char *msg);
-void log_info(const char *what, const char *fmt, ...)
-    __attribute__((format(printf, 2, 3)));
+void log_init(FILE *dst, int level);
 int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
     __attribute__((format(printf, 3, 4)));
-void _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...) 
-    __attribute__((format(printf, 5, 6)));
-void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
-    __attribute__((format(printf, 5, 6)));
+void _log_msg(const char *file, int line, const char *func, 
+    int ec, int what, const char *what_str, const char *fmt, ...)
+    __attribute__((format(printf, 7, 8)));
 void log_argv(const char *what, int argc, char *argv[]);
+
+// logger levels
+#define LOG_FATAL 1
+#define LOG_ERROR 2
+#define LOG_DEBUG 3
+#define LOG_INFO  4
 
 /*
  * macros : various msg-str and fmt-str macros
  * -------------------------------------------
  * log_msg_rf(msg)          : log msg/return fail
+ * log_info(who, ...)       : log_info
  * log_info_rc(what,rc,...) : log_info/return code
  * -
- * log_error(...)           : log_error msg - direct wrapper to _log_error.
+ * log_error(...)           : log_error msg - direct wrapper to _log_msg.
  * log_error_rf(...)        : log_error msg - return fail
  * log_error_rc(rc, ...)    : log_error msg - return code
  * log_error_rz(..,)        : log_error msg - return zero
@@ -102,65 +105,98 @@ void log_argv(const char *what, int argc, char *argv[]);
  * fatal_error(...)         : log fatal error msg and exit
  * fatal_errno(...)         : log fatal error msg and errno and exit
  */
-#define log_msg_rf(msg) ({ \
-    log_msg(msg); \
+
+
+#define log_msg(...) \
+    _log_msg(NULL, 0, NULL, 0, 0, 0, __VA_ARGS__)
+
+#define log_msg_rf(...) ({ \
+    _log_msg(NULL, 0, NULL, 0, 0, 0, __VA_ARGS__) \
     UTIL_FAIL; \
 })
 
-// report msg, return rc
-#define log_info_rc(what, rc, ...) ({ \
-    log_info(what,  __VA_ARGS__); \
+#define log_info(who, ...) \
+    if (log_level >= LOG_INFO) _log_msg(NULL, 0, NULL, 0, LOG_INFO, who, __VA_ARGS__)
+
+#define log_info_rc(who, rc, ...) ({ \
+    if (log_level >= LOG_INFO) _log_msg(NULL, 0, NULL, 0, LOG_INFO, who, __VA_ARGS__); \
     (rc); \
 })
 
+#define log_debug(...) \
+    if (log_level >= LOG_DEBUG) { \
+        _log_msg(__FILE__, __LINE__, __func__, 0, LOG_DEBUG, NULL, __VA_ARGS__); \
+    }
+
 #define log_error(...) \
-    _log_error(__FILE__, __LINE__, __func__, 0, __VA_ARGS__)
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, 0, LOG_ERROR, NULL, __VA_ARGS__); \
+    }
 
 #define log_error_rf(...) ({ \
-    _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, 0, LOG_ERROR, NULL, __VA_ARGS__); \
+    }\
     UTIL_FAIL; \
 })
 
 #define log_error_rc(rc, ...) ({ \
-    _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, 0, LOG_ERROR, NULL, __VA_ARGS__); \
+    } \
     (rc); \
 })
 
 #define log_error_rz(...) ({ \
-    _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, 0, LOG_ERROR, NULL, __VA_ARGS__); \
+    } \
     UTIL_OK; \
 })
 
 #define log_error_rn(...) ({ \
-    _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, 0, LOG_ERROR, NULL, __VA_ARGS__); \
+    } \
     (void *) NULL; \
 })
 
 #define log_errno(...) \
-    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__)
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, NULL, __VA_ARGS__); \
+    }
 
 #define log_errno_rf(...) ({ \
-    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, NULL, __VA_ARGS__); \
+    } \
     UTIL_FAIL; \
 })
 
 #define log_errno_rc(rc, ...) ({ \
-    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, NULL, __VA_ARGS__); \
+    } \
     (ec); \
 })
 
 #define log_errno_rn(...) ({ \
-    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, NULL, __VA_ARGS__); \
+    } \
     (void *) NULL; \
 })
 
 #define log_ec_rf(ec, ...) ({ \
-    _log_error(__FILE__, __LINE__, __func__, ec,  __VA_ARGS__); \
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, ec, LOG_ERROR, NULL, __VA_ARGS__); \
+    } \
     UTIL_FAIL; \
 })
 
-#define fatal_error(...) _fatal_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__)
-#define fatal_errno(...) _fatal_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__)
-#define log_debug(fmt, ...) { fprintf(stderr, fmt, ##__VA_ARGS__); fprintf(stderr, "\n"); }
+#define fatal_error(...) \
+    _log_msg(__FILE__, __LINE__, __func__, 0, LOG_FATAL, NULL, __VA_ARGS__)
+#define fatal_errno(...) \
+    _log_msg(__FILE__, __LINE__, __func__, errno, LOG_FATAL, NULL, __VA_ARGS__)
 
 #endif

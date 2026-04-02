@@ -128,9 +128,13 @@ valgrind: all
 $(BUILD_DIR):
 	@mkdir -p $@
 
+# API
+# ---
+API_SRCS = src/util.c src/log.c src/rwbuf.c src/dns_proto.c src/resolv.c src/sock.c
+
 # server
 # ------
-SERVER_SRCS = src/util.c src/log.c src/rwbuf.c src/sock.c src/db.c src/server.c
+SERVER_SRCS = $(API_SRCS) src/db.c src/server.c
 SERVER_OBJS = $(SERVER_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 SERVER_DEPS = $(SERVER_OBJS:.o=.d)
 -include $(SERVER_DEPS)
@@ -139,7 +143,7 @@ server: $(SERVER_OBJS)
 
 # client
 # ------
-CLIENT_SRCS = src/util.c src/log.c src/rwbuf.c src/sock.c src/client.c
+CLIENT_SRCS = $(API_SRCS) src/client.c
 CLIENT_OBJS = $(CLIENT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 CLIENT_DEPS = $(CLIENT_OBJS:.o=.d)
 -include $(CLIENT_DEPS)
@@ -797,7 +801,7 @@ test-lau: $(INSTALL_DONE) vm-create
 	VM_SSH_ADDR="$(VM_USER)@$$VM_IP"; \
 	echo " => Copying $(BIN_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
 	scp -q $(SSH_OPTS) -r $(BIN_DIR) $$VM_SSH_ADDR:$(VM_HOME); \
-	echo " => Sending cmds to $(TEST_LAU) ..."; \
+	echo " => Sending cmds to $(VM_NAME) ..."; \
 	$(call SEND_CMDS,$(TEST_REQFILE)) | ssh -tt $(SSH_OPTS) $$VM_SSH_ADDR "$(LAU_CMD)" 2>&1 | tr -d '\r' | tee $(LAU_LOGFILE); \
 	echo " => Fetching logs"; \
 	sed -n 's/^> //; /GET \|SET \|DEL \|QUIT/p' $(LAU_LOGFILE) >$(RES_REQFILE); \

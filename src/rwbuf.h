@@ -41,7 +41,7 @@ struct rwbuf {
  */
 #define RWBUF_INIT(_buf, _len)  { \
     .data = _buf, \
-    .max_size = 0, \
+    .max_size = _len, \
     .size = _len, \
     .ridx = 0,  \
     .widx = 0, \

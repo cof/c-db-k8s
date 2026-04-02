@@ -101,20 +101,28 @@ int setup_signals(struct simple_sig *sig);
  * String API
  * ----------
  * ec_tostr(len, estrs, ec, def) : lookup a string for ec or return default
- * dbj2a_hash(key, len)     : return dbj2a hash of key buffer
- * dbj2a_hash_str(str)      : return dbj2a hash of string
- * gen_str(buf,len,fmt,..)  : generate a string to buffer
- * get_basename(path)       : return basename of path if found
- * itoa(buf, len, val)      : store an ascii repr of int to string buffer
- * int_tostr(buf, len, val) : convert int val to string repr
- * safe_strlen(str)         : return strlen if not null else 0
- * str_def(str, def_str)    : return str if set else default
- * str_tolower(str, len)    : lower case a string
- * str_toupper(str, len)    : upper case a string
- * iswhite(ch)              : char is whitespace (SP|TAB|VTAB|CR|LF)
- * is_numeric(ch)           : char is a number (0-9)
- * str_isnumeric(str, len)  : str is numeric
+ * dbj2a_hash(key, len)      : return dbj2a hash of key buffer
+ * dbj2a_hash_str(str)       : return dbj2a hash of string
+ * gen_str(buf,len,fmt,..)   : generate a string to buffer
+ * get_basename(path)        : return basename of path if found
+ * safe_strlen(str)          : return strlen if not null else 0
+ * str_def(str, def_str)     : return str if set else default
+ * str_memcpy(dst, src, len) : memcpy a short string
+ * str_cat(dst, src)         : copy src to dst return position of nul
+ * str_tolower(str, len)     : lower case a string
+ * str_toupper(str, len)     : upper case a string
+ * iswhite(ch)               : char is whitespace (SP|TAB|VTAB|CR|LF)
+ * is_numeric(ch)            : char is a number (0-9)
+ * str_isnumeric(str, len)   : str is numeric
+ * str_tou32(str, len)       : convert str to uint32_t
+ * itoa(val, buf, len)       : print ascii repr of int to string buffer
+ * int_tostr(val)            : convert int-val to string
+ * uint8_toa(buf, val)       : a fast 8-bit value to ascii encoder
+ * uint16_toa(buf, val)      : a fast 16-bit value to ascii encoder
+ * uint16_toax(buf, val)     : a fast 16-bit value to hex encoder
+ * uint8_tostr(val, str, len) : print 8-bit value to string buffer
  */
+
 static inline const char *ec_tostr(int len, const char *estr[len], int ec, const char *def)
 {
     const char *str;
@@ -154,9 +162,6 @@ static inline const char *get_basename(const char *path)
     return base ? base + 1 : path;
 }
 
-char *itoa(char *buf, int len, int val);
-char *int_tostr(int val);
-
 static inline size_t safe_strlen(const char *str)
 {
     return str ? strlen(str) : 0;
@@ -165,6 +170,27 @@ static inline size_t safe_strlen(const char *str)
 static inline const char *str_def(const char *str, const char *def_str)
 {
     return str && *str ? str : def_str;
+}
+
+static inline char *str_memcpy(char *dst, const char *src, int len)
+{
+    const char *src_ptr = src;
+    const char *src_end = src + len;
+
+    while (src_ptr < src_end) {
+        *dst++ = *src_ptr++;
+    }
+
+    return dst;
+}
+
+static inline char *str_cat(char *dst, const char *src)
+{
+    while (*src) {
+        *dst++ = *src++;
+    }
+
+    return dst;
 }
 
 static inline void str_tolower(char *str, size_t len)
@@ -211,15 +237,131 @@ static inline int str_isnumeric(const char *str, size_t len)
     return 1;
 }
 
+static inline uint32_t str_tou32(const char *str, size_t len)
+{
+    const char *ptr = str;
+	const char *end = str + len;
+    uint32_t val = 0;
+
+    while (ptr < end && is_numeral(*ptr)) {
+		// val = val * 10 using shifts + add
+		val = (val << 3) + (val << 1) + (*ptr++ - '0');
+    }
+
+    return val;
+}
+
+char *itoa(int val, char *buf, size_t len);
+char *int_tostr(int val);
+
+// a fast 8-bit value to ascii encoder
+static inline char *uint8_toa(char *wptr, uint8_t val)
+{
+    if (val < 10) {
+        // 1-digit : 0 - 9
+        *wptr++ = val + '0';
+    } 
+    else if (val < 100) {
+        // 2-digit : 10 - 99
+        // n / 10 is : (n * 205) >> 11 
+        uint8_t d1 = (val * 205) >> 11; 
+        uint8_t d2 = val - (d1 * 10);
+        *wptr++ = d1 + '0';
+        *wptr++ = d2 + '0';
+    } 
+    else {
+        // 3-digit : 100 - 255
+        // n / 100 is : (n * 164) >> 14
+        uint8_t d1 = (val * 164) >> 14; 
+        uint8_t rem = val - (d1 * 100);
+        // rem / 10 is : (rem * 205) >> 11
+        uint8_t d2 = (rem * 205) >> 11;
+        uint8_t d3 = rem - (d2 * 10);
+        *wptr++ = d1 + '0';
+        *wptr++ = d2 + '0';
+        *wptr++ = d3 + '0';
+    }
+
+    return wptr;
+}
+
+// a fast 16-bit value to ascii encoder
+static inline char *uint16_toa(char *wptr, uint16_t val) 
+{
+	// 16-bits - max 5 digits - 65535
+    if (val >= 10000) *wptr++ = (val / 10000) + '0';
+    if (val >= 1000)  *wptr++ = (val / 1000 % 10) + '0';
+    if (val >= 100)   *wptr++ = (val / 100 % 10) + '0';
+    if (val >= 10)    *wptr++ = (val / 10 % 10) + '0';
+    *wptr++ = (val % 10) + '0';
+
+    return wptr;
+}
+
+// a fast 16-bit value to ascii hex encoder
+static inline char *uint16_toax(char *wptr, uint16_t val)
+{
+    static const char hex[] = "0123456789abcdef";
+
+	// 16-bits = 4 x nibbles = 4 x hex-chars
+    if (val >= 0x1000) *wptr++ = hex[(val >> 12) & 0xf];
+    if (val >= 0x100)  *wptr++ = hex[(val >> 8)  & 0xf];
+    if (val >= 0x10)   *wptr++ = hex[(val >> 4)  & 0xf];
+    *wptr++ = hex[val & 0xf];
+
+    return wptr;
+}
+
+static inline char *uint8_tostr(uint8_t val, char *str, size_t len)
+{
+    if (len < 3) return str;
+
+    char *dst = uint8_toa(str, val);
+    *dst = '\0';
+
+    return str;
+}
+
+/*
+ * INET api
+ * --------
+ * len = ip4_str_decode(str, len, dst)  : decode IPv4 addr-str
+ * len = ip6_str_decode(str, len, dst)  : decode IPv6 addr-str
+ * len = ip4_str_encode(addr, str, len) : encode ip4-addr to str
+ * len = ip6_str_encode(addr, flags, str, len) : encode ip6-addr to str
+ */
+#define IP4_ADDR_STRLEN sizeof("255.255.255.255")
+#define IP6_ADDR_STRLEN sizeof("ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255")
+#define PORT_STRLEN sizeof("65535")
+#define IP_ADDRPORT_STRLEN (IP6_ADDR_STRLEN + 3 + PORT_STRLEN - 1)
+
+// ip6_str_encode flags
+#define IP6_STR_ADDBRACK  (1 << 0) // add []
+#define IP6_STR_NOIPV4    (1 << 1) // dont use IPv4 mapped prefix
+#define IP6_STR_STRIPV4   (1 << 2) // strip IPv4 mapped prefix
+
+size_t ip4_str_decode(const char *str, size_t len, uint8_t dst[static 4]);
+size_t ip6_str_decode(const char *str, size_t len, uint8_t dst[static 16]);
+size_t ip4_str_encode(uint8_t addr[static 4], char *str, size_t len);
+size_t ip6_str_encode(uint8_t addr[static 16], int flags, char *str, size_t len);
+
 /*
  * Codec - Simple encoders/decoders
  * --------------------------------
+ * hex_to_nibble : convert hex-char to 4-bit nibble
  * enc_u32(wptr, value) : encode 32-bit at wptr return wptr+4
  * enc_u16(wptr, value) : encode 16-bit at wptr return wptr+2
  * enc_raw(wptr, buf, len) : encode buffer at wptr return wptr + len
  * dec_u32(buf) : decode a 32-bit value at buf
  * dec_u16(buf) : decode a 16-bit value at buf
  */
+
+static inline uint8_t __attribute__((always_inline)) hex_to_nibble(char ch) 
+{
+	// no multiply, cache hit or branches
+    return (ch & 0xf) + (ch >> 6) + ((ch >> 6) << 3);
+}
+
 static inline uint8_t *enc_u32(uint8_t *wptr, uint32_t value)
 {
     *wptr++ = value >> 24;
@@ -282,13 +424,30 @@ struct strbuf {
 /* strbuf api
  * ----------
  * STRBUF_INIT(buf, size) : load buffer with memory addres and size
+ * strbuf_wptr(buf)  : return write ptr
  * strbuf_avail(buf) : return byte size of writable space
  * strbuf_used(buf) :  retrun byte size of readable data
  * strbuf_putmem(buf, mem, len) : append mem  to buffer
  * strbuf_putstr(buf, str) : append str to to buffer
  * strbuf_putsep(buf, sep, mem, len) : append mem to buffer, add sep if not empty 
+ * strbuf_putnul(buf, sep, mem, len) : append mem to buffer, add nul
  */
 #define STRBUF_INIT(_buf, _size) { _buf, _buf, _buf + _size } 
+
+static inline char *strbuf_wptr(struct strbuf *buf)
+{
+    return buf->wptr;
+}
+
+static inline int strbuf_getch(struct strbuf *buf)
+{
+	return *buf->wptr;
+}
+
+static inline int strbuf_end(struct strbuf *buf)
+{
+	return buf->wptr >= buf->end;
+}
 
 static inline size_t strbuf_avail(struct strbuf *buf)
 {
@@ -312,7 +471,7 @@ static inline struct strbuf *strbuf_putmem(struct strbuf *buf, const char *mem, 
 
 static inline struct strbuf *strbuf_putstr(struct strbuf *buf, const char *str)
 {
-    return str ? strbuf_putmem(buf, str, strlen(str)) : NULL;
+    return str ? strbuf_putmem(buf, str, strlen(str)) : buf;
 }
 
 static inline struct strbuf *strbuf_putsep(struct strbuf *buf, int sep, const char *mem, size_t len)
@@ -322,6 +481,14 @@ static inline struct strbuf *strbuf_putsep(struct strbuf *buf, int sep, const ch
         *buf->wptr++ = sep;
     }
     return strbuf_putmem(buf, mem, len);
+}
+
+static inline struct strbuf *strbuf_putnul(struct strbuf *buf, const char *mem, size_t len)
+{
+    if (len + 1 > strbuf_avail(buf)) return NULL;
+    strbuf_putmem(buf, mem, len);
+    *buf->wptr++ = '\0';
+    return buf;
 }
 
 /*
@@ -347,17 +514,23 @@ struct str_slice {
  * slice_make_cstr(str)   : return a slice set with str
  * slice_copy(str)        : return a copy of str 
  * slice_cmp_cstr(str, cstr, len)    : return 1 if strs match else 0
+ * slice_cmp(str1, str2)  : compare str-slice
  * slice_unbracket(str, left, right) : strip left and right chars from str
+ * slice_chop(str, ch)    : chop str-slice at ch if founc
  * slice_rsplit(src, ch)  : split string from right at ch if found
  * slice_split(src, ch)   : split string from left if ch found
  * slice_isnumeric(str)   : true if slice is numeric 
+ * slice_tou32(str)       : convert str-slice to uint32_t
  * slice_ltrim(str)       : left trim leading whitespace
  * slice_rtrim(str)       : right trim trailing whitespace    
  * slice_trim(str)        : trim left and right whitespace
  * slice_toupper(str)     : upper case str
  * slice_tolower(str)     : lowwer case str
  * slice_strdup(str)      : create a memory copy of str
- * slice_dbj2a_hash(str)  : create a dbj2a hash of str
+ * slice_memcpy(buf,len,str) : copy slice to buf
+ * slice_dbj2a_hash(str)     : create a dbj2a hash of str
+ * slice_ip4_decode(str, dst) : decode IPv4 str
+ * slice_ip6_decode(str, dst) : decode IPv6 str
  */
 #define SLICE(x) (int) (x).len, (x).ptr
 
@@ -386,12 +559,25 @@ static inline int slice_cmp_cstr(struct str_slice str, const char *cstr, size_t 
     return len == str.len && memcmp(str.ptr, cstr, len) == 0;
 }
 
+static inline int slice_cmp(struct str_slice str1, struct str_slice str2)
+{
+    return str1.len == str2.len && memcmp(str1.ptr, str2.ptr, str1.len);
+}
+
 static inline struct str_slice slice_unbracket(struct str_slice str, int left, int right)
 {
     if (str.len && str.ptr[0] == left) {
         str.ptr++; str.len--;
         if (str.ptr[str.len] == right) str.len--;
     }
+
+    return str;
+}
+
+static inline struct str_slice *slice_chop(struct str_slice *str, int ch)
+{
+    char *ptr = memchr(str->ptr, ch, str->len);
+    if (ptr) str->len = ptr - str->ptr;
 
     return str;
 }
@@ -437,6 +623,11 @@ static inline int slice_isnumeric(struct str_slice str)
     return str_isnumeric(str.ptr, str.len);
 }
 
+static inline uint32_t slice_tou32(struct str_slice str)
+{
+    return str_tou32(str.ptr, str.len);
+}
+
 static inline struct str_slice *slice_ltrim(struct str_slice *str)
 {
     while (str->len && iswhite(*str->ptr)) {
@@ -475,12 +666,21 @@ static inline struct str_slice slice_tolower(struct str_slice str)
     return str;
 }
 
-char *slice_strdup(const struct str_slice str);
-
 static inline uint64_t slice_dbj2a_hash(const struct str_slice str)
 {
     return dbj2a_hash(str.ptr, str.len);
 }
+
+static inline size_t slice_ip4_decode(const struct str_slice str, uint8_t dst[static 4])
+{
+    return ip4_str_decode(str.ptr, str.len, dst);
+}
+
+static inline size_t slice_ip6_decode(const struct str_slice str, uint8_t dst[static 16])
+{
+    return ip6_str_decode(str.ptr, str.len, dst);
+}
+
 
 /*
  * Setter API

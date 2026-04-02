@@ -39,4 +39,4 @@ spec:
           - "db-service"
           - "--port"
           - "6379"
-          - "--log"
+          - "--log-line"

@@ -158,15 +158,16 @@ static int set_fd(struct simple_sock *sock, int idx, struct pollfd *fds, int eve
 }
 
 /* cmd-line */
-enum { opt_help, opt_host, opt_port, opt_log, opt_argv };
+enum { opt_help, opt_host, opt_port, opt_logline, opt_loglevel, opt_argv };
 
 static struct cmd_opt opts[] = {
     // name, desc, def, has_arg
-    { "--help",     "This help", 0, 0 },
-    { "--hostname", "hostname to connect to", 0, 1 },
-    { "--port",     "port to listen on", SERV_PORT_STR, 1 },
-    { "--log",      "log request/response", 0, 0 },
-    { "--argv",     "Dump argv to stdout",  0,  0 },
+    { "--help",      "This help", 0, 0 },
+    { "--hostname",  "hostname to connect to", 0, 1 },
+    { "--port",      "port to listen on", SERV_PORT_STR, 1 },
+    { "--log-line",  "log req|rsp lines", 0, 0  },
+    { "--log-level", "logging level", STR(APP_LOGLEVEL), 1  },
+    { "--argv",      "Dump argv to stdout",  0,  0 },
     { NULL }
 };
 
@@ -179,7 +180,9 @@ int main(int argc, char *argv[])
 {
     const char *hostname = NULL;
     const char *port = SERV_PORT_STR;
-    int log = 0;
+    int log_line = 0;
+
+    log_init(NULL, APP_LOGLEVEL);
 
     // process cmd-line options
     int rc;
@@ -189,7 +192,8 @@ int main(int argc, char *argv[])
         case opt_help: prog_usage(argv[0], opts, examples); exit(0);
         case opt_host: hostname = parser.value; break;
         case opt_port: port = parser.value; break;
-        case opt_log:  log = 1; break;
+        case opt_logline:  log_line = 1; break;
+        case opt_loglevel: rc = opt_setint(&log_level, &parser); break;
         case opt_argv: log_argv("LOG", argc, argv); break;
         }
     }
@@ -210,8 +214,8 @@ int main(int argc, char *argv[])
     // at this stage safe to proceed
     log_info("+", "Connectivity test: OK");
 
-    const char *log_req = log ? "send req" : NULL;
-    const char *log_rsp = log ? "recv rsp" : NULL;
+    const char *log_req = log_line ? "send req" : NULL;
+    const char *log_rsp = log_line ? "recv rsp" : NULL;
         
     // setup stdout,stdin for send,recv
     struct my_pipe user = MY_PIPE_INIT(user, STDOUT_FILENO, STDIN_FILENO);

@@ -78,7 +78,7 @@ int run_cmd(const char *fmt, ...)
     va_end(args);
 
     if (rc < 0) return log_errno_rf("vsnprintf failed");
-    if (verbose) log_info("LOG", "%s", cmd_str);
+    log_debug("%s", cmd_str);
 
     rc = system(cmd_str);
     if (rc == -1) {
@@ -209,9 +209,7 @@ int sync_pipe_read(int *fd,
     const char *who, const char *what, const char *name,
     pid_t pid)
 {
-    if (verbose)  {
-        log_info("LOG", "%s pipe-read %s (name=%s pid=%d)", who, what, name, pid);
-    }
+    log_debug("%s pipe-read %s (name=%s pid=%d)", who, what, name, pid);
 
     // wait for peer to write
     ssize_t nr;
@@ -232,9 +230,8 @@ int sync_pipe_read(int *fd,
     if (nr == 0) {
         return log_error_rc(LAU_EOF, "%s pipe-read %s eof for %s pid %d", who, what, name, pid);
     }
-    if (verbose) {
-        log_info("LOG", "%s pipe-read done %s (name=%s pid=%d)", who, what, name, pid);
-    }
+
+    log_debug("%s pipe-read done %s (name=%s pid=%d)", who, what, name, pid);
 
     return 0;
 }
@@ -245,9 +242,7 @@ int sync_pipe_write(int *fd,
     const char *who, const char *what, const char *name,
     pid_t pid)
 {
-    if (verbose)  {
-        log_info("LOG", "%s pipe-write %s (name=%s pid=%d)", who, what, name, pid);
-    }
+    log_debug("%s pipe-write %s (name=%s pid=%d)", who, what, name, pid);
 
     // wake up peer
     while (write(*fd, "!", 1) == -1)  {
@@ -264,9 +259,7 @@ int sync_pipe_write(int *fd,
         return log_errno_rf("%s pipe-close %s failed for %s pid %d", who, what, name, pid);
     }
 
-    if (verbose)  {
-        log_info("LOG", "%s pipe-write done %s (name=%s pid=%d)", who, what, name, pid);
-    }
+    log_debug("%s pipe-write done %s (name=%s pid=%d)", who, what, name, pid);
 
     // all done
     return 0;
@@ -543,9 +536,7 @@ int mount_rootfs(const char *rootfs_dir, const char *rootfs_path)
 // mount a host binary into container filesystem - no file copy
 int mount_cmd(const char *host_path, const char *rootfs_path)
 {
-    if (verbose) {
-        log_info("LOG", "mount_cmd (host=%s, rootfs=%s)", host_path, rootfs_path);
-    }
+    log_debug("mount_cmd (host=%s, rootfs=%s)", host_path, rootfs_path);
 
     // create an empty file - touch rootfs_path
     int fd = open(rootfs_path, O_CREAT | O_WRONLY, 0755);

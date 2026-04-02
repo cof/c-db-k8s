@@ -162,9 +162,7 @@ int lau_child_set_veth(struct lau_child *child, const char *name, const char *pr
  */
 int lau_child_net_setup(struct lau_child *child)
 {
-    if (verbose) {
-        log_info("LOG", "lau setup-network (name=%s ipaddr=%s" , child->name, child->ip_addr);
-    }
+    log_debug("lau setup-network (name=%s ipaddr=%s" , child->name, child->ip_addr);
 
     // TODO move this lot into ns_util.c
     RUN_CMD("nsenter -t %d -n ip link set %s name eth0", child->pid, child->veth_name);
@@ -302,10 +300,8 @@ int lau_child_postrun(struct lau_child *child, int netns_fd)
 // child process - set security
 static int setup_priv(struct lau_child *child)
 {
-    if (verbose) {
-        log_info("LOG", "Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)", 
-            child->name, child->pid, child->uid, child->gid);
-    }
+    log_debug("Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)", 
+        child->name, child->pid, child->uid, child->gid);
 
     if (child->drop_caps && drop_bounding_set(child->name)) return -1;
     if (child->drop_sudo && drop_sudo(child->name, child->uid , child->gid)) return -1;
@@ -347,9 +343,7 @@ int lau_child_start(void *arg)
     struct lau_child *child = arg;
 
     child->pid = getpid();
-    if (verbose) {
-        log_info("LOG", "Container (name=%s pid=%d) started", child->name, child->pid);
-    }
+    log_debug("Container (name=%s pid=%d) started", child->name, child->pid);
 
     if (set_identity(child->name) != 0) _exit(1);
     if (child_wait_go(child) != 0) _exit(2);

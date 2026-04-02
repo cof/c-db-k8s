@@ -37,8 +37,7 @@ struct simple_client {
     struct simple_sock sock;
     struct list_elem node;
     struct simple_server *parent;
-    unsigned int log_req : 1; // log request
-    unsigned int log_rsp : 1; // log response
+    unsigned int log_line : 1; // log req|rsp lines
     unsigned int snd_prompt : 1; // send prompt after rsp
 };
 
@@ -53,7 +52,7 @@ struct simple_server {
     char *database;
     //  state
     int epoll_fd; // epoll_create1
-    unsigned int log_line : 1; // log request, response
+    unsigned int log_line : 1; // log req|rsp lines
 };
 
 static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uint32_t events);
@@ -72,7 +71,7 @@ static int send_line(struct simple_client *client, struct str_slice line)
 
 static int send_rsp(struct simple_client *client, struct str_slice rsp)
 {
-    if (client->log_rsp) {
+    if (client->log_line) {
         log_info("LOG", "send-rsp: %.*s", SLICE(rsp));
     }
 
@@ -213,15 +212,13 @@ static void client_destroy(struct simple_client *client, int can_log)
 }
 
 // create client for fd + addr
-struct simple_client *client_create(int fd, struct sockaddr_in6 *addr)
+struct simple_client *client_create(int fd, struct sock_addr *addr)
 {
     struct simple_client *client;
 
     client = malloc(sizeof(*client));
-    if (!client) {
-        return log_errno_rn("Create client failed");
-    }
-    memset(client, 0,  sizeof(*client));
+    if (!client) return log_errno_rn("Create client failed");
+    memset(client, 0, sizeof(*client));
 
     // use config.h settings
     sock_init(&client->sock, fd, addr, 
@@ -271,7 +268,7 @@ void do_client_recv(struct simple_client *client)
         int is_eof = sock_iseof(&client->sock);
         // recv cmd-line
         while ((rc = sock_recv_line(&client->sock, &line, is_eof)) > 0) {
-            if (client->log_req) log_info("LOG", "recv-req: %.*s", SLICE(line));
+            if (client->log_line) log_info("LOG", "recv-req: %.*s", SLICE(line));
             rc = process_cli_cmd(client, line);
             if (rc != 0) break;
         }
@@ -341,7 +338,7 @@ static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uin
 // accept incoming client 
 struct simple_client *server_accept(struct simple_server *server)
 {
-    struct sockaddr_in6 addr;
+    struct sock_addr addr;
 
     int fd = sock_accept(&server->sock, &addr);
     if (fd == -1) {
@@ -357,8 +354,7 @@ struct simple_client *server_accept(struct simple_server *server)
     }
 
     client->parent = server;
-    client->log_req = server->log_line;
-    client->log_rsp = server->log_line;
+    client->log_line = server->log_line;
 
     // register with epoll - readable events only
     if (poll_ctrl(server, &client->sock, RD_EVENTS) != 0) { 
@@ -507,16 +503,17 @@ static int setup_database(struct simple_server *serv)
 
 /* cmd-line */
 
-enum { opt_help, opt_host, opt_port, opt_dbase, opt_log, opt_argv };
+enum { opt_help, opt_host, opt_port, opt_dbase, opt_logline, opt_loglevel, opt_argv };
 
 struct cmd_opt opts[] = {
     // name, desc, def, has_arg
-    { "--help",    "This help",              0,    0  },
-    { "--hostname", "hostname to listen on", 0,    1  },
-    { "--port",     "port to listen on",     SERV_PORT_STR, 1  },
-    { "--database", "Path to database file", 0,        1  },
-    { "--log",      "log request/response",  0,        0  },
-    { "--argv",     "Dump argv to stdout",   0,        0  },
+    { "--help",      "This help",              0,    0  },
+    { "--hostname",  "hostname to listen on", 0,    1  },
+    { "--port",      "port to listen on",     SERV_PORT_STR, 1  },
+    { "--database",  "Path to database file", 0, 1  },
+    { "--log-line",  "log req|rsp lines",     0, 0  },
+    { "--log-level", "logging level ",        STR(APP_LOGLEVEL), 1  },
+    { "--argv",      "Dump argv to stdout",   0, 0  },
     { NULL }
 };
 
@@ -537,7 +534,8 @@ static int server_parse_argv(struct simple_server *serv, int argc, char *argv[])
         case opt_host:  rc = opt_setstr(&serv->hostname, &parser); break;
         case opt_port:  rc = opt_setstr(&serv->port, &parser); break;
         case opt_dbase: rc = opt_setstr(&serv->database, &parser); break;
-        case opt_log:   serv->log_line = 1; break;
+        case opt_logline:  serv->log_line = 1; break;
+        case opt_loglevel: rc = opt_setint(&log_level, &parser); break;
         case opt_argv:  log_argv("LOG", argc, argv); break;
         }
         if (rc < 0) break;
@@ -607,6 +605,8 @@ int main(int argc, char *argv[])
 {
     struct simple_server *serv = NULL;
     int ec = EXIT_FAILURE;
+
+    log_init(NULL, APP_LOGLEVEL);
 
     if (!(serv = server_create())) { ec = 1; goto done; }
     if (server_init(serv))    { ec = 2; goto done; }

@@ -35,62 +35,7 @@
 #include "rwbuf.h"
 #include "sock.h"
 
-// conver sock_addr to str
-static int sockaddr_tobuf(struct sockaddr *addr, socklen_t addr_len, char *buf, size_t buf_len)
-{
-    // convert address/port to string
-    char host_buf[NI_MAXHOST];
-    char port_buf[NI_MAXSERV];
 
-    int rc = getnameinfo(addr, addr_len, 
-        host_buf, sizeof(host_buf),
-        port_buf, sizeof(port_buf),
-        NI_NUMERICHOST | NI_NUMERICSERV
-    );
-
-    if (rc != 0) {
-        log_error("get name+port string - %s", gai_strerror(rc));
-        return -1;
-    }
-
-    if (buf_len == 0) return 0;
-
-    // copy host
-    char *hostname = host_buf;
-    int add_bracket = addr->sa_family == AF_INET6;
-    struct str_slice prefix = slice_make_cstr("::ffff:");
-    if (!strncmp(hostname, prefix.ptr, prefix.len)) {
-        // remove IPv4-mapped IPv6 prefix
-        hostname += prefix.len;
-        add_bracket = 0;
-    }
-    size_t wlen = 0;
-    size_t len = strlen(hostname);
-    size_t need_len = len;
-    if (add_bracket) need_len += 2;
-    if (wlen + need_len > buf_len) {
-        return log_error_rf("No space for hostname");
-    }
-    if (add_bracket) buf[wlen++] = '[';
-    memcpy(buf + wlen, hostname, len);
-    wlen += len;
-    if (add_bracket) buf[wlen++] = ']';
-
-    // copy port:
-    char *port = port_buf;
-    len = strlen(port);
-    need_len = len + 2;
-    if (wlen + need_len > buf_len) {
-        return log_error_rf("No space for port");
-    }
-    buf[wlen++] = ':';
-    memcpy(buf + wlen, port, len);
-    wlen += len;
-
-    buf[wlen] = '\0';
-
-    return wlen;
-}
 
 /*
  * resolv_addr(mode,host,port) : resolv host,port to list of IP address + port
@@ -145,12 +90,12 @@ static struct addrinfo *resolv_addr(uint32_t mode, const char *host, const char 
 
 // init state for new or accepted file descriptor
 int sock_init(struct simple_sock *sock,
-    int fd, struct sockaddr_in6 *addr,
+    int fd, struct sock_addr *addr,
     size_t max_line, size_t buf_size,
     size_t min_size, size_t max_size)
 {
     sock->fd = fd;
-    if (addr) memcpy(&sock->addr, addr, sizeof(*addr));
+    if (addr) sock->addr = *addr;
     sock->max_line = max_line;
     sock->min_size = min_size;
 
@@ -170,6 +115,119 @@ void sock_deinit(struct simple_sock *sock, int can_log)
     rwbuf_deinit(&sock->recv_buf);
 }
 
+// create socket-fd for mode
+int sock_create(uint32_t mode)
+{
+    int domain = mode & (SOCK_IPV4 | SOCK_IPV6);
+    switch(domain) {
+    case SOCK_IPV4: domain = AF_INET; break;
+    case SOCK_IPV6: domain = AF_INET6; break;
+    default: errno = EINVAL; return -1;
+    }
+
+    int type = mode & (SOCK_TCP | SOCK_UDP | SOCK_FILE);
+    switch(type) {
+    case SOCK_TCP: type = SOCK_STREAM; break;
+    case SOCK_UDP: type = SOCK_DGRAM; break;
+    default: errno = EINVAL; return -1;
+    }
+
+    int proto = mode & (SOCK_TCP | SOCK_UDP | SOCK_FILE);
+    switch(type) {
+    case SOCK_TCP: proto = 0; break;
+    case SOCK_UDP: proto = 0; break;
+    default: errno = EINVAL; return -1;
+    }
+
+    return socket(domain, type, proto);
+}
+
+// load sock_addr with sa
+int sock_addr_load(struct sock_addr *addr, const struct sockaddr *sa, socklen_t sa_len)
+{
+    memset(addr, 0, sizeof(*addr));
+
+    if (sa->sa_family == AF_INET && sa_len == sizeof(struct sockaddr_in)) {
+        struct sockaddr_in *sin =  (void *) sa;
+        addr->type   = SOCK_IPV4;
+        addr->port   = sin->sin_port;
+        addr->u32[0] = sin->sin_addr.s_addr;
+        return SOCK_IPV4;
+    }
+
+    if (sa->sa_family == AF_INET6 && sa_len == sizeof(struct sockaddr_in6)) {
+    	struct sockaddr_in6 *sin6  = (void *) sa;
+        addr->type = SOCK_IPV6;
+        addr->port = sin6->sin6_port;
+		memcpy(&addr->v6, &sin6->sin6_addr, 16);
+        return SOCK_IPV6;
+    }
+
+    // not supported
+    return 0;
+}
+
+// load ss with sock_addr
+static socklen_t sock_store_load(struct sockaddr_storage *storage, struct sock_addr *addr)
+{
+    memset(storage, 0, sizeof(*storage));
+
+	if (addr->type & SOCK_IPV4) {
+    	struct sockaddr_in  *sin  = (void *) storage;
+        sin->sin_family = AF_INET;
+		sin->sin_port = addr->port;
+		sin->sin_addr.s_addr = addr->u32[0];
+        return sizeof(struct sockaddr_in);
+	}
+
+	if (addr->type & SOCK_IPV4) {
+    	struct sockaddr_in6  *sin6 = (void *) storage;
+        sin6->sin6_family = AF_INET6;
+		sin6->sin6_port = addr->port;
+		memcpy(&sin6->sin6_addr, &addr->v6, 16);
+        return sizeof(struct sockaddr_in6);
+    }
+
+	// unknown type
+    return 0;
+}
+
+int sock_connect(struct simple_sock *sock, uint32_t mode, struct sock_addr *addr)
+{
+    // convert sock_addr to ABI
+    struct sockaddr_storage store;
+    socklen_t store_len = sock_store_load(&store, addr);
+    if (store_len == 0) {
+        if (log_level) log_error("store_load %d failed", addr->type);
+        return SOCK_ERROR;
+    }
+
+    // create socket fd
+    sock->fd = sock_create(mode);
+    if (sock->fd == -1) {
+        if (log_level) log_errno("sock_create(%d) failed", addr->type);
+        return SOCK_ERROR;
+    }
+
+    // set-mode/check-connect
+    sock->mode = mode;
+    if (mode & SOCK_UDP && (mode & SOCK_UDPCON) == 0) return 0;
+
+    // connect to addr
+    int rc = connect(sock->fd, (struct sockaddr *) &store, store_len);
+    if (rc == -1) {
+        if (log_level) log_errno("connect(%d) failed", addr->type);
+        close(sock->fd);
+        sock->fd = -1;
+        return SOCK_ERROR;
+    }
+
+    memcpy(&sock->addr, addr, sizeof(sock->addr));
+
+    // connected
+    return 0;
+}
+
 // connect to hostname port - e,g sock_connect(sock, SOCK_TCP, "localhost", 80)
 int sock_client(struct simple_sock *sock, uint32_t mode, const char *hostname, const char *port)
 {
@@ -181,17 +239,17 @@ int sock_client(struct simple_sock *sock, uint32_t mode, const char *hostname, c
     for (struct addrinfo *ai = addr_list; ai; ai = ai->ai_next) {
         sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (sock_fd == -1) continue;
+        sock->fd = sock_fd;
+        sock->mode = mode;
         if (mode & SOCK_UDP && (mode & SOCK_UDPCON) == 0) break;
         int rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
         if (rc != -1) {
             // connected
-            sock->fd = sock_fd;
-            sock->mode = mode;
-            memcpy(&sock->addr, ai->ai_addr, sizeof(sock->addr));
+            sock_addr_load(&sock->addr, ai->ai_addr, ai->ai_addrlen);
             break;
         }
         close(sock_fd);
-        sock_fd = -1;
+        sock->fd = sock_fd = -1;
     }
     freeaddrinfo(addr_list);
 
@@ -215,14 +273,9 @@ int sock_client(struct simple_sock *sock, uint32_t mode, const char *hostname, c
 // create listener socket fd using resolved IP address + port
 static int sock_listen_addr(struct simple_sock *sock, struct addrinfo *res)
 {
-    char tmp[100];
-    char *addr_str = "?";
-
+    char tmp[IP6_ADDR_STRLEN];
     int rc = sockaddr_tobuf(res->ai_addr, res->ai_addrlen, tmp, sizeof(tmp));
-    if (rc != -1) {
-        // got an address
-        addr_str = tmp;
-    }
+    const char *addr_str = rc <= 0 ? "<null>" : tmp;
 
     int sock_type = res->ai_socktype; 
     if (sock->mode & SOCK_NONBLK) sock_type |= SOCK_NONBLOCK;
@@ -235,7 +288,8 @@ static int sock_listen_addr(struct simple_sock *sock, struct addrinfo *res)
     }
 
     // copy addr
-    memcpy(&sock->addr, res->ai_addr, sizeof(sock->addr));
+    rc = sock_addr_load(&sock->addr, res->ai_addr, res->ai_addrlen);
+    if (rc == 0) return log_error_rf("Unsupported res %d", res->ai_addrlen);
 
     int opt;
     if (sock->mode & SOCK_ANY) {
@@ -292,15 +346,22 @@ int sock_server(struct simple_sock *sock, uint32_t mode, const char *host, const
     return rc;
 }
 
-int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr)
+int sock_accept(struct simple_sock *sock, struct sock_addr *addr)
 {
-    socklen_t addr_len = sizeof(*addr);
+    struct sockaddr_storage store;
+    socklen_t store_len = sizeof(store);
 
     int flags = sock->mode & SOCK_NONBLK ? SOCK_NONBLOCK : 0;
-    int fd = accept4(sock->fd, addr, &addr_len, flags);
+    int fd = accept4(sock->fd, (struct sockaddr *) &store, &store_len, flags);
     if (fd == -1) {
         /// EAGAIN|EWOULDBLOCK - means no more pending accepts ..
         return -1;
+    }
+
+    int rc = sock_addr_load(addr, (struct sockaddr *) &store, store_len);
+    if (rc == 0) {
+        close(fd);
+        return log_error_rf("sock addr_len %d unsupported", store_len);
     }
 
     // turn off nagle
@@ -747,24 +808,65 @@ int sock_recv_line(struct simple_sock *sock, struct str_slice *line, int eof)
 }
 
 
-// format addr to address:port string
-char *sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len)
+// uses getnameinfo - todo delete
+int sockaddr_tobuf(struct sockaddr *addr, socklen_t addr_len, char *buf, size_t buf_len)
 {
-    static char bufs[16][40];
-    static int idx;
+    // convert address/port to string
+    char host_buf[NI_MAXHOST];
+    char port_buf[NI_MAXSERV];
 
-    char *buf = bufs[idx];
-    size_t len = sizeof(bufs[0]);
-    idx = (idx + 1) & 15;
+    int rc = getnameinfo(addr, addr_len, 
+        host_buf, sizeof(host_buf),
+        port_buf, sizeof(port_buf),
+        NI_NUMERICHOST | NI_NUMERICSERV
+    );
 
-    int rc = sockaddr_tobuf(addr, addr_len, buf, len);
-    if (rc == -1) return "<null>";
+    if (rc != 0) {
+        log_error("get name+port string - %s", gai_strerror(rc));
+        return -1;
+    }
 
-    return buf;
+    if (buf_len == 0) return 0;
+
+    // copy host
+    char *hostname = host_buf;
+    int add_bracket = addr->sa_family == AF_INET6;
+    struct str_slice prefix = slice_make_cstr("::ffff:");
+    if (!strncmp(hostname, prefix.ptr, prefix.len)) {
+        // remove IPv4-mapped IPv6 prefix
+        hostname += prefix.len;
+        add_bracket = 0;
+    }
+    size_t wlen = 0;
+    size_t len = strlen(hostname);
+    size_t need_len = len;
+    if (add_bracket) need_len += 2;
+    if (wlen + need_len > buf_len) {
+        return log_error_rf("No space for hostname");
+    }
+    if (add_bracket) buf[wlen++] = '[';
+    memcpy(buf + wlen, hostname, len);
+    wlen += len;
+    if (add_bracket) buf[wlen++] = ']';
+
+    // copy port:
+    char *port = port_buf;
+    len = strlen(port);
+    need_len = len + 2;
+    if (wlen + need_len > buf_len) {
+        return log_error_rf("No space for port");
+    }
+    buf[wlen++] = ':';
+    memcpy(buf + wlen, port, len);
+    wlen += len;
+
+    buf[wlen] = '\0';
+
+    return wlen;
 }
 
-//  get addr str for sock fd
-int sockfd_get_addr(int sock_fd, char *buf, int len)
+// get addr str for sock fd
+int sockfd_get_addr(int sock_fd, char *buf, size_t len)
 {
     struct sockaddr_storage addr;
     socklen_t addr_len = sizeof(addr);
@@ -779,20 +881,73 @@ int sockfd_get_addr(int sock_fd, char *buf, int len)
     return sockaddr_tobuf((struct sockaddr *) &addr, addr_len, buf, len);
 }
 
-// format sock to address:port or fd info string
+// format addr to "address:port"  or "fd %d"
+char *sock_addr_tostr(struct sock_addr *addr)
+{
+    static char bufs[16][IP_ADDRPORT_STRLEN];
+    static int idx;
+
+    char *buf = bufs[idx];
+    size_t len = sizeof(bufs[0]);
+    idx = (idx + 1) & 15;
+
+    int addr_type = addr->type & (SOCK_IPV4 | SOCK_IPV6);
+    switch (addr_type) {
+    case SOCK_IPV4: { // a.b.c.d:port
+        char *str = buf;
+        str += ip4_str_encode(addr->v4, str, len); 
+        *str++ = ':'; 
+        str = uint16_toa(str, __builtin_bswap16(addr->port));
+        str = '\0';
+        break;
+    }
+    case SOCK_IPV6: { // [::]:port
+        char *str = buf;
+        str += ip6_str_encode(addr->v6, IP6_STR_ADDBRACK | IP6_STR_STRIPV4, str, len);
+        *str++ = ':'; 
+        str = uint16_toa(str, __builtin_bswap16(addr->port));
+        str = '\0';
+        break;
+    }
+    default: 
+       buf = "<null>";
+    }
+
+    return buf;
+}
+
+// convert fd to str
+static char *sock_fd_tostr(int sock_fd)
+{
+    static char bufs[16][40];
+    static int idx;
+
+    char *buf = bufs[idx];
+    //size_t len = sizeof(bufs[0]);
+    idx = (idx + 1) & 15;
+
+    char tmp[20];
+    char *fd_str = itoa(sock_fd, tmp, sizeof(tmp));
+
+    char *str = buf;
+    str = str_memcpy(str, STR_LIT("fd = "));
+    str = str_cat(str, fd_str);
+
+    return buf;
+}
+
+// format sock-addr to string
 char *sock_tostr(struct simple_sock *sock)
 {
     if (sock->mode & SOCK_FILE) {
-        // not a socket
-        static char bufs[16][10];
-        static int idx;
-        char *buf = bufs[idx];
-        size_t len = sizeof(bufs[0]);
-        idx = (idx + 1) & 15;
-        buf[0] = '\0';
-        snprintf(buf, len, "fd %d", sock->fd);
-        return buf;
+        return sock_fd_tostr(sock->fd);
     }
+    return sock_addr_tostr(&sock->addr);
+}
 
-    return sockaddr_tostr((struct sockaddr *) &sock->addr, sizeof(sock->addr));
+int sock_ipstr_decode(struct str_slice str, struct sock_addr *addr)
+{
+    if (slice_ip4_decode(str, addr->v4)) return addr->type = SOCK_IPV4;
+    if (slice_ip6_decode(str, addr->v6)) return addr->type = SOCK_IPV6;
+    return 0;
 }

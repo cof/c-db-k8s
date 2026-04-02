@@ -24,6 +24,7 @@
  */
 #include <sys/wait.h>
 
+#include "config.h"
 #include "util.h"
 #include "log.h"
 #include "ns_util.h"
@@ -195,9 +196,7 @@ static int lau_child_wait_ready(struct lau_ctx *lau, struct lau_child *child)
 // sequential start - i.e. ensure DB server is up before client
 static int lau_sync_inorder(struct lau_ctx *lau) 
 {
-    if (verbose) {
-        log_info("LOG", "Launcher sync %d containers in order", lau->num_proc);
-    }
+    log_debug("Launcher sync %d containers in order", lau->num_proc);
 
     for (int i = 0; i < lau->num_proc; i++) {
         struct lau_child *child = lau->procs[i];
@@ -214,9 +213,7 @@ static int lau_sync_inorder(struct lau_ctx *lau)
 // parallel start - note clone/fork start order is undefined by OS
 static int lau_sync_parallel(struct lau_ctx *lau) 
 {
-    if (verbose) {
-        log_info("LOG", "Launcher sync %d containers in parallel", lau->num_proc);
-    }
+    log_debug("Launcher sync %d containers in parallel", lau->num_proc);
 
     for (int i = 0; i < lau->num_proc; i++) {
         int rc = lau_child_send_go(lau, lau->procs[i]);
@@ -234,9 +231,7 @@ static int lau_sync_parallel(struct lau_ctx *lau)
 // start a child container - return error count
 static int lau_start_child(struct lau_ctx *lau, struct lau_child *child)
 {
-    if (verbose) {
-        log_info("LOG", "Launcher starting %s", child->name);
-    }
+    log_debug("Launcher starting %s", child->name);
 
     int num_err = 0;
     if (lau_child_prerun(child)) num_err++;
@@ -251,9 +246,7 @@ static int lau_start_child(struct lau_ctx *lau, struct lau_child *child)
 // start all child containers - any errors will fail start
 static int lau_start_all(struct lau_ctx *lau)
 {
-    if (verbose) {
-        log_info("LOG", "Starting %d containers", lau->num_proc);
-    }
+    log_debug("Starting %d containers", lau->num_proc);
 
     for (int i = 0; i < lau->num_proc; i++) {
         int rc = lau_child_prep(lau->procs[i]);
@@ -271,11 +264,9 @@ static int lau_start_all(struct lau_ctx *lau)
 // link two containers using a single veth
 static int lau_link_veths(struct lau_ctx *lau, struct lau_child *x, struct lau_child *y)
 {
-    if (verbose) {
-        log_info("LOG", "Launcher create-cable (left=%s, right=%s)", x->name, y->name);
-    }
-
     int rc;
+
+    log_debug("Launcher create-cable (left=%s, right=%s)", x->name, y->name);
 
     // create veth for x and y
     if ((rc = lau_child_set_veth(x, x->name, lau->veth_prefix))) return rc;
@@ -346,10 +337,8 @@ static int lau_create_netns(struct lau_ctx *lau, struct lau_child *child)
 // load cmd file from host into container filesystem
 static int lau_load_cmd(struct lau_ctx *lau, struct lau_child *child)
 {
-    if (verbose) {
-        log_info("LOG", "Launcher load-cmd (name=%s, cmd=%s dst=%s)", 
-            child->name, child->cmd_path,  child->exec_path);
-    }
+    log_debug("Launcher load-cmd (name=%s, cmd=%s dst=%s)", 
+        child->name, child->cmd_path,  child->exec_path);
 
     int rc = -1;
 
@@ -394,9 +383,7 @@ static int lau_mount_overlay(struct lau_ctx *lau, struct lau_child *child)
 {
     if (!lau->use_overlay) return 0;
 
-    if (verbose) {
-        log_info("LOG", "Launcher add-overlay (name=%s)", child->name);
-    }
+    log_debug("lau add-overlay (name=%s)", child->name);
 
     int rc = mount_overlay(child->rootfs_path, 
         child->lowerdir ?: lau->rootfs_dir, 
@@ -423,10 +410,7 @@ static int lau_mount_rootfs(struct lau_ctx *lau, struct lau_child *child)
 
     child->rootfs_mounted = 1;
 
-    if (verbose) {
-        log_info("LOG", "Launcher mount-rootfs (name=%s rootfs=%s)", 
-            child->name, child->rootfs_path);
-    }
+    log_debug("lau mount-rootfs (name=%s rootfs=%s)", child->name, child->rootfs_path);
 
     return 0;
 }
@@ -482,10 +466,7 @@ static int lau_create_storedir(struct lau_ctx *lau, struct lau_child *child)
 
     child->storedir_created = 1;
 
-    if (verbose) {
-        log_info("LOG", "Launcher create-storedir (name=%s storedir=%s)", 
-            child->name, child->store_dir);
-    }
+    log_info("lau create-storedir (name=%s storedir=%s)", child->name, child->store_dir);
 
     return 0;
 }
@@ -493,9 +474,7 @@ static int lau_create_storedir(struct lau_ctx *lau, struct lau_child *child)
 // check if we use use store-dir or store-dir/rootfs dir for child
 static int lau_check_rootfs(struct lau_ctx *lau)
 {
-    if (verbose) {
-        log_info("LOG", "Launcher check-rootfs");
-    }
+    log_debug("Lau check-rootfs");
 
     if (!lau->rootfs_dir) return 0;
 
@@ -527,9 +506,7 @@ static int lau_open_host_netns(struct lau_ctx *lau)
 // setup infrastucture
 static int lau_setup_all(struct lau_ctx *lau)
 {
-    if (verbose) {
-        log_info("LOG", "Launcher setup infrastucture");
-    }
+    log_debug("Launcher setup infrastucture");
 
     RUN(lau_open_host_netns(lau));
     
@@ -589,6 +566,8 @@ static struct lau_child *lau_add_child(struct lau_ctx *lau, struct lau_config *c
 
     lau->procs[lau->num_proc++] = child;
 
+    log_debug("lau added child %d %s", lau->num_proc, child->name);
+
     return child;
 }
 
@@ -633,7 +612,7 @@ static int lau_apply_cfg(struct lau_ctx *lau)
 // TODO use xmacros
 enum {
     opt_help,
-    opt_log,
+    opt_loglevel,
     opt_base_dir,
     opt_src_dir,
     opt_netns_dir,
@@ -649,7 +628,7 @@ enum {
 static struct cmd_opt opts[] = {
     // name, desc, def, has_arg
     { "--help", "This help", 0, 0 },
-    { "--log", "debug mode",  0, 0 },
+    { "--log-level", "logging level", STR(APP_LOGLEVEL), 1  },
     { "--base-dir",   "Path for all run-time state", "cwd", 1 },
     { "--src-dir",    "Path where cmd binarys live", "cwd", 1 },
     { "--netns-dir",  "Network namespace dir", 0,  1 },
@@ -677,7 +656,7 @@ static int lau_parse_argv(struct lau_ctx *lau, int argc, char *argv[])
     while ( (rc = cmd_argv_next(&parser)) >= 0) {
         switch(rc) {
         case opt_help: prog_usage(argv[0], opts, examples); exit(0);
-        case opt_log:  verbose = 1; break;
+        case opt_loglevel:    rc = opt_setint(&log_level, &parser); break;
         case opt_base_dir:    rc = opt_setstr(&lau->base_dir, &parser); break;
         case opt_src_dir:     rc = opt_setstr(&lau->src_dir, &parser); break;
         case opt_netns_dir:   rc = opt_setstr(&lau->netns_dir, &parser); break;
@@ -698,6 +677,8 @@ static int lau_parse_argv(struct lau_ctx *lau, int argc, char *argv[])
 // set defaults
 int lau_init(struct lau_ctx *lau)
 {
+    log_level = LOG_ERROR;
+
     lau->max_proc = ARR_LEN(lau->procs);
     lau->start_order = START_ORDER == 1 ? 1 : 0;
     lau->start_delay = START_DELAY;
@@ -803,6 +784,8 @@ static struct lau_config client_cfg = {
 int main(int argc, char *argv[])
 {
     int ec = -1;
+
+    log_init(NULL, APP_LOGLEVEL);
 
     // create state
     struct lau_ctx *lau = lau_create();
