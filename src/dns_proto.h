@@ -277,7 +277,7 @@ struct dns_msg {
     struct dns_sect ar_recs;
 };
 
-static inline void dns_msg_reset(struct dns_msg *msg)
+static inline struct dns_msg *dns_msg_reset(struct dns_msg *msg)
 {
     // reset hdr
     msg->hdr.id = 0;
@@ -293,6 +293,8 @@ static inline void dns_msg_reset(struct dns_msg *msg)
     msg->an_recs.num_rec = 0;
     msg->ns_recs.num_rec = 0;
     msg->ar_recs.num_rec = 0;
+
+    return msg;
 }
 
 // decode/encode a DNS message

@@ -130,7 +130,7 @@ $(BUILD_DIR):
 
 # API
 # ---
-API_SRCS = src/util.c src/log.c src/rwbuf.c src/dns_proto.c src/resolv.c src/sock.c
+API_SRCS = src/util.c src/log.c src/rwbuf.c src/dns_proto.c src/dns_resolv.c src/sock.c
 
 # server
 # ------
@@ -548,7 +548,6 @@ TEST_PORT = 7379
 TEST_ADDR = 127.0.0.1
 CMD_ARGS = --hostname $(TEST_ADDR) --port $(TEST_PORT)
 
-TEST_LOGFILE  = $(BUILD_DIR)/test.log
 TEST_REQFILE = tests/test_req.txt
 TEST_RSPFILE = tests/test_rsp.txt
 RES_REQFILE  = $(BUILD_DIR)/test_req.txt
@@ -576,7 +575,7 @@ SHUTDOWN_PID = \
 WAIT_PIDUP= \
 	echo " => Starting $(2) PID $(1)"; \
 	sleep $(TEST_WAITRUN); \
-	kill -0 $(1); \
+	kill -0 $(1) 2>/dev/null; \
 	if [ $$? -ne 0 ]; then \
 		echo " => $(2) died - check log"; \
 		exit 1; \
@@ -606,6 +605,7 @@ DIFF_FILE = \
 
 # test-server macros
 # ------------------
+SRV_LOGFILE = $(BUILD_DIR)/test_server.log
 CHK_SRVCMD = \
     total=$$((total + 1)); \
     echo "$(1)" | nc -w 1 -N $(TEST_ADDR) $(TEST_PORT) | grep -q "$$EXPECT"; \
@@ -757,7 +757,7 @@ test-cmds: test-server test-client
 .PHONY: test-server
 test-server: server
 	$(Q)echo "[+] Running $@"; \
-	./server $(CMD_ARGS) 1> $(TEST_LOGFILE) 2>&1 & SRV_PID=$$!; \
+	./server $(CMD_ARGS) 1> $(SRV_LOGFILE) 2>&1 & SRV_PID=$$!; \
 	$(call WAIT_PIDUP,$$SRV_PID,server); \
 	$(call WAIT_CONNUP,$(TEST_ADDR),$(TEST_PORT),$$SRV_PID); \
 	total=0; errors=0; \

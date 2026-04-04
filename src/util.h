@@ -172,16 +172,17 @@ static inline const char *str_def(const char *str, const char *def_str)
     return str && *str ? str : def_str;
 }
 
-static inline char *str_memcpy(char *dst, const char *src, int len)
+static inline void *str_memcpy(void *dst, const void *src, int len)
 {
-    const char *src_ptr = src;
-    const char *src_end = src + len;
+    uint8_t *dptr = dst;
+    const uint8_t *sptr = src;
+    const uint8_t *send = sptr + len;
 
-    while (src_ptr < src_end) {
-        *dst++ = *src_ptr++;
+    while (sptr < send) {
+        *dptr++ = *sptr++;
     }
 
-    return dst;
+    return dptr;
 }
 
 static inline char *str_cat(char *dst, const char *src)

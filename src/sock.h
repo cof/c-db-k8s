@@ -40,7 +40,7 @@
 #ifndef _SOCK_H_
 #define _SOCK_H_
 
-#include  <netinet/in.h>  // for sockaddr_in6
+#include "resolv.h"
 #include "rwbuf.h"
 
 // socket errors
@@ -52,7 +52,6 @@
 #define SOCK_TIMEOUT -4 // read|write timeout
 #define SOCK_CREATE  -5 // create socket failed
 
-#define SOCK_ADDRLEN 16
 
 #define MAX_EVENTS    10
 #define BUF_MINSIZE 4096
@@ -66,24 +65,25 @@
  * - behavior : SOCK_NONBLK|SOCK_RESUSE|SOCK_UDPCON|SOCK_PASSIVE
  * - resolver : SOCK_ANY|SOCK_IPV4|SOCK_IPV6|SOCK_NUMSERV
  */
-// port-type 
-#define SOCK_TCP      (1u << 0)  // stream network socket
-#define SOCK_UDP      (1u << 1)  // datagram nework socket
-#define SOCK_FILE     (1u << 2)  // pipe or standard I/O fd
-// behavior
-#define SOCK_NONBLK   (1u << 3)  // enable non-blocking state
-#define SOCK_REUSE    (1u << 4)  // set SO_RESUSEADDR for fast server restart
-#define SOCK_UDPCON   (1u << 5)  // Connected UDP socket (fixed remote peer)
-#define SOCK_PASSIVE  (1u << 6)  // Bind for inbound listener (server mode) 
+
 // addr-type
-#define SOCK_IPV4     (1u << 8)  // IPv4 only
-#define SOCK_IPV6     (1u << 9)  // IPv6 only
+#define SOCK_IPV4     (1u << 0)  // IPv4
+#define SOCK_IPV6     (1u << 1)  // IPv6
+// port-type 
+#define SOCK_TCP      (1u << 2)  // stream network socket
+#define SOCK_UDP      (1u << 3)  // datagram nework socket
+#define SOCK_FILE     (1u << 4)  // pipe or standard I/O fd
+// behavior
+#define SOCK_NONBLK   (1u << 5)  // enable non-blocking state
+#define SOCK_REUSE    (1u << 6)  // set SO_RESUSEADDR for fast server restart
+#define SOCK_UDPCON   (1u << 7)  // Connected UDP socket (fixed remote peer)
 // resolver
-#define SOCK_ANY      (1u << 7)  // Use IPv4, IPv6 or V4 mapped
-#define SOCK_NUMSERV  (1u << 10) // disable name resolution on port str
+#define SOCK_PASSIVE  (1u << 8)  // Bind for inbound listener (server mode) 
+#define SOCK_NUMPORT  (1u << 9)  // disable name resolution on port str
+#define SOCK_ANY      (1u << 10) // IPv4, IPv6 or dual port
 
 // helper for server
-#define SOCK_LISTEN (SOCK_REUSE | SOCK_ANY | SOCK_NUMSERV | SOCK_PASSIVE)
+#define SOCK_LISTEN (SOCK_REUSE | SOCK_ANY | SOCK_NUMPORT | SOCK_PASSIVE)
 
 struct sock_addr {
     uint16_t type; // mode flags
@@ -147,7 +147,6 @@ void sock_deinit(struct simple_sock *sock, int can_log);
  * - sock_sendfin : half close - send a TCP fin (if possible)
  * - sock_close   : close socket fd
  */
-int sock_connect(struct simple_sock *sock, uint32_t mode, struct sock_addr *addr);
 int sock_client(struct simple_sock *sock, uint32_t mode, const char *host, const char *port);
 int sock_server(struct simple_sock *sock, uint32_t mode, const char *host, const char *port);
 int sock_accept(struct simple_sock *sock, struct sock_addr *addr);
@@ -219,8 +218,8 @@ static inline int sock_recvbuf_consume(struct simple_sock *sock, size_t len)
  * Status and info
  * ---------------
  * sockaddr_tostr(addr, addr_len) : format addr to address:port str
- * sock_tostr(sock) : format sock to address:port str
- * sock_ip_parse(str, addr) : parse IP-addr str-slice
+ * sock_tostr(sock)               : format sock to address:port str
+ * sock_ipstr_decode(str, addr)   : parse IP-addr str-slice
  * -
  * sock_sendbuf_used(sock) : return pending bytes in send-buffer
  * sock_recvbuf_used(sock) : return available bytes in recv-buffer
@@ -235,7 +234,7 @@ static inline int sock_recvbuf_consume(struct simple_sock *sock, size_t len)
  * sock_isclosed(sock)  : true if both local and remote streams are closed
  * sock_mustclose(sock) : true if error, force close, or fully closed
  * sock_canclose(sock)  : true if must-close or the send-buffer is fully drained
- * sock_isactive(sock)  : true if fd is open and state is not must-close
+ * sock_isactive(sock)  : true if fd is open
  */
 int sockaddr_tobuf(struct sockaddr *addr, socklen_t addr_len, char *buf, size_t buf_len);
 char *sockaddr_tostr(struct sock_addr *addr);
@@ -311,7 +310,7 @@ static inline int sock_canclose(struct simple_sock *sock)
 
 static inline int sock_isactive(struct simple_sock *sock)
 {
-    return sock->fd >= 0 && !sock_mustclose(sock);
+    return sock->fd >= 0;
 }
 
 #endif

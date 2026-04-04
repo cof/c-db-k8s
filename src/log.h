@@ -79,8 +79,8 @@ void log_argv(const char *what, int argc, char *argv[]);
 // logger levels
 #define LOG_FATAL 1
 #define LOG_ERROR 2
-#define LOG_DEBUG 3
-#define LOG_INFO  4
+#define LOG_INFO  3
+#define LOG_DEBUG 4
 
 /*
  * macros : various msg-str and fmt-str macros

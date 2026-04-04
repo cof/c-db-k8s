@@ -165,7 +165,7 @@ size_t ip4_str_decode(const char *str, size_t len, uint8_t dst[static 4])
     }
 
     if (num_dot != 3 || num_digit == 0) return 0;
-    *dst = acc;
+    *dst_ptr = acc;
 
     // bytes read
     return str_ptr - str;

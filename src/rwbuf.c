@@ -151,7 +151,7 @@ int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32
         line->ptr = str;
         line->len = len;
 
-        if (len > max) {
+        if (max && len > max) {
             if (flags & RWBUF_NOLOG) return -1;
             return log_error_rf("line too big - len %zu > max %zu", len, max);
         }
@@ -161,7 +161,7 @@ int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32
     }
 
     // incomplete line
-    if (rlen > max) {
+    if (max && rlen > max) {
         if (flags & RWBUF_NOLOG) return -1;
         return log_error_rf("line too big - len %zu > max %zu", rlen, max);
     }

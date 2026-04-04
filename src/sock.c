@@ -33,59 +33,37 @@
 #include "util.h"
 #include "log.h"
 #include "rwbuf.h"
+#include "dns_resolv.h"
 #include "sock.h"
 
-
-
 /*
- * resolv_addr(mode,host,port) : resolv host,port to list of IP address + port
+ * resolv_addr(mode,host,port,max_addr,addrs) : resolv host,port to array of addrs
  *
- * mode
- * --------
- * SOCK_ANY -  Use IPv4, IPv6 or V4 mapped
- * SOCK_IPV4 - IPv4 only
- * SOCK_IPV6 - IPv6 only
- * SOCK_PASSIVE - use bindable address (server/listener)
- * SOCK_NUMSERV - disable name resolution on port str
- *
- * Refs:
- * -----
- * AI_PASSIVE     - find address suitable for bind (e.g. server listener)
- * AI_NUMERICSERV - disable name resolution for service port
- * AI_V4MAPPED    - support DUAL stack if possible
- * AI_ALL         - return all matching IPv6 and IPv4 address
  */
-static struct addrinfo *resolv_addr(uint32_t mode, const char *host, const char *port)
+static int sock_resolv(uint32_t mode, 
+    const char *hostname, const char *port,
+    int max_addr, struct dns_sockaddr addrs[max_addr])
 {
-    struct addrinfo hints = { 0 };
-    struct addrinfo *res = NULL;
+    uint32_t flags = 0;
 
-    if (mode & SOCK_PASSIVE) hints.ai_flags |= AI_PASSIVE;
-    if (mode & SOCK_NUMSERV) hints.ai_flags |= AI_NUMERICSERV;
-
+    if (mode & SOCK_PASSIVE) flags |= DNS_PASSIVE;
+    if (mode & SOCK_NUMPORT) flags |= DNS_NUMPORT;
+    
+    // addr
     if (mode & SOCK_ANY) {
-        hints.ai_flags |= AI_V4MAPPED | AI_ALL;
-        hints.ai_family = AF_INET6;
+        flags |= DNS_IPV6 | DNS_V4MAPPED | DNS_ALL;
     }
     else if (mode & SOCK_IPV4) {
-        hints.ai_family = AF_INET;
+        flags |= DNS_IPV4;
     }
-    else if (mode & SOCK_IPV4) {
-        hints.ai_family = AF_INET6;
-    }
-    else {
-        hints.ai_family = AF_UNSPEC;
+    else if (mode & SOCK_IPV6) {
+        flags |= DNS_IPV6;
     }
 
-    if (mode & SOCK_TCP) hints.ai_socktype = SOCK_STREAM;
-    if (mode & SOCK_UDP) hints.ai_socktype = SOCK_DGRAM;
+    if (mode & SOCK_TCP) flags |= DNS_TCP;
+    if (mode & SOCK_UDP) flags |= DNS_UDP;
 
-    int rc = getaddrinfo(host, port, &hints, &res);
-    if (rc != 0) {
-        return log_error_rn(gai_strerror(rc), "resolve-addr (host=%s port=%s) failed", host, port);
-    }
-
-    return res;
+    return dns_resolv(flags, hostname, port, max_addr, addrs);
 }
 
 // init state for new or accepted file descriptor
@@ -115,33 +93,6 @@ void sock_deinit(struct simple_sock *sock, int can_log)
     rwbuf_deinit(&sock->recv_buf);
 }
 
-// create socket-fd for mode
-int sock_create(uint32_t mode)
-{
-    int domain = mode & (SOCK_IPV4 | SOCK_IPV6);
-    switch(domain) {
-    case SOCK_IPV4: domain = AF_INET; break;
-    case SOCK_IPV6: domain = AF_INET6; break;
-    default: errno = EINVAL; return -1;
-    }
-
-    int type = mode & (SOCK_TCP | SOCK_UDP | SOCK_FILE);
-    switch(type) {
-    case SOCK_TCP: type = SOCK_STREAM; break;
-    case SOCK_UDP: type = SOCK_DGRAM; break;
-    default: errno = EINVAL; return -1;
-    }
-
-    int proto = mode & (SOCK_TCP | SOCK_UDP | SOCK_FILE);
-    switch(type) {
-    case SOCK_TCP: proto = 0; break;
-    case SOCK_UDP: proto = 0; break;
-    default: errno = EINVAL; return -1;
-    }
-
-    return socket(domain, type, proto);
-}
-
 // load sock_addr with sa
 int sock_addr_load(struct sock_addr *addr, const struct sockaddr *sa, socklen_t sa_len)
 {
@@ -167,46 +118,13 @@ int sock_addr_load(struct sock_addr *addr, const struct sockaddr *sa, socklen_t 
     return 0;
 }
 
-// load ss with sock_addr
-static socklen_t sock_store_load(struct sockaddr_storage *storage, struct sock_addr *addr)
-{
-    memset(storage, 0, sizeof(*storage));
-
-	if (addr->type & SOCK_IPV4) {
-    	struct sockaddr_in  *sin  = (void *) storage;
-        sin->sin_family = AF_INET;
-		sin->sin_port = addr->port;
-		sin->sin_addr.s_addr = addr->u32[0];
-        return sizeof(struct sockaddr_in);
-	}
-
-	if (addr->type & SOCK_IPV4) {
-    	struct sockaddr_in6  *sin6 = (void *) storage;
-        sin6->sin6_family = AF_INET6;
-		sin6->sin6_port = addr->port;
-		memcpy(&sin6->sin6_addr, &addr->v6, 16);
-        return sizeof(struct sockaddr_in6);
-    }
-
-	// unknown type
-    return 0;
-}
-
-int sock_connect(struct simple_sock *sock, uint32_t mode, struct sock_addr *addr)
+static int connect_addr(struct simple_sock *sock,
+    uint32_t mode, struct dns_sockaddr *addr)
 {
     // convert sock_addr to ABI
-    struct sockaddr_storage store;
-    socklen_t store_len = sock_store_load(&store, addr);
-    if (store_len == 0) {
-        if (log_level) log_error("store_load %d failed", addr->type);
-        return SOCK_ERROR;
-    }
-
-    // create socket fd
-    sock->fd = sock_create(mode);
+    sock->fd = socket(addr->sa.sa_family, addr->sock_type, 0);
     if (sock->fd == -1) {
-        if (log_level) log_errno("sock_create(%d) failed", addr->type);
-        return SOCK_ERROR;
+        return log_errno_rf("sock_create(%d) failed", addr->sock_type);
     }
 
     // set-mode/check-connect
@@ -214,54 +132,37 @@ int sock_connect(struct simple_sock *sock, uint32_t mode, struct sock_addr *addr
     if (mode & SOCK_UDP && (mode & SOCK_UDPCON) == 0) return 0;
 
     // connect to addr
-    int rc = connect(sock->fd, (struct sockaddr *) &store, store_len);
+    int rc = connect(sock->fd, &addr->sa, addr->len);
     if (rc == -1) {
-        if (log_level) log_errno("connect(%d) failed", addr->type);
-        close(sock->fd);
-        sock->fd = -1;
-        return SOCK_ERROR;
+        sock_close(sock, 0);
+        return -1;
     }
 
-    memcpy(&sock->addr, addr, sizeof(sock->addr));
+    sock_addr_load(&sock->addr, &addr->sa, addr->len);
 
     // connected
     return 0;
 }
 
 // connect to hostname port - e,g sock_connect(sock, SOCK_TCP, "localhost", 80)
-int sock_client(struct simple_sock *sock, uint32_t mode, const char *hostname, const char *port)
+int sock_client(struct simple_sock *sock,
+    uint32_t mode, const char *hostname, const char *port)
 {
-    struct addrinfo *addr_list = resolv_addr(mode, hostname, port);
-    if (!addr_list) return -1;
+    struct dns_sockaddr addrs[DNS_MAX_ADDRS];
+    int num_addr  = sock_resolv(mode, hostname, port, ARRAY(addrs));
+    if (num_addr < 0) return num_addr;
 
-    // loop over addr list for working connection
-    int sock_fd = -1;
-    for (struct addrinfo *ai = addr_list; ai; ai = ai->ai_next) {
-        sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-        if (sock_fd == -1) continue;
-        sock->fd = sock_fd;
-        sock->mode = mode;
-        if (mode & SOCK_UDP && (mode & SOCK_UDPCON) == 0) break;
-        int rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
-        if (rc != -1) {
-            // connected
-            sock_addr_load(&sock->addr, ai->ai_addr, ai->ai_addrlen);
-            break;
-        }
-        close(sock_fd);
-        sock->fd = sock_fd = -1;
+    // loop over array for working connection
+    sock->fd = -1;
+    for (int i = 0; i < num_addr; i++) {
+        if (connect_addr(sock, mode, &addrs[i]) == 0) break;
     }
-    freeaddrinfo(addr_list);
-
-    if (sock_fd == -1) {
-        return log_error_rf("Connect to %s:%s failed", hostname, port);
-    }
+    if (sock->fd == -1) return log_error_rf("Connect %s:%s failed", hostname, port);
 
     if (mode & SOCK_NONBLK) {
         int rc = sock_set_nonblk(sock);
         if (rc) {
-            close(sock_fd);
-            sock->fd = -1;
+            sock_close(sock, 0);
             return rc;
         }
     }
@@ -271,25 +172,27 @@ int sock_client(struct simple_sock *sock, uint32_t mode, const char *hostname, c
 }
 
 // create listener socket fd using resolved IP address + port
-static int sock_listen_addr(struct simple_sock *sock, struct addrinfo *res)
+static int listen_addr(struct simple_sock *sock, 
+    uint32_t mode, struct dns_sockaddr *addr)
 {
     char tmp[IP6_ADDR_STRLEN];
-    int rc = sockaddr_tobuf(res->ai_addr, res->ai_addrlen, tmp, sizeof(tmp));
+    int rc = sockaddr_tobuf(&addr->sa, addr->len, tmp, sizeof(tmp));
     const char *addr_str = rc <= 0 ? "<null>" : tmp;
 
-    int sock_type = res->ai_socktype; 
-    if (sock->mode & SOCK_NONBLK) sock_type |= SOCK_NONBLOCK;
-
-    sock->fd = socket(res->ai_family, sock_type, 0);
+    // create socket
+    int sock_type = addr->sock_type; 
+    if (mode & SOCK_NONBLK) sock_type |= SOCK_NONBLOCK;
+    sock->fd = socket(addr->sa.sa_family, sock_type, 0);
     if (sock->fd == -1) {
         log_errno("create socket(%d, %d) for addr %s failed",
-            res->ai_family, sock_type, addr_str);
+            addr->sa.sa_family, sock_type, addr_str);
         goto err;
     }
 
     // copy addr
-    rc = sock_addr_load(&sock->addr, res->ai_addr, res->ai_addrlen);
-    if (rc == 0) return log_error_rf("Unsupported res %d", res->ai_addrlen);
+    sock->mode = mode;
+    rc = sock_addr_load(&sock->addr, &addr->sa, addr->len);
+    if (rc == 0) return log_error_rf("Unsupported res %d", addr->len);
 
     int opt;
     if (sock->mode & SOCK_ANY) {
@@ -308,7 +211,7 @@ static int sock_listen_addr(struct simple_sock *sock, struct addrinfo *res)
 
     if (sock->mode & SOCK_PASSIVE) {
         // bind to address
-        if (bind(sock->fd, res->ai_addr, res->ai_addrlen) == -1) {
+        if (bind(sock->fd, &addr->sa, addr->len) == -1) {
             log_errno("bind to (%s) failed", addr_str);
             goto err;
         }
@@ -333,17 +236,14 @@ err:
     return SOCK_ERROR;
 }
 
-int sock_server(struct simple_sock *sock, uint32_t mode, const char *host, const char *port)
+int sock_server(struct simple_sock *sock,
+    uint32_t mode, const char *hostname, const char *port)
 {
-    struct addrinfo *res = resolv_addr(mode, host, port);
-    if (!res) return -1;
+    struct dns_sockaddr addrs[DNS_MAX_ADDRS];
+    int num_addr = sock_resolv(mode, hostname, port, ARRAY(addrs));
+    if (num_addr <= 0) return -1;
 
-    sock->mode = mode;
-
-    int rc = sock_listen_addr(sock, res);
-    freeaddrinfo(res);
-    
-    return rc;
+    return listen_addr(sock, mode, &addrs[0]);
 }
 
 int sock_accept(struct simple_sock *sock, struct sock_addr *addr)
