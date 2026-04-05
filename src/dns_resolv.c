@@ -6,7 +6,6 @@
  * API sections
  * ------------
  */
-
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -386,7 +385,6 @@ retry:
 
     return DNS_EAGAIN;
 }
-
 
 static int snd_dnspkt(struct dns_query *q)
 {
@@ -827,7 +825,7 @@ static int try_hostname(struct dns_result *res)
     return res->num_addr ?: -1;
 }
 
-// resolve hostname,port to array of reolv_sockaddr - returns num-addr or error
+// resolve hostname,port to array of addr - return num-addr or error
 int dns_resolv(uint32_t flags,
     const char *hostname, const char *port,
     int max_addr, struct dns_sockaddr addrs[max_addr])
@@ -843,11 +841,44 @@ int dns_resolv(uint32_t flags,
     };
 
     int rc;
-
     if ((rc = try_port(&res))) return rc;
     if ((rc = try_hostname(&res))) return rc;
     if ((rc = try_nameservers(&res))) return rc;
 
     // no match
     return 0;
+}
+
+// convert addr to text form
+char *dns_sockaddr_tostr(struct dns_sockaddr *addr)
+{
+    static char bufs[16][IP_ADDRPORT_STRLEN];
+    static int idx;
+
+    char *buf = bufs[idx];
+    size_t len = sizeof(bufs[0]);
+    idx = (idx + 1) & 15;
+    char *str = "<null>";
+
+    switch (addr->sa.sa_family) {
+    case AF_INET: // a.b.c.d:port
+        if (addr->len != sizeof(addr->v4)) break;
+        str = buf;
+        str += ip4_str_encode((void *) &addr->v4.sin_addr.s_addr, str, len); 
+        *str++ = ':'; 
+        str = uint16_toa(str, __builtin_bswap16(addr->v4.sin_port));
+        str = '\0';
+        break;
+    case AF_INET6: // [::]:port
+        if (addr->len != sizeof(addr->v6)) break;
+        str = buf;
+        str = buf;
+        str += ip6_str_encode(addr->v6.sin6_addr.s6_addr, IP6_STR_ADDBRACK | IP6_STR_STRIPV4, str, len);
+        *str++ = ':'; 
+        str = uint16_toa(str, __builtin_bswap16(addr->v6.sin6_port));
+        str = '\0';
+        break;
+    }
+
+    return buf;
 }

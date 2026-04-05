@@ -41,8 +41,8 @@
 
 // address
 struct dns_sockaddr {
-    int sock_type;
-    socklen_t len;
+    int sock_type; // e.g SOCK_STREAM, SOCK_DGRAM
+    socklen_t len; // size of encoded addr 
     union {
         struct sockaddr     sa; // 16 bytes (base)
         struct sockaddr_in  v4; // 16 bytes
@@ -54,5 +54,7 @@ struct dns_sockaddr {
 int dns_resolv(uint32_t flags, 
     const char *hostname, const char *port,
     int max_addr, struct dns_sockaddr addrs[max_addr]);
+
+char *dns_sockaddr_tostr(struct dns_sockaddr *addr);
 
 #endif
