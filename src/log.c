@@ -25,23 +25,9 @@ void log_init(FILE *dst, int level)
     if (!dst) dst = stderr;
     log_fd = dst;
     log_level = level;
-}
 
-// FIXME delete this
-int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
-{
-    va_list args;  
-
-    fprintf(log_fd, "[ERROR] %s: %s: ", cmd, opt);
-
-    va_start(args, fmt);
-    vfprintf(log_fd, fmt, args);
-    va_end(args);
-
-    fprintf(log_fd, "\n");
-    fflush(log_fd);
-    
-    return -1;
+    // enable wait for a '\n' before printing
+    setvbuf(stderr, NULL, _IOLBF, BUFSIZ);
 }
 
 void _log_msg(const char *file, int line, const char *func, 
@@ -68,7 +54,6 @@ void _log_msg(const char *file, int line, const char *func,
     if (ec) fprintf(log_fd, ": %s (errno: %d)", strerror(ec), ec);
 
     fprintf(log_fd, "\n");
-    fflush(log_fd);
 
     // fatal-check
     if (what == LOG_FATAL) exit(1);

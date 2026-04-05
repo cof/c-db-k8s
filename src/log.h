@@ -64,19 +64,17 @@ extern int log_level;
  * functions : direct functions
  * -----------------------------
  * log_init(dst,level) : setup up logger
- * log_cmd_err(cmd, opt, fmt) : FIXME this need to go
  * _log_msg(file, line, func, what, ec, what, whatstr, fmt, ...) : log msg - "[what] file:line (func): fmt-str":
  * log_argv(what, argc, argv) : log_info cmd-line - useful for debuing pod exec issues
  */
 void log_init(FILE *dst, int level);
-int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
-    __attribute__((format(printf, 3, 4)));
 void _log_msg(const char *file, int line, const char *func, 
     int ec, int what, const char *what_str, const char *fmt, ...)
     __attribute__((format(printf, 7, 8)));
 void log_argv(const char *what, int argc, char *argv[]);
 
 // logger levels
+#define LOG_NONE  0
 #define LOG_FATAL 1
 #define LOG_ERROR 2
 #define LOG_INFO  3
@@ -108,10 +106,10 @@ void log_argv(const char *what, int argc, char *argv[]);
 
 
 #define log_msg(...) \
-    _log_msg(NULL, 0, NULL, 0, 0, 0, __VA_ARGS__)
+    _log_msg(NULL, 0, NULL, 0, LOG_NONE, 0, __VA_ARGS__)
 
 #define log_msg_rf(...) ({ \
-    _log_msg(NULL, 0, NULL, 0, 0, 0, __VA_ARGS__) \
+    _log_msg(NULL, 0, NULL, 0, LOG_NONE, 0, __VA_ARGS__) \
     UTIL_FAIL; \
 })
 
