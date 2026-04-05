@@ -217,7 +217,6 @@ static inline int sock_recvbuf_consume(struct simple_sock *sock, size_t len)
 /*
  * Status and info
  * ---------------
- * sockaddr_tostr(addr, addr_len) : format addr to address:port str
  * sock_tostr(sock)               : format sock to address:port str
  * sock_ipstr_decode(str, addr)   : parse IP-addr str-slice
  * -

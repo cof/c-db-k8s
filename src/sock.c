@@ -36,11 +36,8 @@
 #include "dns_resolv.h"
 #include "sock.h"
 
-/*
- * resolv_addr(mode,host,port,max_addr,addrs) : resolv host,port to array of addrs
- *
- */
-static int sock_resolv(uint32_t mode, 
+// resolv mode,hostname,port to array of dns_sockaddr
+static int sock_resolv(uint32_t mode,
     const char *hostname, const char *port,
     int max_addr, struct dns_sockaddr addrs[max_addr])
 {
@@ -64,6 +61,123 @@ static int sock_resolv(uint32_t mode,
     if (mode & SOCK_UDP) flags |= DNS_UDP;
 
     return dns_resolv(flags, hostname, port, max_addr, addrs);
+}
+
+// load sock_addr from sa
+static int sock_addr_load(struct sock_addr *addr, struct sockaddr *sa, socklen_t sa_len)
+{
+    memset(addr, 0, sizeof(*addr));
+
+    switch(sa->sa_family) {
+    case AF_INET:
+        struct sockaddr_in *sin =  (void *) sa;
+        if (sa_len != sizeof(*sin)) break;
+        addr->type   = SOCK_IPV4;
+        addr->port   = sin->sin_port;
+        addr->u32[0] = sin->sin_addr.s_addr;
+        return SOCK_IPV4;
+    case AF_INET6:
+    	struct sockaddr_in6 *sin6  = (void *) sa;
+        if (sa_len != sizeof(*sin6)) break;
+        addr->type = SOCK_IPV6;
+        addr->port = sin6->sin6_port;
+		memcpy(&addr->v6, &sin6->sin6_addr, 16);
+        return SOCK_IPV6;
+    }
+
+    // not supported
+    return 0;
+}
+
+// create sockect fd + connect to addr
+static int connect_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
+{
+    // convert sock_addr to ABI
+    const char *addr_str = dns_sockaddr_tostr(addr);
+    int domain = addr->sa.sa_family;
+    int type = addr->sock_type; 
+    sock->fd = socket(domain,  type, 0);
+    if (sock->fd == -1) return log_errno_rf("socket(%d,%d) failed for %s", domain, type, addr_str);
+
+    // need-connect
+    if (!(sock->mode & (SOCK_TCP | SOCK_UDPCON))) return 0;
+
+    // connect to addr
+    int rc = connect(sock->fd, &addr->sa, addr->len);
+    if (rc == -1) goto err;
+
+    rc = sock_addr_load(&sock->addr, &addr->sa, addr->len);
+    if (rc == 0) {
+        rc = log_error_rf("Unsupported addr %d", addr->len);
+        goto err;
+    }
+
+    if (sock->mode & SOCK_NONBLK) {
+        if ((rc = sock_set_nonblk(sock))) goto err;
+    }
+
+    // connected
+    return 0;
+
+err:
+    sock_close(sock, 0);
+    return rc;
+}
+
+// create socket-fd + listen on resolved address
+static int listen_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
+{
+    // create socket
+    const char *addr_str = dns_sockaddr_tostr(addr);
+    int domain = addr->sa.sa_family;
+    int type = addr->sock_type; 
+    if (sock->mode & SOCK_NONBLK) type |= SOCK_NONBLOCK;
+    sock->fd = socket(domain, type, 0);
+    if (sock->fd == -1) return log_errno_rf("socket(%d,%d) failed for %s", domain, type, addr_str);
+
+    // copy addr
+    int rc = sock_addr_load(&sock->addr, &addr->sa, addr->len);
+    if (rc == 0) {
+        rc = log_error_rf("Unsupported addr %d", addr->len);
+        goto err;
+    }
+
+    // dual-stack
+    if (sock->mode & SOCK_ANY) {
+        int opt = 0;
+        rc = setsockopt(sock->fd, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt));
+        if (rc == -1) log_errno("disable IPV6_ONLY");
+    }
+
+    // resuse-addr
+    if (sock->mode & SOCK_REUSE) {
+        int opt = 1;
+        rc = setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        if (rc == -1) log_errno("enable SO_REUSEADDR");
+    }
+
+    // server
+    if (sock->mode & SOCK_PASSIVE) {
+        // bind to address
+        if (bind(sock->fd, &addr->sa, addr->len) == -1) {
+            rc = log_errno_rf("bind to (%s) failed", addr_str);
+            goto err;
+        }
+        // listen for incoming connectons
+        if (listen(sock->fd, SOMAXCONN) == -1) {
+            rc = log_errno_rf("listen on %d,%s failed", sock->fd, addr_str);
+            goto err;
+        }
+    }
+
+    // all done
+    return 0;
+
+err:
+    sock_close(sock, 0);
+
+    // failed
+    return SOCK_ERROR;
 }
 
 // init state for new or accepted file descriptor
@@ -93,157 +207,35 @@ void sock_deinit(struct simple_sock *sock, int can_log)
     rwbuf_deinit(&sock->recv_buf);
 }
 
-// load sock_addr with sa
-int sock_addr_load(struct sock_addr *addr, const struct sockaddr *sa, socklen_t sa_len)
-{
-    memset(addr, 0, sizeof(*addr));
-
-    if (sa->sa_family == AF_INET && sa_len == sizeof(struct sockaddr_in)) {
-        struct sockaddr_in *sin =  (void *) sa;
-        addr->type   = SOCK_IPV4;
-        addr->port   = sin->sin_port;
-        addr->u32[0] = sin->sin_addr.s_addr;
-        return SOCK_IPV4;
-    }
-
-    if (sa->sa_family == AF_INET6 && sa_len == sizeof(struct sockaddr_in6)) {
-    	struct sockaddr_in6 *sin6  = (void *) sa;
-        addr->type = SOCK_IPV6;
-        addr->port = sin6->sin6_port;
-		memcpy(&addr->v6, &sin6->sin6_addr, 16);
-        return SOCK_IPV6;
-    }
-
-    // not supported
-    return 0;
-}
-
-static int connect_addr(struct simple_sock *sock,
-    uint32_t mode, struct dns_sockaddr *addr)
-{
-    // convert sock_addr to ABI
-    sock->fd = socket(addr->sa.sa_family, addr->sock_type, 0);
-    if (sock->fd == -1) {
-        return log_errno_rf("sock_create(%d) failed", addr->sock_type);
-    }
-
-    // set-mode/check-connect
-    sock->mode = mode;
-    if (mode & SOCK_UDP && (mode & SOCK_UDPCON) == 0) return 0;
-
-    // connect to addr
-    int rc = connect(sock->fd, &addr->sa, addr->len);
-    if (rc == -1) {
-        sock_close(sock, 0);
-        return -1;
-    }
-
-    sock_addr_load(&sock->addr, &addr->sa, addr->len);
-
-    // connected
-    return 0;
-}
-
-// connect to hostname port - e,g sock_connect(sock, SOCK_TCP, "localhost", 80)
+// create a client - e.g sock_connect(sock, SOCK_TCP, "example.com", 80)
 int sock_client(struct simple_sock *sock,
     uint32_t mode, const char *hostname, const char *port)
 {
     struct dns_sockaddr addrs[DNS_MAX_ADDRS];
-    int num_addr  = sock_resolv(mode, hostname, port, ARRAY(addrs));
+    int num_addr = sock_resolv(mode, hostname, port, ARRAY(addrs));
     if (num_addr < 0) return num_addr;
+    sock->mode = mode;
 
     // loop over array for working connection
-    sock->fd = -1;
     for (int i = 0; i < num_addr; i++) {
-        if (connect_addr(sock, mode, &addrs[i]) == 0) break;
+        if (connect_addr(sock, &addrs[i]) == 0) break;
     }
-    if (sock->fd == -1) return log_error_rf("Connect %s:%s failed", hostname, port);
-
-    if (mode & SOCK_NONBLK) {
-        int rc = sock_set_nonblk(sock);
-        if (rc) {
-            sock_close(sock, 0);
-            return rc;
-        }
-    }
+    if (sock->fd == -1) return log_error_rf("sock_client (%s,%s) failed", hostname, port);
 
     // all done
     return 0;
 }
 
-// create listener socket fd using resolved IP address + port
-static int listen_addr(struct simple_sock *sock, 
-    uint32_t mode, struct dns_sockaddr *addr)
-{
-    char tmp[IP6_ADDR_STRLEN];
-    int rc = sockaddr_tobuf(&addr->sa, addr->len, tmp, sizeof(tmp));
-    const char *addr_str = rc <= 0 ? "<null>" : tmp;
-
-    // create socket
-    int sock_type = addr->sock_type; 
-    if (mode & SOCK_NONBLK) sock_type |= SOCK_NONBLOCK;
-    sock->fd = socket(addr->sa.sa_family, sock_type, 0);
-    if (sock->fd == -1) {
-        log_errno("create socket(%d, %d) for addr %s failed",
-            addr->sa.sa_family, sock_type, addr_str);
-        goto err;
-    }
-
-    // copy addr
-    sock->mode = mode;
-    rc = sock_addr_load(&sock->addr, &addr->sa, addr->len);
-    if (rc == 0) return log_error_rf("Unsupported res %d", addr->len);
-
-    int opt;
-    if (sock->mode & SOCK_ANY) {
-        // dual-stack requested - turn off IPV6_ONLY
-        opt = 0;
-        rc = setsockopt(sock->fd, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt));
-        if (rc == -1) log_errno("disable IPV6_ONLY");
-    }
-
-    if (sock->mode & SOCK_REUSE) {
-        // resuse-addr requested
-        opt = 1;
-        rc = setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-        if (rc == -1) log_errno("enable SO_REUSEADDR");
-    }
-
-    if (sock->mode & SOCK_PASSIVE) {
-        // bind to address
-        if (bind(sock->fd, &addr->sa, addr->len) == -1) {
-            log_errno("bind to (%s) failed", addr_str);
-            goto err;
-        }
-        // listen for incoming connectons
-        if (listen(sock->fd, SOMAXCONN) == -1) {
-            log_errno("listen on %d,%s failed", sock->fd, addr_str);
-            goto err;
-        }
-    }
-
-    // all done
-    return 0;
-
-err:
-    if (sock->fd != -1) {
-        close(sock->fd);
-        sock->fd = -1;
-        //sock->sys_err = 1;
-    }
-
-    // failed
-    return SOCK_ERROR;
-}
-
+// create a server - e.g sock_server(sock, SOCK_TCP, "", 80);
 int sock_server(struct simple_sock *sock,
     uint32_t mode, const char *hostname, const char *port)
 {
     struct dns_sockaddr addrs[DNS_MAX_ADDRS];
     int num_addr = sock_resolv(mode, hostname, port, ARRAY(addrs));
     if (num_addr <= 0) return -1;
+    sock->mode = mode;
 
-    return listen_addr(sock, mode, &addrs[0]);
+    return listen_addr(sock, &addrs[0]);
 }
 
 int sock_accept(struct simple_sock *sock, struct sock_addr *addr)
@@ -251,6 +243,7 @@ int sock_accept(struct simple_sock *sock, struct sock_addr *addr)
     struct sockaddr_storage store;
     socklen_t store_len = sizeof(store);
 
+    // accept new connnection
     int flags = sock->mode & SOCK_NONBLK ? SOCK_NONBLOCK : 0;
     int fd = accept4(sock->fd, (struct sockaddr *) &store, &store_len, flags);
     if (fd == -1) {
@@ -258,10 +251,11 @@ int sock_accept(struct simple_sock *sock, struct sock_addr *addr)
         return -1;
     }
 
+    // store addr,fd
     int rc = sock_addr_load(addr, (struct sockaddr *) &store, store_len);
     if (rc == 0) {
         close(fd);
-        return log_error_rf("sock addr_len %d unsupported", store_len);
+        return log_error_rf("Unsupported addr %d", store_len);
     }
 
     // turn off nagle
@@ -329,16 +323,12 @@ int sock_set_mode(struct simple_sock *sock, uint32_t mode)
 int sock_set_nonblk(struct simple_sock *sock)
 {
     int flags = fcntl(sock->fd, F_GETFL, 0);
-    if (flags == -1) {
-        return log_errno_rf("fcntl %d getfl failed", sock->fd);
-    }
+    if (flags == -1) return log_errno_rf("fcntl %d GETFL failed", sock->fd);
 
     flags |= O_NONBLOCK;
 
     int rc = fcntl(sock->fd, F_SETFL, flags);
-    if (rc == -1) {
-        return log_errno_rf("fcntl %d setfl %d failed", sock->fd, flags);
-    }
+    if (rc == -1) return log_errno_rf("fcntl %d SETFL %d failed", sock->fd, flags);
 
     return 0;
 }
@@ -707,82 +697,8 @@ int sock_recv_line(struct simple_sock *sock, struct str_slice *line, int eof)
     return rc;
 }
 
-
-// uses getnameinfo - todo delete
-int sockaddr_tobuf(struct sockaddr *addr, socklen_t addr_len, char *buf, size_t buf_len)
-{
-    // convert address/port to string
-    char host_buf[NI_MAXHOST];
-    char port_buf[NI_MAXSERV];
-
-    int rc = getnameinfo(addr, addr_len, 
-        host_buf, sizeof(host_buf),
-        port_buf, sizeof(port_buf),
-        NI_NUMERICHOST | NI_NUMERICSERV
-    );
-
-    if (rc != 0) {
-        log_error("get name+port string - %s", gai_strerror(rc));
-        return -1;
-    }
-
-    if (buf_len == 0) return 0;
-
-    // copy host
-    char *hostname = host_buf;
-    int add_bracket = addr->sa_family == AF_INET6;
-    struct str_slice prefix = slice_make_cstr("::ffff:");
-    if (!strncmp(hostname, prefix.ptr, prefix.len)) {
-        // remove IPv4-mapped IPv6 prefix
-        hostname += prefix.len;
-        add_bracket = 0;
-    }
-    size_t wlen = 0;
-    size_t len = strlen(hostname);
-    size_t need_len = len;
-    if (add_bracket) need_len += 2;
-    if (wlen + need_len > buf_len) {
-        return log_error_rf("No space for hostname");
-    }
-    if (add_bracket) buf[wlen++] = '[';
-    memcpy(buf + wlen, hostname, len);
-    wlen += len;
-    if (add_bracket) buf[wlen++] = ']';
-
-    // copy port:
-    char *port = port_buf;
-    len = strlen(port);
-    need_len = len + 2;
-    if (wlen + need_len > buf_len) {
-        return log_error_rf("No space for port");
-    }
-    buf[wlen++] = ':';
-    memcpy(buf + wlen, port, len);
-    wlen += len;
-
-    buf[wlen] = '\0';
-
-    return wlen;
-}
-
-// get addr str for sock fd
-int sockfd_get_addr(int sock_fd, char *buf, size_t len)
-{
-    struct sockaddr_storage addr;
-    socklen_t addr_len = sizeof(addr);
-    int rc;
-
-    rc = getsockname(sock_fd, (struct sockaddr *)&addr, &addr_len);
-    if (rc == -1) {
-        log_errno("get ip address");
-        return -1;
-    }
-
-    return sockaddr_tobuf((struct sockaddr *) &addr, addr_len, buf, len);
-}
-
-// format addr to "address:port"  or "fd %d"
-char *sock_addr_tostr(struct sock_addr *addr)
+// convert addr to text form - e.g "a.b.c.d:80"
+static char *sock_addr_tostr(struct sock_addr *addr)
 {
     static char bufs[16][IP_ADDRPORT_STRLEN];
     static int idx;
