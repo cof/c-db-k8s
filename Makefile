@@ -181,11 +181,11 @@ STRACE_RAW = $(BUILD_DIR)/strace_raw.txt
 SECCOMP_H  = $(BUILD_DIR)/seccomp_rules.h
 gen-seccomp: client server
 	@echo "Generating seccomp rules..."
-	@strace -c -f -o $(STRACE_SRV) ./server $(CMD_ARGS) & STRACE_PID=$$!; \
+	@strace -c -o $(STRACE_SRV) ./server $(CMD_ARGS) & STRACE_PID=$$!; \
 	SERV_PID=$$(pgrep -P $$STRACE_PID); \
 	echo "Profiling Server (PID: $$SERV_PID) via Strace (PID: $$STRACE_PID)"; \
 	sleep 1; \
-	strace -c -f -o $(STRACE_CLI) ./client $(CMD_ARGS) < $(CMD_FILE) 1>/dev/null || true; \
+	strace -c -o $(STRACE_CLI) ./client $(CMD_ARGS) < $(CMD_FILE) 1>/dev/null || true; \
 	sleep 1; \
 	pgrep -ax server || true; \
 	kill $$SERV_PID  2>/dev/null || true; \

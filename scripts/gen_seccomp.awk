@@ -22,20 +22,24 @@ END {
     # build/sort list of syscall names
     count = 0
     for (name in syscalls) {
-        syscalls[++count] = name
+        names[++count] = name
     }
     asort(names)
 
     # indent 8 spaces
     n = 8
 
-    #  gen list of allowed syscalls
+    # header
+    printf "%*s%s\n", n, "", "// whitelist syscalls"
+
+    #  add list of allowed syscalls
     for (i = 1; i <= count; i++) {
         offset = count - i + 1
         printf "%*sBPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_%s, %d, 0),\n", 
-            n, "", syscalls[i], offset
+            n, "", names[i], offset
     }
 
+    printf "%*s%s\n", n, "", "// actions"
     if (count > 1) {
         printf "%*s%s\n", n, "", "BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),"
         printf "%*s%s\n", n, "", "BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)"
