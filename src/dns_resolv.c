@@ -5,6 +5,8 @@
  *
  * API sections
  * ------------
+ * dns_resolv - resolve hostname/port to array of add 
+ *
  */
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -61,6 +63,7 @@ struct dns_query {
     int fd;
     int last_rc;
     uint16_t qtype;
+    uint16_t qclass;
     uint16_t tid;
     size_t pkt_off;
     size_t pkt_len;
@@ -90,6 +93,20 @@ const uint8_t ip4_any[4] = { 0 };
 const uint8_t ip4_loopback[4] = { 127, 0, 0, 1 };
 const uint8_t ip6_any[16] = { 0 };
 const uint8_t ip6_loopback[16] = { [15] = 1 };
+
+// generate a tid
+static uint16_t gen_tid()
+{
+    static uint16_t next_tid;
+    static int init_done = 0;
+
+    if (!init_done) {
+        next_tid = (uint16_t) getpid() ^ (uint16_t) time(NULL);
+        init_done = 1;
+    }
+
+    return next_tid++;
+}
 
 // decode ip-addr str
 static uint32_t ipstr_decode(struct str_slice str, uint8_t dst[static 16])
@@ -257,11 +274,11 @@ static int try_services(char *file_path, int flags, struct str_slice name, struc
             struct str_slice proto = slice_split(&port, '/');
             if (!slice_isnumeric(port)) continue; 
             uint16_t port_no = slice_tou32(port);
-            if (slice_cmp_cstr(proto, STR_LIT("tcp")) && need_tcp) {
+            if (slice_cmp_mem(proto, STR_LIT("tcp")) && need_tcp) {
                 res->tcp_port = port_no; 
                 need_tcp = 0;
             }
-            if (slice_cmp_cstr(proto, STR_LIT("udp")) && need_udp) {
+            if (slice_cmp_mem(proto, STR_LIT("udp")) && need_udp) {
                 res->udp_port = port_no;
                 need_udp = 0;
             }
@@ -282,9 +299,9 @@ static int try_services(char *file_path, int flags, struct str_slice name, struc
 #define OPT_ATTEMPTS 3
 int str_toopt(struct str_slice str)
 {
-    if (slice_cmp_cstr(str, STR_LIT("ndots"))) return OPT_NDOTS;
-    if (slice_cmp_cstr(str, STR_LIT("timeout"))) return OPT_TIMEOUT;
-    if (slice_cmp_cstr(str, STR_LIT("attempts"))) return OPT_ATTEMPTS;
+    if (slice_cmp_mem(str, STR_LIT("ndots"))) return OPT_NDOTS;
+    if (slice_cmp_mem(str, STR_LIT("timeout"))) return OPT_TIMEOUT;
+    if (slice_cmp_mem(str, STR_LIT("attempts"))) return OPT_ATTEMPTS;
     return 0;
 }
 
@@ -342,9 +359,9 @@ static int add_server(struct dns_config *cfg, struct str_slice str)
 #define CFG_OPTIONS 3
 int str_tocfg(struct str_slice str)
 {
-    if (slice_cmp_cstr(str, STR_LIT("nameserver"))) return CFG_SERVER;
-    if (slice_cmp_cstr(str, STR_LIT("search")))     return CFG_SEARCH;
-    if (slice_cmp_cstr(str, STR_LIT("options")))    return CFG_OPTIONS;
+    if (slice_cmp_mem(str, STR_LIT("nameserver"))) return CFG_SERVER;
+    if (slice_cmp_mem(str, STR_LIT("search")))     return CFG_SEARCH;
+    if (slice_cmp_mem(str, STR_LIT("options")))    return CFG_OPTIONS;
     return 0;
 }
 
@@ -558,26 +575,36 @@ static int enc_dnspkt(struct dns_ns *ns, struct dns_query *q)
 // check msg is valid response
 static int chk_dnsmsg(struct dns_ns *ns, struct dns_query *q)
 {
-    struct dns_msg *rsp = &ns->msg;
-    struct dns_header *hdr = &rsp->hdr;
+    struct dns_msg *msg = &ns->msg;
+    struct dns_header *hdr = &msg->hdr;
 
     if ((hdr->flags & DNS_FLAGS_QR) == 0) {
-        return log_error_rf("Unexpected DNS message ID: 0x%04x Flags: 0x%04x Len %zu",
+        return log_error_rf("Unexpected msg ID: 0x%04x Flags: 0x%04x Len %zu",
            hdr->id, hdr->flags, q->pkt_len);
     }
 
     // check Transaction ID
     if (hdr->id != q->tid) {
-        return log_error_rf("Response ID 0x%04x does not match Request ID 0x%04x", 
+        return log_error_rf("rsp ID 0x%04x does not match query ID 0x%04x", 
             hdr->id, q->tid);
     }
 
     // check Result Code
     int rcode = hdr->flags & DNS_FLAGS_RCODE;
     if (rcode != DNS_RCODE_NOERROR) {
-        return log_error_rc(rcode, "Response ID 0x%04x failed with error %s", 
-            hdr->id, rcode_tostr(rcode));
+        return log_error_rc(rcode,
+            "rsp ID 0x%04x for query %.*s %s %s failed with error %s", 
+            hdr->id, SLICE(ns->name),
+            dns_class_tostr(q->qclass), dns_type_tostr(q->qtype), 
+            rcode_tostr(rcode));
     }
+
+    // validate question
+    if (msg->num_qd != 1) return log_error_rf("rsp ID 0x%04x missing question", hdr->id);
+    struct dns_quest *quest = &msg->qd_recs[0];
+    if (!slice_cmp_str(ns->name, quest->qname)) return log_error_rf("rsp ID 0x%04x qname mismatch", hdr->id);
+    if (quest->qclass != q->qclass) return log_error_rf("rsp ID 0x%04x qclass mismatch", hdr->id);
+    if (quest->qtype != q->qtype) return log_error_rf("rsp ID 0x%04x qqtype mismatch", hdr->id);
 
     // got okay resp
     return 0;
@@ -590,16 +617,16 @@ static int set_dnsmsg(struct dns_ns *ns, struct dns_query *q)
     struct str_slice *name = &ns->name;
 
     dns_msg_reset(msg);
-    q->tid = rand() % 65536;
+    q->tid = gen_tid();
     dns_msg_set_id_flags(msg, q->tid, DNS_FLAGS_RD);
-    int rc = dns_msg_add_qd(msg, name->ptr, name->len, q->qtype, DNS_CLASS_IN);
+    int rc = dns_msg_add_qd(msg, name->ptr, name->len, q->qtype, q->qclass);
     if (rc) return rc;
 
     log_debug("Send query (%s) ID:0x%04x for %.*s %s %s",
         q->is_tcp ? "TCP" : "UDP", q->tid,
         (int) name->len, name->ptr,
-        dns_class_tostr(q->qtype),
-        dns_type_tostr(DNS_CLASS_IN));
+        dns_class_tostr(q->qclass),
+        dns_type_tostr(q->qtype));
 
     return 0;
 }
@@ -718,6 +745,7 @@ static void try_connect(struct dns_ns *ns, uint16_t qtype)
     if (!q || q->state != DNS_IDLE) return;
 
     q->qtype = qtype;
+    q->qclass = DNS_CLASS_IN;
     int rc = do_connect(q, ns->addr);
     if (rc) {
         q->last_rc = rc;
@@ -796,7 +824,6 @@ static void connect_all(struct dns_ns *ns)
 static int get_rcode(struct dns_ns *ns, int qtype)
 {
     struct dns_query *q = get_query(ns, qtype);
-
     if (!q) return 0;
 
     // normalize rc

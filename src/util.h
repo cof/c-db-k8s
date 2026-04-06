@@ -578,8 +578,9 @@ struct str_slice {
  * slice_make(str, len)   : return a slice set with str and len
  * slice_make_cstr(str)   : return a slice set with str
  * slice_copy(str)        : return a copy of str 
- * slice_cmp_cstr(str, cstr, len)    : return 1 if strs match else 0
- * slice_cmp(str1, str2)  : compare str-slice
+ * slice_cmp_mem(slice, mem, len) : return 1 if slice match mem else 0
+ * slice_cmp_str(slice, str)      : return 1 if slice match str else 0
+ * slice_cmp(str1, str2)          : return 1 if slices match else 0
  * slice_unbracket(str, left, right) : strip left and right chars from str
  * slice_chop(str, ch)    : chop str-slice at ch if founc
  * slice_rsplit(src, ch)  : split string from right at ch if found
@@ -622,9 +623,14 @@ static inline struct str_slice slice_copy(struct str_slice val)
     return val;
 }
 
-static inline int slice_cmp_cstr(struct str_slice str, const char *cstr, size_t len)
+static inline int slice_cmp_mem(struct str_slice str, const char *mem, size_t len)
 {
-    return len == str.len && memcmp(str.ptr, cstr, len) == 0;
+    return len == str.len && memcmp(str.ptr, mem, len) == 0;
+}
+
+static inline int slice_cmp_str(struct str_slice slice, const char *str)
+{
+    return str ? slice_cmp_mem(slice, str, strlen(str)) : 0;
 }
 
 static inline int slice_cmp(struct str_slice str1, struct str_slice str2)
