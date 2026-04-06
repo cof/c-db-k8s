@@ -77,11 +77,11 @@ static int sock_addr_load(struct sock_addr *addr, struct sockaddr *sa, socklen_t
         addr->u32[0] = sin->sin_addr.s_addr;
         return SOCK_IPV4;
     case AF_INET6:
-    	struct sockaddr_in6 *sin6  = (void *) sa;
+        struct sockaddr_in6 *sin6  = (void *) sa;
         if (sa_len != sizeof(*sin6)) break;
         addr->type = SOCK_IPV6;
         addr->port = sin6->sin6_port;
-		memcpy(&addr->v6, &sin6->sin6_addr, 16);
+        memcpy(&addr->v6, &sin6->sin6_addr, 16);
         return SOCK_IPV6;
     }
 
@@ -211,7 +211,7 @@ void sock_deinit(struct simple_sock *sock, int can_log)
 int sock_client(struct simple_sock *sock,
     uint32_t mode, const char *hostname, const char *port)
 {
-    struct dns_sockaddr addrs[DNS_MAX_ADDRS];
+    struct dns_sockaddr addrs[DNS_MAXADDR];
     int num_addr = sock_resolv(mode, hostname, port, ARRAY(addrs));
     if (num_addr < 0) return num_addr;
     sock->mode = mode;
@@ -230,7 +230,7 @@ int sock_client(struct simple_sock *sock,
 int sock_server(struct simple_sock *sock,
     uint32_t mode, const char *hostname, const char *port)
 {
-    struct dns_sockaddr addrs[DNS_MAX_ADDRS];
+    struct dns_sockaddr addrs[DNS_MAXADDR];
     int num_addr = sock_resolv(mode, hostname, port, ARRAY(addrs));
     if (num_addr <= 0) return -1;
     sock->mode = mode;

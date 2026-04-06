@@ -245,16 +245,17 @@ static int dns_wmsg(struct dns_dec *dec, const char *fmt, ...)
 {
     struct strbuf *buf = &dec->emsg;
     size_t avail = strbuf_avail(buf);
+    char *ptr = strbuf_pos(buf);
 
     va_list args;
     va_start(args, fmt);
-    int nw = vsnprintf(buf->wptr, avail, fmt, args);
+    int nw = vsnprintf(ptr, avail, fmt, args);
     va_end(args);
 
     if (nw < 0) return log_errno_rf("dns_wnsg: wwriter failed");
     if ((size_t) nw >= avail) return log_error_rf("dns_wnsg: no space");
 
-    buf->wptr += nw;
+    buf->ptr += nw;
 
     // all done
     return 0;
@@ -1177,9 +1178,9 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
     const char *opcode_str = opcode_tostr(opcode);
     const char *type_str = qr ? "RESPONSE" : "QUERY";
 
-    char extra[100];
-    struct strbuf buf = STRBUF_INIT(extra, sizeof(extra));
-    extra[0] = '\0';
+    char tmp[100];
+    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+    tmp[0] = '\0';
 
     if (qr) {
         // query response
@@ -1190,24 +1191,24 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
         int rcode = flags & DNS_FLAGS_RCODE;
 
         // add flags
-        if (as) strbuf_putsep(&buf, ' ', STR_LIT("AS:1"));
-        if (tc) strbuf_putsep(&buf, ' ', STR_LIT("TC:1"));
-        if (rd) strbuf_putsep(&buf, ' ', STR_LIT("RD:1"));
-        if (ra) strbuf_putsep(&buf, ' ', STR_LIT("RA:1"));
+        if (as) strbuf_puticm(&buf, ' ', STR_LIT("AS:1"));
+        if (tc) strbuf_puticm(&buf, ' ', STR_LIT("TC:1"));
+        if (rd) strbuf_puticm(&buf, ' ', STR_LIT("RD:1"));
+        if (ra) strbuf_puticm(&buf, ' ', STR_LIT("RA:1"));
 
         // convert RCODE to str
         const char *rcode_str = rcode_tostr(rcode);
-        strbuf_putsep(&buf, ' ', STR_LIT("RCODE:"));
-        strbuf_putstr(&buf, rcode_str);
+        strbuf_puticm(&buf, ' ', STR_LIT("RCODE:"));
+        strbuf_puts(&buf, rcode_str);
 
         // validate OPCODE range
         if (opcode == 3 || opcode > 5) {
-            strbuf_putsep(&buf, ' ', STR_LIT("bad-opcode"));
+            strbuf_puticm(&buf, ' ', STR_LIT("bad-opcode"));
         }
 
         // validate RCODE range
         if (rcode > 10) {
-            strbuf_putsep(&buf, ' ', STR_LIT("bad-rcode"));
+            strbuf_puticm(&buf, ' ', STR_LIT("bad-rcode"));
             dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_HDR, DNS_ERR_BADRCODE);
         }
     }
@@ -1219,14 +1220,14 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
         int ad = flags & DNS_FLAGS_AD ? 1 : 0;   
 
         // add flags
-        if (tc) strbuf_putsep(&buf, ' ', STR_LIT("TC:1"));
-        if (rd) strbuf_putsep(&buf, ' ', STR_LIT("RD:1"));
-        if (cd) strbuf_putsep(&buf, ' ', STR_LIT("CD:1"));
-        if (ad) strbuf_putsep(&buf, ' ', STR_LIT("AD:1"));
+        if (tc) strbuf_puticm(&buf, ' ', STR_LIT("TC:1"));
+        if (rd) strbuf_puticm(&buf, ' ', STR_LIT("RD:1"));
+        if (cd) strbuf_puticm(&buf, ' ', STR_LIT("CD:1"));
+        if (ad) strbuf_puticm(&buf, ' ', STR_LIT("AD:1"));
 
         // validate OPCODE range
         if (opcode == 3 || opcode > 5) {
-            strbuf_putsep(&buf, ' ', STR_LIT("bad-opcode"));
+            strbuf_puticm(&buf, ' ', STR_LIT("bad-opcode"));
             dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_HDR, DNS_ERR_BADOPCODE);
         }
     }
@@ -1234,7 +1235,8 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
     // desc PDU as we decode
     rc = dns_wmsg(dec,
         "[%s] ID 0x%04x QR:%d OPCODE:%s %.*s\n",
-        type_str, hdr->id, qr, opcode_str, (int) strbuf_used(&buf), buf.data);
+        type_str, hdr->id, qr, opcode_str, 
+        (int) strbuf_used(&buf), strbuf_start(&buf));
 
     return rc;
 }
@@ -1444,13 +1446,11 @@ static int dns_enc_name(struct dns_enc *enc, const char *name, int sc, int type)
     return rc;
 }
 
-static int dns_enc_raw(struct dns_enc *enc, void *raw, int raw_len, int sc, int type)
+static int dns_enc_mem(struct dns_enc *enc, void *mem, size_t len, int sc, int type)
 {
-    uint8_t *wbuf = enc_fld_mkspace(enc, raw_len, sc, type);
+    uint8_t *wbuf = enc_fld_mkspace(enc, len, sc, type);
     if (!wbuf) return -1;
-
-    uint8_t *wptr = wbuf;
-    wptr = enc_buf(wptr, raw, raw_len);
+    memcpy(wbuf, mem, len);
 
     return 0;
 }
@@ -1463,7 +1463,7 @@ static int dns_enc_str(struct dns_enc *enc, char *str, size_t len, int sc, int t
 
     uint8_t *wptr = wbuf;
     *wptr++ = len;
-    wptr = enc_buf(wptr, (void *) str, len);
+    memcpy(wptr, str, len);
 
     return 0;
 }
@@ -1492,7 +1492,7 @@ static int encode_rec(struct dns_enc *enc, struct dns_rec *rec, int sc)
     // add data
     switch(rec->type) {
     case DNS_TYPE_A: 
-        rc = dns_enc_raw(enc, rec->rdata.a, sizeof(rec->rdata.a), sc, rec->type);
+        rc = dns_enc_mem(enc, rec->rdata.a, sizeof(rec->rdata.a), sc, rec->type);
         if (rc) return rc;
         break;
     case DNS_TYPE_NS:
@@ -1554,7 +1554,7 @@ static int encode_rec(struct dns_enc *enc, struct dns_rec *rec, int sc)
     }
     case DNS_TYPE_AAAA: // IPv6 Address
         len = sizeof(rec->rdata.aaaa);
-        rc = dns_enc_raw(enc, rec->rdata.aaaa, len, sc, rec->type);
+        rc = dns_enc_mem(enc, rec->rdata.aaaa, len, sc, rec->type);
         if (rc) return rc;
         break;
     case DNS_TYPE_SRV: // Service Locator
@@ -1801,17 +1801,17 @@ static int dns_msg_add_sect(struct dns_msg *msg,
 }
 
 // add a question to DNS msg
-int dns_msg_add_qd(struct dns_msg *msg, const char *name, uint16_t qtype,  uint16_t qclass)
+int dns_msg_add_qd(struct dns_msg *msg, 
+    const char *name, size_t len, 
+    uint16_t qtype,  uint16_t qclass)
 {
     struct dns_quest *quest;
     if (msg->num_qd >= ARR_LEN(msg->qd_recs)) {
         return log_error_rf("No space to store %s record", dec_code_tostr(DNS_DEC_QUESTION));
     }
     quest = &msg->qd_recs[msg->num_qd];
-
-    int len = strlen(name);
     if (len > DNS_NAME_MAXSTR) {
-        return log_error_rf("Name length %d bigger than max %u", len, DNS_NAME_MAXSTR);
+        return log_error_rf("Name length %zu bigger than max %u", len, DNS_NAME_MAXSTR);
     }
 
     quest->qtype = qtype;

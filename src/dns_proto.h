@@ -316,7 +316,10 @@ static inline void dns_msg_set_id_flags(struct dns_msg *msg, uint16_t id, uint16
 #define DNS_MSG_NS 3
 #define DNS_MSG_AR 4
 
-int dns_msg_add_qd(struct dns_msg *msg, const char *name, uint16_t qtype,  uint16_t qclass);
+int dns_msg_add_qd(struct dns_msg *msg, 
+    const char *name, size_t nlen,
+    uint16_t qtype,  uint16_t qclass);
+
 int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rec *rec);
 
 static inline int dns_msg_num_an(struct dns_msg *msg)

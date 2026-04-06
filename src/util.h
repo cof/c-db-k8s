@@ -108,11 +108,13 @@ int setup_signals(struct simple_sig *sig);
  * safe_strlen(str)          : return strlen if not null else 0
  * str_def(str, def_str)     : return str if set else default
  * str_memcpy(dst, src, len) : memcpy a short string
+ * is_white(ch)              : char is whitespace (SP|TAB|VTAB|CR|LF)
+ * is_numeric(ch)            : char is a number (0-9)
  * str_cat(dst, src)         : copy src to dst return position of nul
  * str_tolower(str, len)     : lower case a string
  * str_toupper(str, len)     : upper case a string
- * iswhite(ch)               : char is whitespace (SP|TAB|VTAB|CR|LF)
- * is_numeric(ch)            : char is a number (0-9)
+ * str_endwith(str,len,ch)   : true if str ends with cha
+ * str_countch(str, len, ch) : count number of ch in str
  * str_isnumeric(str, len)   : str is numeric
  * str_tou32(str, len)       : convert str to uint32_t
  * itoa(val, buf, len)       : print ascii repr of int to string buffer
@@ -185,6 +187,16 @@ static inline void *str_memcpy(void *dst, const void *src, int len)
     return dptr;
 }
 
+static inline int is_white(int ch) 
+{
+    return ch == ' ' || ch == '\t' || ch == '\v' || ch == '\r' || ch == '\n' ? 1 : 0;
+}
+
+static inline int is_numeral(int ch) 
+{
+    return ch >= '0' && ch <= '9' ? 1 : 0;
+}
+
 static inline char *str_cat(char *dst, const char *src)
 {
     while (*src) {
@@ -214,14 +226,21 @@ static inline void str_toupper(char *str, size_t len)
     }
 }
 
-static inline int iswhite(int ch) 
+static inline int str_endswith(const char *str, size_t len, int ch)
 {
-    return ch == ' ' || ch == '\t' || ch == '\v' || ch == '\r' || ch == '\n' ? 1 : 0;
+    return len && str[len - 1] == ch ? 1 : 0;
 }
 
-static inline int is_numeral(int ch) 
+static inline size_t str_countch(const char *str, size_t len, int ch)
 {
-    return ch >= '0' && ch <= '9' ? 1 : 0;
+    size_t count = 0;
+    const char *str_end = str + len;
+
+    while (str < str_end) {
+        if (*str++ == ch) count++;
+    }
+
+    return count;
 }
 
 static inline int str_isnumeric(const char *str, size_t len)
@@ -241,12 +260,12 @@ static inline int str_isnumeric(const char *str, size_t len)
 static inline uint32_t str_tou32(const char *str, size_t len)
 {
     const char *ptr = str;
-	const char *end = str + len;
+    const char *end = str + len;
     uint32_t val = 0;
 
     while (ptr < end && is_numeral(*ptr)) {
-		// val = val * 10 using shifts + add
-		val = (val << 3) + (val << 1) + (*ptr++ - '0');
+        // val = val * 10 using shifts + add
+        val = (val << 3) + (val << 1) + (*ptr++ - '0');
     }
 
     return val;
@@ -289,7 +308,7 @@ static inline char *uint8_toa(char *wptr, uint8_t val)
 // a fast 16-bit value to ascii encoder
 static inline char *uint16_toa(char *wptr, uint16_t val) 
 {
-	// 16-bits - max 5 digits - 65535
+    // 16-bits - max 5 digits - 65535
     if (val >= 10000) *wptr++ = (val / 10000) + '0';
     if (val >= 1000)  *wptr++ = (val / 1000 % 10) + '0';
     if (val >= 100)   *wptr++ = (val / 100 % 10) + '0';
@@ -304,7 +323,7 @@ static inline char *uint16_toax(char *wptr, uint16_t val)
 {
     static const char hex[] = "0123456789abcdef";
 
-	// 16-bits = 4 x nibbles = 4 x hex-chars
+    // 16-bits = 4 x nibbles = 4 x hex-chars
     if (val >= 0x1000) *wptr++ = hex[(val >> 12) & 0xf];
     if (val >= 0x100)  *wptr++ = hex[(val >> 8)  & 0xf];
     if (val >= 0x10)   *wptr++ = hex[(val >> 4)  & 0xf];
@@ -352,14 +371,14 @@ size_t ip6_str_encode(uint8_t addr[static 16], int flags, char *str, size_t len)
  * hex_to_nibble : convert hex-char to 4-bit nibble
  * enc_u32(wptr, value) : encode 32-bit at wptr return wptr+4
  * enc_u16(wptr, value) : encode 16-bit at wptr return wptr+2
- * enc_raw(wptr, buf, len) : encode buffer at wptr return wptr + len
+ * enc_mem(wptr, mem, len) : encode mem at wptr return wptr + len
  * dec_u32(buf) : decode a 32-bit value at buf
  * dec_u16(buf) : decode a 16-bit value at buf
  */
 
 static inline uint8_t __attribute__((always_inline)) hex_to_nibble(char ch) 
 {
-	// no multiply, cache hit or branches
+    // no multiply, cache hit or branches
     return (ch & 0xf) + (ch >> 6) + ((ch >> 6) << 3);
 }
 
@@ -381,9 +400,9 @@ static inline uint8_t *enc_u16(uint8_t *wptr, uint16_t value)
     return wptr;
 }
 
-static inline uint8_t *enc_buf(uint8_t *wptr, uint8_t *buf, uint16_t len)
+static inline uint8_t *enc_mem(uint8_t *wptr, void *mem, size_t len)
 {
-    memcpy(wptr, buf, len);
+    memcpy(wptr, mem, len);
     wptr += len;
 
     return wptr;
@@ -412,84 +431,129 @@ static inline uint16_t dec_u16(const unsigned char *buf)
 }
 
 /*
- * a simple string write buffer API
+ * a simple string buffer API
  */
 
 // strbuf state
 struct strbuf {
-    char *data;
-    char *wptr;
-    char *end;
+    uint8_t *mem;
+    uint8_t *ptr;
+    uint8_t *end;
 };
 
-/* strbuf api
+/* STRBUF api
  * ----------
- * STRBUF_INIT(buf, size) : load buffer with memory addres and size
- * strbuf_wptr(buf)  : return write ptr
- * strbuf_avail(buf) : return byte size of writable space
- * strbuf_used(buf) :  retrun byte size of readable data
- * strbuf_putmem(buf, mem, len) : append mem  to buffer
- * strbuf_putstr(buf, str) : append str to to buffer
- * strbuf_putsep(buf, sep, mem, len) : append mem to buffer, add sep if not empty 
- * strbuf_putnul(buf, sep, mem, len) : append mem to buffer, add nul
+ * STRBUF_INIT(mem, len)      : macro for compile-time init
+ * strbuf_init(buf, mem, len) : load buffer with mem and size
+ * strbuf_reset(buf)          : rewind buffer ptr to start
+ * -
+ * strbuf_start(buf)    : return buffer start
+ * strbuf_pos(buf)      : return buffer pos
+ * strbuf_end(buf)      : return 1 if ptr at end else 0
+ * strbuf_avail(buf)    : return space remaining
+ * strbuf_used(buf)     : return space used
+ * strbuf_mksp(buf,len) : return ptr if space else null
+ * -
+ * strbuf_putm(buf,  mem, len)      : append mem
+ * strbuf_putmc(buf, mem, len, ch)  : append mem + ch
+ * strbuf_putmz(buf, mem, len)      : append mem + 0
+ * strbuf_putcm(buf, ch, mem,len)   : append ch + mem
+ * strbuf_puticm(buf, ch, mem, len) : append ch + mem if used else mem
+ * strbuf_puts(buf, str)            : append str
  */
-#define STRBUF_INIT(_buf, _size) { _buf, _buf, _buf + _size } 
-
-static inline char *strbuf_wptr(struct strbuf *buf)
-{
-    return buf->wptr;
+#define STRBUF_INIT(_mem, _len) { \
+    (uint8_t *) _mem, \
+    (uint8_t *) _mem, \
+    (uint8_t *) _mem + _len \
 }
 
-static inline int strbuf_getch(struct strbuf *buf)
+static inline void strbuf_init(struct strbuf *buf, void *mem, size_t len)
 {
-	return *buf->wptr;
+    buf->mem = mem;
+    buf->mem = mem;
+    buf->end = buf->mem + len;
 }
 
-static inline int strbuf_end(struct strbuf *buf)
+static inline void strbuf_reset(struct strbuf *buf)
 {
-	return buf->wptr >= buf->end;
+    buf->ptr = buf->mem;
+}
+
+static inline char *strbuf_start(struct strbuf *buf)
+{
+    return (char *) buf->mem;
+}
+
+static inline char *strbuf_pos(struct strbuf *buf)
+{
+    return (char *) buf->ptr;
 }
 
 static inline size_t strbuf_avail(struct strbuf *buf)
 {
-    return buf->end - buf->wptr;
+    return buf->end - buf->ptr;
 }
 
 static inline size_t strbuf_used(struct strbuf *buf)
 {
-    return buf->wptr - buf->data;
+    return buf->ptr - buf->mem;
 }
 
-static inline struct strbuf *strbuf_putmem(struct strbuf *buf, const char *mem, size_t len)
+static inline int strbuf_end(struct strbuf *buf)
+{
+    return buf->ptr >= buf->end;
+}
+
+
+static inline uint8_t *strbuf_mksp(struct strbuf *buf, size_t len)
 {
     if (len > strbuf_avail(buf)) return NULL;
-
-    memcpy(buf->wptr, mem, len);
-    buf->wptr += len;
-
-    return buf;
+    uint8_t *ptr = buf->ptr;
+    buf->ptr += len;
+    return ptr;
 }
 
-static inline struct strbuf *strbuf_putstr(struct strbuf *buf, const char *str)
+static inline size_t strbuf_putm(struct strbuf *buf, const char *mem, size_t len)
 {
-    return str ? strbuf_putmem(buf, str, strlen(str)) : buf;
+    uint8_t *wptr = strbuf_mksp(buf, len);
+    if (!wptr) return 0;
+    memcpy(wptr, mem, len);
+    return len;
 }
 
-static inline struct strbuf *strbuf_putsep(struct strbuf *buf, int sep, const char *mem, size_t len)
+static inline size_t strbuf_putmc(struct strbuf *buf, const char *mem, size_t len, int c)
 {
-    if (strbuf_used(buf)) {
-        if (!strbuf_avail(buf)) return NULL;
-        *buf->wptr++ = sep;
-    }
-    return strbuf_putmem(buf, mem, len);
+    uint8_t *wptr = strbuf_mksp(buf, len + 1);
+    if (!wptr) return 0;
+    memcpy(wptr, mem, len);
+    wptr[len] = c;
+    return len + 1;
 }
 
-static inline struct strbuf *strbuf_putnul(struct strbuf *buf, const char *mem, size_t len)
+static inline size_t strbuf_putmz(struct strbuf *buf, const char *mem, size_t len)
 {
-    if (len + 1 > strbuf_avail(buf)) return NULL;
-    strbuf_putmem(buf, mem, len);
-    *buf->wptr++ = '\0';
-    return buf;
+    return strbuf_putmc(buf, mem, len, '\0');
+}
+
+static inline size_t strbuf_putcm(struct strbuf *buf, int c, const char *mem, size_t len)
+{
+    uint8_t *wptr = strbuf_mksp(buf, len + 1);
+    if (!wptr) return 0;
+    *wptr++ = c;
+    memcpy(wptr, mem, len);
+    return len + 1;
+}
+
+static inline size_t strbuf_puticm(struct strbuf *buf, int ch, const char *mem, size_t len)
+{
+    return strbuf_used(buf)
+        ? strbuf_putcm(buf, ch, mem, len) 
+        : strbuf_putm(buf, mem, len);
+}
+
+static inline size_t strbuf_puts(struct strbuf *buf, const char *str)
+{
+    return str ? strbuf_putm(buf, str, strlen(str)) : 0;
 }
 
 /*
@@ -520,6 +584,9 @@ struct str_slice {
  * slice_chop(str, ch)    : chop str-slice at ch if founc
  * slice_rsplit(src, ch)  : split string from right at ch if found
  * slice_split(src, ch)   : split string from left if ch found
+ * slice_consume(str, ch) : split str at ch, consume up to ch
+ * slice_endswith(str,ch) : true if str ends with ch
+ * slice_countch(str,ch)  : count number of ch in slice
  * slice_isnumeric(str)   : true if slice is numeric 
  * slice_tou32(str)       : convert str-slice to uint32_t
  * slice_ltrim(str)       : left trim leading whitespace
@@ -619,6 +686,40 @@ static inline struct str_slice slice_split(struct str_slice *src, int ch)
     return dst;
 }
 
+static inline struct str_slice slice_consume(struct str_slice *src, int ch)
+{
+    struct str_slice dst;
+
+    char *ptr = memchr(src->ptr, ch, src->len);
+
+    if (ptr) {
+        // take up to ch
+        dst.ptr = src->ptr;
+        dst.len = ptr - src->ptr;
+        src->ptr += dst.len + 1;
+        src->len -= dst.len + 1;
+    }
+    else {
+        // take it all
+        dst.ptr = src->ptr;
+        dst.len = src->len;
+        src->ptr = NULL;
+        src->len = 0;
+    }
+
+    return dst;
+}
+
+static inline int slice_endswith(struct str_slice str, int ch)
+{
+    return str_endswith(str.ptr, str.len, ch);
+}
+
+static inline size_t slice_countch(struct str_slice str, int ch)
+{
+    return str_countch(str.ptr, str.len, ch);
+}
+
 static inline int slice_isnumeric(struct str_slice str)
 {
     return str_isnumeric(str.ptr, str.len);
@@ -631,7 +732,7 @@ static inline uint32_t slice_tou32(struct str_slice str)
 
 static inline struct str_slice *slice_ltrim(struct str_slice *str)
 {
-    while (str->len && iswhite(*str->ptr)) {
+    while (str->len && is_white(*str->ptr)) {
         str->ptr++;
         str->len--;
     }
@@ -641,7 +742,7 @@ static inline struct str_slice *slice_ltrim(struct str_slice *str)
 
 static inline struct str_slice *slice_rtrim(struct str_slice *str)
 {
-    while (str->len && iswhite(str->ptr[str->len - 1])) {
+    while (str->len && is_white(str->ptr[str->len - 1])) {
         str->len--;
     }
 

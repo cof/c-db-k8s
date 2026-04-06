@@ -159,6 +159,12 @@ void log_argv(const char *what, int argc, char *argv[]);
     (void *) NULL; \
 })
 
+#define log_error_rv(...) ({ \
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, 0, LOG_ERROR, NULL, __VA_ARGS__); \
+    } \
+})
+
 #define log_errno(...) \
     if (log_level >= LOG_ERROR) { \
         _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, NULL, __VA_ARGS__); \
