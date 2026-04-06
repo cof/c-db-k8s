@@ -27,7 +27,7 @@ void log_init(FILE *dst, int level)
     log_level = level;
 
     // enable wait for a '\n' before printing
-    setvbuf(stderr, NULL, _IOLBF, BUFSIZ);
+    setvbuf(log_fd, NULL, _IOLBF, BUFSIZ);
 }
 
 void _log_msg(const char *file, int line, const char *func, 
@@ -54,6 +54,7 @@ void _log_msg(const char *file, int line, const char *func,
     if (ec) fprintf(log_fd, ": %s (errno: %d)", strerror(ec), ec);
 
     fprintf(log_fd, "\n");
+    fflush(log_fd);
 
     // fatal-check
     if (what == LOG_FATAL) exit(1);
