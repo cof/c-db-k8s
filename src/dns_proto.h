@@ -155,6 +155,7 @@ int validate_dns_packet(const uint8_t *pkt, size_t len, char *error_msg);
   A DNS message api
  */
 const char *rcode_tostr(int rcode);
+const char *opcode_tostr(int opcode);
 const char *dns_class_tostr(int ec);
 const char *dns_type_tostr(int ec);
 
@@ -304,10 +305,11 @@ ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len);
 // helper functions
 int dns_msg_sects_tostr(struct dns_msg *msg,  char *buf, size_t len);
 
-static inline void dns_msg_set_id_flags(struct dns_msg *msg, uint16_t id, uint16_t flags)
+static inline void dns_set_id_flags(struct dns_header *hdr, uint16_t id, uint16_t flags)
 {
-    msg->hdr.id = id;
-    msg->hdr.flags = flags;
+    hdr->id = id;
+    hdr->flags = flags;
+
 }
 
 // DNS messaage sections
