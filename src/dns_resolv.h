@@ -67,5 +67,6 @@ int dns_resolv(uint32_t flags,
     int max_addr, struct dns_sockaddr addrs[max_addr]);
 
 char *dns_sockaddr_tostr(struct dns_sockaddr *addr);
+char *dns_socktype_tostr(struct dns_sockaddr *addr);
 
 #endif
