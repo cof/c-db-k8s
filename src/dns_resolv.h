@@ -5,7 +5,8 @@
  * API sections
  * ------------
  * dns_resolv(flags, hostname, port, max_addr, addrs) : resolve hostname/port to array of addr
- * dns_sockaddr_tostr(addr) : convert addr to text form
+ * dns_sockaddr_tostr(addr) : convert sock-addr to text form
+ * dns_socktype_tostr(addr) : convert sock-type to text form
  */
 #ifndef _DNS_RESOLV_H_
 #define _DNS_RESOLV_H_
