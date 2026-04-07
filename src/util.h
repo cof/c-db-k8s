@@ -101,27 +101,30 @@ int setup_signals(struct simple_sig *sig);
  * String API
  * ----------
  * ec_tostr(len, estrs, ec, def) : lookup a string for ec or return default
- * dbj2a_hash(key, len)      : return dbj2a hash of key buffer
- * dbj2a_hash_str(str)       : return dbj2a hash of string
- * gen_str(buf,len,fmt,..)   : generate a string to buffer
- * get_basename(path)        : return basename of path if found
- * safe_strlen(str)          : return strlen if not null else 0
- * str_def(str, def_str)     : return str if set else default
- * str_memcpy(dst, src, len) : memcpy a short string
- * is_white(ch)              : char is whitespace (SP|TAB|VTAB|CR|LF)
- * is_numeric(ch)            : char is a number (0-9)
- * str_cat(dst, src)         : copy src to dst return position of nul
- * str_tolower(str, len)     : lower case a string
- * str_toupper(str, len)     : upper case a string
- * str_endwith(str,len,ch)   : true if str ends with cha
- * str_countch(str, len, ch) : count number of ch in str
- * str_isnumeric(str, len)   : str is numeric
- * str_tou32(str, len)       : convert str to uint32_t
- * itoa(val, buf, len)       : print ascii repr of int to string buffer
- * int_tostr(val)            : convert int-val to string
- * uint8_toa(buf, val)       : a fast 8-bit value to ascii encoder
- * uint16_toa(buf, val)      : a fast 16-bit value to ascii encoder
- * uint16_toax(buf, val)     : a fast 16-bit value to hex encoder
+ * dbj2a_hash(key, len)       : return dbj2a hash of key buffer
+ * dbj2a_hash_str(str)        : return dbj2a hash of string
+ * gen_str(buf,len,fmt,..)    : generate a string to buffer
+ * get_basename(path)         : return basename of path if found
+ * safe_strlen(str)           : return strlen if not null else 0
+ * str_def(str, def_str)      : return str if set else default
+ * str_memcpy(dst, src, len)  : memcpy a short string
+ * is_white(ch)               : char is whitespace (SP|TAB|VTAB|CR|LF)
+ * is_numeric(ch)             : char is a number (0-9)
+ * str_cat(dst, src)          : copy src to dst return position of nul
+ * str_tolower(str, len)      : lower case a string
+ * str_toupper(str, len)      : upper case a string
+ * str_countch(str, len, ch)  : count number of ch in str
+ * str_cmpmem(s1,len,s2,len2)  : cmp mem return < 0, 0, > 0 if lt, eq or gt 
+ * str_cmpmemi(s1,len,s2,len2) : cmp mem ignore case return < 0, 0, > 0 if lt, eq or gt 
+ * str_startswith(str,len,ch) : true if str begins with ch
+ * str_endswith(str,len,ch)   : true if str ends with ch
+ * str_isnumeric(str, len)    : true if str is numeric
+ * str_tou32(str, len)        : convert str to uint32_t
+ * itoa(val, buf, len)        : print ascii repr of int to string buffer
+ * int_tostr(val)             : convert int-val to string
+ * uint8_toa(buf, val)        : a fast 8-bit value to ascii encoder
+ * uint16_toa(buf, val)       : a fast 16-bit value to ascii encoder
+ * uint16_toax(buf, val)      : a fast 16-bit value to hex encoder
  * uint8_tostr(val, str, len) : print 8-bit value to string buffer
  */
 
@@ -226,11 +229,6 @@ static inline void str_toupper(char *str, size_t len)
     }
 }
 
-static inline int str_endswith(const char *str, size_t len, int ch)
-{
-    return len && str[len - 1] == ch ? 1 : 0;
-}
-
 static inline size_t str_countch(const char *str, size_t len, int ch)
 {
     size_t count = 0;
@@ -241,6 +239,44 @@ static inline size_t str_countch(const char *str, size_t len, int ch)
     }
 
     return count;
+}
+
+static inline int str_cmpmem(const void *s1, size_t len1, const void *s2, size_t len2)
+{
+    if (len1 != len2) {
+        size_t len = len1 < len2 ? len1 : len2;
+        int rc = memcmp(s1, s2, len);
+        if (rc) return rc;
+        return len1 - len2;
+    }
+
+    return memcmp(s1, s2, len1);
+}
+
+static inline int str_cmpmemi(const char *s1, size_t len1, const char *s2, size_t len2)
+{
+    size_t len = len1 < len2 ? len1 : len2;
+
+    while (len) {
+        int c1 = *s1++;
+        int c2 = *s2++;
+        if (c1 >= 'A' && c1 <= 'Z') c1 |= 0x20;
+        if (c2 >= 'A' && c2 <= 'Z') c2 |= 0x20;
+        if (c1 != c2) return c1 - c2;
+        len--;
+    }
+
+    return len1 == len2 ? 0 : len1 - len2;
+}
+
+static inline int str_startswith(const char *str, size_t len, int ch)
+{
+    return len && str[0] == ch ? 1 : 0;
+}
+
+static inline int str_endswith(const char *str, size_t len, int ch)
+{
+    return len && str[len - 1] == ch ? 1 : 0;
 }
 
 static inline int str_isnumeric(const char *str, size_t len)
@@ -578,26 +614,34 @@ struct str_slice {
  * slice_make(str, len)   : return a slice set with str and len
  * slice_make_cstr(str)   : return a slice set with str
  * slice_copy(str)        : return a copy of str 
- * slice_cmp_mem(slice, mem, len) : return 1 if slice match mem else 0
- * slice_cmp_str(slice, str)      : return 1 if slice match str else 0
- * slice_cmp(str1, str2)          : return 1 if slices match else 0
+ * -
+ * slice_cmp(s1, s2)             : cmp slices - return < 0, 0, > 0 if lt, eq or gt 
+ * slice_cmpmem(slice, mem, len) : cmp slice to mem - return < 0, 0, > 0 if lt, eq or gt 
+ * slice_cmpstr(slice, str)      : cmp slice to str - return < 0, 0, > 0 if lt, eq or gt
+ * slice_cmpstri(slice, str)     : cmp slice to str ignore case - return < 0, 0, > 0 if lt, eq or gt
+ * slice_eq(s1, s2)              : true if slices match
+ * slcie_eqmem(slice, mem, len)  : true if slice matchs mem
+ * slice_eqstr(slice, str)       : true if slice matchs str
+ * slice_eqstri(s1, s2, len)     : true if slice matchs str ignoring case
+ * slice_startswith(str,ch)      : true if str begins with ch
+ * slice_endswith(str,ch)        : true if str ends with ch
+ * slice_isnumeric(str)          : true if slice is numeric 
+ * -
  * slice_unbracket(str, left, right) : strip left and right chars from str
  * slice_chop(str, ch)    : chop str-slice at ch if founc
  * slice_rsplit(src, ch)  : split string from right at ch if found
  * slice_split(src, ch)   : split string from left if ch found
  * slice_consume(str, ch) : split str at ch, consume up to ch
- * slice_endswith(str,ch) : true if str ends with ch
  * slice_countch(str,ch)  : count number of ch in slice
- * slice_isnumeric(str)   : true if slice is numeric 
- * slice_tou32(str)       : convert str-slice to uint32_t
- * slice_ltrim(str)       : left trim leading whitespace
- * slice_rtrim(str)       : right trim trailing whitespace    
- * slice_trim(str)        : trim left and right whitespace
- * slice_toupper(str)     : upper case str
- * slice_tolower(str)     : lowwer case str
- * slice_strdup(str)      : create a memory copy of str
- * slice_memcpy(buf,len,str) : copy slice to buf
- * slice_dbj2a_hash(str)     : create a dbj2a hash of str
+ * slice_tou32(str)         : convert str-slice to uint32_t
+ * slice_ltrim(str)         : left trim leading whitespace
+ * slice_rtrim(str)         : right trim trailing whitespace    
+ * slice_trim(str)          : trim left and right whitespace
+ * slice_toupper(str)       : upper case str
+ * slice_tolower(str)       : lowwer case str
+ * slice_strdup(str)        : create a memory copy of str
+ * slice_memcpy(buf,len,str)  : copy slice to buf
+ * slice_dbj2a_hash(str)      : create a dbj2a hash of str
  * slice_ip4_decode(str, dst) : decode IPv4 str
  * slice_ip6_decode(str, dst) : decode IPv6 str
  */
@@ -623,19 +667,74 @@ static inline struct str_slice slice_copy(struct str_slice val)
     return val;
 }
 
-static inline int slice_cmp_mem(struct str_slice str, const char *mem, size_t len)
-{
-    return len == str.len && memcmp(str.ptr, mem, len) == 0;
-}
-
-static inline int slice_cmp_str(struct str_slice slice, const char *str)
-{
-    return str ? slice_cmp_mem(slice, str, strlen(str)) : 0;
-}
-
 static inline int slice_cmp(struct str_slice str1, struct str_slice str2)
 {
-    return str1.len == str2.len && memcmp(str1.ptr, str2.ptr, str1.len);
+    return str_cmpmem(str1.ptr, str1.len, str2.ptr, str2.len);
+}
+
+static inline int slice_cmpi(struct str_slice str1, struct str_slice str2)
+{
+    return str_cmpmemi(str1.ptr, str1.len, str2.ptr, str2.len);
+}
+
+static inline int slice_cmpmem(struct str_slice str, const char *mem, size_t len)
+{
+    return str_cmpmem(str.ptr, str.len, mem, len);
+}
+
+static inline int slice_cmpmemi(struct str_slice str, const char *mem, size_t len)
+{
+    return str_cmpmemi(str.ptr, str.len, mem, len);
+}
+
+static inline int slice_cmpstr(struct str_slice slice, const char *str)
+{
+    return str_cmpmem(slice.ptr, slice.len, str, safe_strlen(str));
+}
+
+static inline int slice_cmpstri(struct str_slice slice, const char *str)
+{
+    return str_cmpmemi(slice.ptr, slice.len, str, safe_strlen(str));
+}
+
+static inline int slice_eq(struct str_slice s1, struct str_slice s2)
+{
+    return slice_cmp(s1, s2) == 0;
+} 
+
+static inline int slice_eqi(struct str_slice s1, struct str_slice s2)
+{
+    return slice_cmpi(s1, s2) == 0;
+} 
+
+static inline int slice_eqmem(struct str_slice str, const char *mem, size_t len)
+{
+    return slice_cmpmem(str, mem, len) == 0;
+}
+
+static inline int slice_eqstr(struct str_slice slice, const char *str)
+{
+    return slice_cmpstr(slice, str) == 0;
+}
+
+static inline int slice_eqstri(struct str_slice slice, const char *str)
+{
+    return slice_cmpstri(slice, str) == 0;
+}
+
+static inline int slice_startswith(struct str_slice str, int ch)
+{
+    return str_startswith(str.ptr, str.len, ch);
+}
+
+static inline int slice_endswith(struct str_slice str, int ch)
+{
+    return str_endswith(str.ptr, str.len, ch);
+}
+
+static inline int slice_isnumeric(struct str_slice str)
+{
+    return str_isnumeric(str.ptr, str.len);
 }
 
 static inline struct str_slice slice_unbracket(struct str_slice str, int left, int right)
@@ -716,20 +815,11 @@ static inline struct str_slice slice_consume(struct str_slice *src, int ch)
     return dst;
 }
 
-static inline int slice_endswith(struct str_slice str, int ch)
-{
-    return str_endswith(str.ptr, str.len, ch);
-}
-
 static inline size_t slice_countch(struct str_slice str, int ch)
 {
     return str_countch(str.ptr, str.len, ch);
 }
 
-static inline int slice_isnumeric(struct str_slice str)
-{
-    return str_isnumeric(str.ptr, str.len);
-}
 
 static inline uint32_t slice_tou32(struct str_slice str)
 {
