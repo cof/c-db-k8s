@@ -1782,9 +1782,7 @@ static int dns_msg_add_sect(struct dns_msg *msg,
 }
 
 // add a question to DNS msg
-int dns_msg_add_qd(struct dns_msg *msg, 
-    const char *name, size_t len, 
-    uint16_t qtype,  uint16_t qclass)
+int dns_add_qdn(struct dns_msg *msg, const char *qname, size_t len, uint16_t qtype, uint16_t qclass)
 {
     struct dns_quest *quest;
     if (msg->num_qd >= ARR_LEN(msg->qd_recs)) {
@@ -1797,7 +1795,7 @@ int dns_msg_add_qd(struct dns_msg *msg,
 
     quest->qtype = qtype;
     quest->qclass = qclass;
-    quest->qname = msg_store_str(msg, name, len);
+    quest->qname = msg_store_str(msg, qname, len);
     if (!quest->qname)  {
         return log_error_rf("No room to store %s name", dec_code_tostr(DNS_DEC_QUESTION));
     }
@@ -1808,8 +1806,8 @@ int dns_msg_add_qd(struct dns_msg *msg,
     return 0;
 }
 
-// add a qd|ns|ar section record to DNS msg
-int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rr *rec)
+// add a resource record to an|ns|ar section
+int dns_add_rr(struct dns_msg *msg, int sc, struct dns_rr *rr)
 {
     struct dns_sect *sect;
 
@@ -1820,7 +1818,7 @@ int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rr *rec)
     default: return log_error_rf("Unknown section %d", sc);
     }
 
-    return dns_msg_add_sect(msg, sc, sect, rec);
+    return dns_msg_add_sect(msg, sc, sect, rr);
 }
 
 // get first dns resource record

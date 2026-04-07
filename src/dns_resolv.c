@@ -642,10 +642,9 @@ static int set_dnsmsg(struct dns_ns *ns, struct dns_query *q)
     struct dns_hdr *hdr = &msg->hdr;
     struct str_slice name = ns->name;
 
-    dns_msg_reset(msg);
     q->tid = gen_tid();
-    dns_set_id_flags(hdr, q->tid, DNS_FLAGS_RD);
-    int rc = dns_msg_add_qd(msg, name.ptr, name.len, q->qtype, q->qclass);
+    dns_msg_init(msg, q->tid, DNS_FLAGS_RD);
+    int rc = dns_add_qdn(msg, name.ptr, name.len, q->qtype, q->qclass);
     if (rc) return rc;
 
     log_debug("id:0x%04x qr:%d opcode:%s rd:%d qd:%zu qname=%.*s %s %s",

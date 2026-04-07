@@ -14,8 +14,8 @@
  *  // create a query msg
  *  char buf[BUFSIZ];
  *  struct dns_msg msg;
- *  int rc = dns_msg_add_qd(&msg, "example.com", DNS_TYPE_A, DNS_CLASS_IN);
- *  dns_msg_set_id_flags(&msg, 0x1234, DNS_FLAGS_RD);
+ *  dns_msg_init(&msg, 0x1234, DNS_FLAGS_RD);
+ *  int rc = dns_add_qd(&msg, "example.com", DNS_TYPE_A, DNS_CLASS_IN);
  *  ssize_t pkt_len = dns_msg_encode(&msg, buf, sizeof(buf));
  *  // buffer now has wire-format dns query
  *
@@ -298,10 +298,17 @@ ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len);
 // helper functions
 int dns_msg_sects_tostr(struct dns_msg *msg,  char *buf, size_t len);
 
-static inline void dns_set_id_flags(struct dns_hdr *hdr, uint16_t id, uint16_t flags)
+static inline void dns_hdr_init(struct dns_hdr *hdr, uint16_t id, uint16_t flags)
 {
     hdr->id = id;
     hdr->flags = flags;
+}
+
+static inline void dns_msg_init(struct dns_msg *msg, uint16_t id, uint16_t flags)
+{
+    dns_msg_reset(msg);
+    msg->hdr.id = id;
+    msg->hdr.flags = flags;
 }
 
 // DNS messaage sections
@@ -310,11 +317,14 @@ static inline void dns_set_id_flags(struct dns_hdr *hdr, uint16_t id, uint16_t f
 #define DNS_MSG_NS 3
 #define DNS_MSG_AR 4
 
-int dns_msg_add_qd(struct dns_msg *msg, 
-    const char *name, size_t nlen,
-    uint16_t qtype,  uint16_t qclass);
+int dns_add_qdn(struct dns_msg *msg, const char *qname, size_t len, uint16_t qtype, uint16_t qclass);
 
-int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rr *rec);
+static inline int dns_add_qd(struct dns_msg *msg, const char *qname, uint16_t qtype, uint16_t qclass)
+{
+    return dns_add_qdn(msg, qname, qname ? strlen(qname) : 0, qtype, qclass);
+}
+
+int dns_add_rr(struct dns_msg *msg, int sc, struct dns_rr *rr);
 
 static inline int dns_msg_num_an(struct dns_msg *msg)
 {
