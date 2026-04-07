@@ -92,55 +92,48 @@ static int sock_addr_load(struct sock_addr *addr, struct sockaddr *sa, socklen_t
 // create sockect fd + connect to addr
 static int connect_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
 {
-    // convert sock_addr to ABI
-    const char *addr_str = dns_sockaddr_tostr(addr);
+    int rc = sock_addr_load(&sock->addr, &addr->sa, addr->len);
+    if (rc == 0) return log_error_rf("Unsupported addr %d", addr->len);
+
     int domain = addr->sa.sa_family;
     int type = addr->sock_type; 
-    sock->fd = socket(domain,  type, 0);
-    if (sock->fd == -1) return log_errno_rf("socket(%d,%d) failed for %s", domain, type, addr_str);
+    sock->fd = socket(domain, type, 0);
+
+    log_debug("addr=%s type=%s fd=%d", 
+        dns_sockaddr_tostr(addr), dns_socktype_tostr(addr), sock->fd);
+    if (sock->fd == -1) return log_errno_rf("socket(%d,%d) failed", domain, type);
 
     // need-connect
     if (!(sock->mode & (SOCK_TCP | SOCK_UDPCON))) return 0;
 
     // connect to addr
-    int rc = connect(sock->fd, &addr->sa, addr->len);
-    if (rc == -1) goto err;
-
-    rc = sock_addr_load(&sock->addr, &addr->sa, addr->len);
-    if (rc == 0) {
-        rc = log_error_rf("Unsupported addr %d", addr->len);
-        goto err;
-    }
+    rc = connect(sock->fd, &addr->sa, addr->len);
+    if (rc == -1) return sock_close(sock, rc);
 
     if (sock->mode & SOCK_NONBLK) {
-        if ((rc = sock_set_nonblk(sock))) goto err;
+        rc = sock_set_nonblk(sock);
+        if (rc) return sock_close(sock, rc);
     }
 
     // connected
     return 0;
-
-err:
-    sock_close(sock, 0);
-    return rc;
 }
 
 // create socket-fd + listen on resolved address
 static int listen_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
 {
+    int rc = sock_addr_load(&sock->addr, &addr->sa, addr->len);
+    if (rc == 0) return log_error_rf("Unsupported addr %d", addr->len);
+
     // create socket
-    const char *addr_str = dns_sockaddr_tostr(addr);
     int domain = addr->sa.sa_family;
     int type = addr->sock_type; 
     if (sock->mode & SOCK_NONBLK) type |= SOCK_NONBLOCK;
     sock->fd = socket(domain, type, 0);
-    if (sock->fd == -1) return log_errno_rf("socket(%d,%d) failed for %s", domain, type, addr_str);
 
-    // copy addr
-    int rc = sock_addr_load(&sock->addr, &addr->sa, addr->len);
-    if (rc == 0) {
-        rc = log_error_rf("Unsupported addr %d", addr->len);
-        goto err;
-    }
+    log_debug("addr=%s type=%s fd=%d", 
+        dns_sockaddr_tostr(addr), dns_socktype_tostr(addr), sock->fd);
+    if (sock->fd == -1) return log_errno_rf("socket(%d,%d) failed", domain, type);
 
     // dual-stack
     if (sock->mode & SOCK_ANY) {
@@ -160,24 +153,18 @@ static int listen_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
     if (sock->mode & SOCK_PASSIVE) {
         // bind to address
         if (bind(sock->fd, &addr->sa, addr->len) == -1) {
-            rc = log_errno_rf("bind to (%s) failed", addr_str);
-            goto err;
+            rc = log_errno_rf("bind fd=%d addr=%s failed", sock->fd, dns_sockaddr_tostr(addr));
+            return sock_close(sock, rc);
         }
         // listen for incoming connectons
         if (listen(sock->fd, SOMAXCONN) == -1) {
-            rc = log_errno_rf("listen on %d,%s failed", sock->fd, addr_str);
-            goto err;
+            rc = log_errno_rf("listen fd=%d failed", sock->fd);
+            return sock_close(sock, rc);
         }
     }
 
     // all done
     return 0;
-
-err:
-    sock_close(sock, 0);
-
-    // failed
-    return SOCK_ERROR;
 }
 
 // init state for new or accepted file descriptor
@@ -199,41 +186,47 @@ int sock_init(struct simple_sock *sock,
 }
 
 // close sock free memory
-void sock_deinit(struct simple_sock *sock, int can_log)
+void sock_deinit(struct simple_sock *sock, int rc)
 {
-    sock_close(sock, can_log);
-
+    sock_close(sock, rc);
     rwbuf_deinit(&sock->send_buf);
     rwbuf_deinit(&sock->recv_buf);
 }
 
 // create a client - e.g sock_connect(sock, SOCK_TCP, "example.com", 80)
-int sock_client(struct simple_sock *sock,
-    uint32_t mode, const char *hostname, const char *port)
+int sock_client(struct simple_sock *sock, uint32_t mode,
+    const char *hostname, const char *port)
 {
+    // resolv hostname+port
     struct dns_sockaddr addrs[DNS_MAXADDR];
     int num_addr = sock_resolv(mode, hostname, port, ARRAY(addrs));
     if (num_addr < 0) return num_addr;
-    sock->mode = mode;
+    if (num_addr == 0) return log_error_rf("resolv(%s,%s) not-found", hostname, port);
 
-    // loop over array for working connection
+    // find working addr
+    sock->mode = mode;
+    sock->fd = -1;
     for (int i = 0; i < num_addr; i++) {
         if (connect_addr(sock, &addrs[i]) == 0) break;
     }
-    if (sock->fd == -1) return log_error_rf("sock_client (%s,%s) failed", hostname, port);
+    if (sock->fd == -1) return log_errno_rf("connect(%s,%s) failed", hostname, port);
 
     // all done
     return 0;
 }
 
 // create a server - e.g sock_server(sock, SOCK_TCP, "", 80);
-int sock_server(struct simple_sock *sock,
-    uint32_t mode, const char *hostname, const char *port)
+int sock_server(struct simple_sock *sock, uint32_t mode,
+    const char *hostname, const char *port)
 {
+    // resolv hostname+port
     struct dns_sockaddr addrs[DNS_MAXADDR];
     int num_addr = sock_resolv(mode, hostname, port, ARRAY(addrs));
-    if (num_addr <= 0) return -1;
+    if (num_addr <= 0) return num_addr;
+    if (num_addr == 0) return log_error_rf("resolv(%s,%s) not-found", hostname, port);
+
     sock->mode = mode;
+    sock->fd = -1;
 
     return listen_addr(sock, &addrs[0]);
 }
@@ -287,18 +280,21 @@ int sock_sendfin(struct simple_sock *sock)
 }
 
 // close the socket fd
-int sock_close(struct simple_sock *sock, int can_log)
+int sock_close(struct simple_sock *sock, int rc)
 {
     if (sock->fd != -1) {
+        int _errno = errno;
         int ec = close(sock->fd);
-        if (ec && can_log) {
+        if (ec && rc == 0) {
             log_error("close fd=%d failed", sock->fd);
+            rc = ec;
+            _errno = errno;
         }
         sock->fd = -1;
-        if (ec) return -1;
+        errno = _errno;
     }
 
-    return 0;
+    return rc;
 }
 
 /* 
@@ -328,7 +324,7 @@ int sock_set_nonblk(struct simple_sock *sock)
     flags |= O_NONBLOCK;
 
     int rc = fcntl(sock->fd, F_SETFL, flags);
-    if (rc == -1) return log_errno_rf("fcntl %d SETFL %d failed", sock->fd, flags);
+    if (rc == -1) return log_errno_rf("fcntl %d SETFL 0x%x failed", sock->fd, flags);
 
     return 0;
 }

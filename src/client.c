@@ -90,7 +90,7 @@ static void my_pipe_readwrite(struct my_pipe *src, struct my_pipe *dst,
         }
         if (rc < 0) break;
         str = sock_recv_str(src->recv_sock);
-        if (slice_cmp_mem(str, STR_LIT("> "))) {
+        if (slice_eqmem(str, STR_LIT("> "))) {
             // discard prompt
             sock_recvbuf_consume(src->recv_sock, str.len);
         }
@@ -207,7 +207,7 @@ int main(int argc, char *argv[])
 
     // server connect
     struct my_pipe serv = MY_PIPE_INIT(serv, -1, -1);
-    rc = sock_client(&serv.socks[0], SOCK_TCP | SOCK_NONBLK, hostname, port);
+    rc = sock_client(&serv.socks[0], SOCK_ANY | SOCK_TCP | SOCK_NONBLK, hostname, port);
     if (rc) fatal_error("No connection");
     serv.send_sock = serv.recv_sock = serv.socks;
 
@@ -262,7 +262,7 @@ int main(int argc, char *argv[])
     }
 
     // close server socket
-    sock_close(serv.recv_sock, 1);
+    sock_close(serv.recv_sock, 0);
 
     return 0;
 }

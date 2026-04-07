@@ -167,7 +167,7 @@ static struct {
 static int find_cli_cmd(struct str_slice cmd)
 {
     for (size_t i = 1; i < ARR_LEN(cli_cmds); i++) {
-        if (slice_cmp_mem(cmd, cli_cmds[i].name, cli_cmds[i].len)) {
+        if (slice_eqmem(cmd, cli_cmds[i].name, cli_cmds[i].len)) {
             return i;
         }
     }
@@ -196,18 +196,16 @@ static void client_close(struct simple_client *client, int force)
     sock_write_close(&client->sock, force);
 }
 
-static void client_destroy(struct simple_client *client, int can_log)
+static void client_destroy(struct simple_client *client, int rc)
 {
-    if (can_log) {
+    if (rc == 0) {
         log_info("+", "server-close %s", sock_tostr(&client->sock));
     }
 
-    sock_deinit(&client->sock, can_log);
-
+    sock_deinit(&client->sock, rc);
     if (list_inuse(&client->node)) {
         list_remove(&client->node);
     }
-
     free(client);
 }
 
@@ -408,7 +406,7 @@ static void do_server_check(struct simple_server *server)
     if (!server->sock.sys_err) return;
 
     // stop server
-    sock_close(&server->sock, 0);
+    sock_close(&server->sock, -1);
     server->sig.run = 0;
 
     log_info("+", "Database stopped listening on %s", sock_tostr(&server->sock));
