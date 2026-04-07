@@ -121,6 +121,11 @@ void log_argv(const char *what, int argc, char *argv[]);
     (rc); \
 })
 
+#define log_cmd_err(cmd, opt, ...) ({ \
+    _log_msg(cmd, 0, opt, 0, LOG_NONE, "ERROR", __VA_ARGS__); \
+    UTIL_FAIL; \
+})
+
 #define log_debug(...) \
     if (log_level >= LOG_DEBUG) { \
         _log_msg(__FILE__, __LINE__, __func__, 0, LOG_DEBUG, NULL, __VA_ARGS__); \

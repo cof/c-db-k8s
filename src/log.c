@@ -43,7 +43,8 @@ void _log_msg(const char *file, int line, const char *func,
     }
 
     if (who) fprintf(log_fd, "[%s] ", who);
-    if (file && func) fprintf(log_fd, "%s:%d (%s): ", file, line, func);
+    if (what && file && func) fprintf(log_fd, "%s:%d (%s): ", file, line, func);
+    if (!what && file && func) fprintf(log_fd, "%s: %s: ", file, func);
 
     va_list args;
     va_start(args, fmt);
