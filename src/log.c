@@ -53,8 +53,8 @@ void _log_msg(const char *file, int line, const char *func,
     // add errno
     if (ec) fprintf(log_fd, ": %s (errno: %d)", strerror(ec), ec);
 
-    fprintf(log_fd, "\n");
-    fflush(log_fd);
+    // flush
+    fputc('\n', log_fd);
 
     // fatal-check
     if (what == LOG_FATAL) exit(1);
