@@ -572,7 +572,7 @@ int dns_msg_sects_tostr(struct dns_msg *msg,  char *buf, size_t len)
 }
 
 // add name to msg store
-static char *msg_store_name_str(struct dns_msg *msg, const char *name, size_t len)
+static char *msg_store_str(struct dns_msg *msg, const char *str, size_t len)
 {
     // space for name + nul ?
     if (msg->names_len + len + 1 > sizeof(msg->names)) {
@@ -580,13 +580,18 @@ static char *msg_store_name_str(struct dns_msg *msg, const char *name, size_t le
         return NULL;
     }
 
-    // copy name
-    char *str = msg->names + msg->names_len;
-    memcpy(str, name, len);
-    str[len] = '\0';
+    // add str to names buffer
+    char *store = msg->names + msg->names_len;
+    memcpy(store, str, len);
+    store[len] = '\0';
     msg->names_len += len + 1;
 
-    return str;
+    return store;
+}
+
+static char *msg_store_name(struct dns_msg *msg, const char *name)
+{
+    return msg_store_str(msg, name, safe_strlen(name));
 }
 
 // fix label - add root if needed
@@ -601,10 +606,6 @@ static int fix_label(int rc, char *wptr, char *wend)
     return dns_add_str(wptr, wend - wptr, STR_LIT(DNS_NULL_STR));
 }
 
-static char *msg_store_name(struct dns_msg *msg, const char *name)
-{
-    return msg_store_name_str(msg, name, safe_strlen(name));
-}
 
 // decode a DNS resource record (RR) into a section dns_rec
 static int parse_record(struct dns_dec *dec, struct dns_msg *msg, 
@@ -828,7 +829,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         }
         // store rdata
         if (rec) {
-            rec->rdata.hinfo.cpu_str = msg_store_name_str(msg, (char *) rdata + ridx, len);
+            rec->rdata.hinfo.cpu_str = msg_store_str(msg, (char *) rdata + ridx, len);
             if (!rec->rdata.hinfo.cpu_str) {
                 return log_errno_rf("No space to store HINFO:CPU");
             }
@@ -851,7 +852,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         }
         // store rdata
         if (rec)  {
-            rec->rdata.hinfo.os_str = msg_store_name_str(msg, (char *) rdata + ridx, len);
+            rec->rdata.hinfo.os_str = msg_store_str(msg, (char *) rdata + ridx, len);
             if (!rec->rdata.hinfo.os_str) {
                 return log_errno_rf("No space to store HINFO:OS");
             }
@@ -910,7 +911,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
                     return log_errno_rf("No space for TXT entry");
                 }
                 char *txt = make_ptr(rdata, ridx);
-                rec->rdata.txt.str[rec->rdata.txt.num_str] = msg_store_name_str(msg, txt, len);
+                rec->rdata.txt.str[rec->rdata.txt.num_str] = msg_store_str(msg, txt, len);
                 if (!rec->rdata.txt.str[rec->rdata.txt.num_str]) {
                     return log_errno_rf("No space to store TXT str");
                 }
@@ -1816,7 +1817,7 @@ int dns_msg_add_qd(struct dns_msg *msg,
 
     quest->qtype = qtype;
     quest->qclass = qclass;
-    quest->qname = msg_store_name(msg, name);
+    quest->qname = msg_store_str(msg, name, len);
     if (!quest->qname)  {
         return log_error_rf("No room to store %s name", dec_code_tostr(DNS_DEC_QUESTION));
     }
