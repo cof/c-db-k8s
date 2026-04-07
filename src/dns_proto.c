@@ -52,7 +52,7 @@ struct dns_dec {
     uint8_t ext_rcode;
     uint8_t edns_ver;
     struct strbuf emsg; // track what we write into emsg
-    struct dns_header hdr;
+    struct dns_hdr hdr;
     char msg[DNS_MSG_SIZE]; // parse_dns_name + dns_err_tostr
 };
 
@@ -325,7 +325,7 @@ static int dns_dec_genmsg(struct dns_dec *dec)
 }
 
 // Required functions
-int parse_dns_header(const uint8_t *buf, size_t len, struct dns_header *hdr)
+int parse_dns_header(const uint8_t *buf, size_t len, struct dns_hdr *hdr)
 {
     if (len < DNS_HDR_LEN) {
         // too small
@@ -433,8 +433,8 @@ int dns_quest_tostr(struct dns_quest *quest, char *buf, size_t buf_len)
     return wptr - buf;
 }
 
-// print dns_rec to string - return bytes written or error
-int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len)
+// print dns_rr to string - return bytes written or error
+int dns_rr_tostr(struct dns_rr *rec, int sc, char *buf, size_t buf_len)
 {
     // ensure no hidden fields
     const char *name = str_def(rec->name, "<null>");
@@ -538,12 +538,12 @@ int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len)
 {
     size_t nw = 0;
         
-    for (size_t i = 0; i < sect->num_rec; i++) {
+    for (size_t i = 0; i < sect->rr_count; i++) {
         if (i > 0) {
             if (nw == buf_len) return DNS_FAIL;
             buf[nw++] = '\n';
         }
-        int rc = dns_rec_tostr(&sect->rec[i], sc, buf + nw, buf_len - nw);
+        int rc = dns_rr_tostr(&sect->rrs[i], sc, buf + nw, buf_len - nw);
         if (rc < 0) return rc;
         nw += rc;
     }
@@ -607,17 +607,17 @@ static int fix_label(int rc, char *wptr, char *wend)
 }
 
 
-// decode a DNS resource record (RR) into a section dns_rec
+// decode a DNS resource record (RR) into a section dns_rr
 static int parse_record(struct dns_dec *dec, struct dns_msg *msg, 
     int sect_code, struct dns_sect *sect)
 {
     // grab next section rec
-    struct dns_rec *rec = NULL;
+    struct dns_rr *rr = NULL;
     if (dec->load_msg) {
-        if (sect->num_rec >= ARR_LEN(sect->rec)) {
+        if (sect->rr_count >= ARR_LEN(sect->rrs)) {
             return log_error_rf("No space to store %d record", sect_code);
         }
-        rec = &sect->rec[sect->num_rec];
+        rr = &sect->rrs[sect->rr_count];
     }
 
     // decode name
@@ -633,11 +633,9 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
     wptr += rc + 1;
 
     // store rdata
-    if (rec) {
-        rec->name = msg_store_name(msg, name);
-        if (!rec->name) {
-            return log_errno_rf("No space to store record name");
-        }
+    if (rr) {
+        rr->name = msg_store_name(msg, name);
+        if (!rr->name) return log_errno_rf("No space to store record name");
     }
 
     // decode type, class, ttl, rdlen
@@ -651,11 +649,11 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
     uint16_t rdlen    = dec_u16(dec->pkt_buf + dec->offset + 8);
     dec->offset += len;
 
-    if (rec) {
-        rec->type  = rr_type;
-        rec->class = rr_class;
-        rec->ttl   = rr_ttl;
-        rec->rdlen = rdlen;
+    if (rr) {
+        rr->type  = rr_type;
+        rr->class = rr_class;
+        rr->ttl   = rr_ttl;
+        rr->rdlen = rdlen;
     }
 
     // RDATA
@@ -675,7 +673,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         }
         ridx += 4;
         // store rdata
-        if (rec) memcpy(rec->rdata.a, rdata, rdlen);
+        if (rr) memcpy(rr->rdata.a, rdata, rdlen);
         // describe
         if (dec->need_emsg) {
             if (!inet_ntop(AF_INET, rdata, wptr,wend - wptr)) {
@@ -696,11 +694,9 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (rc < 0) return rc;
         ridx += len;
         // store rdata
-        if (rec) {
-            rec->rdata.ns_name = msg_store_name(msg, wptr);
-            if (!rec->rdata.ns_name) {
-                return log_errno_rf("No space to store ns_name");
-            }
+        if (rr) {
+            rr->rdata.ns_name = msg_store_name(msg, wptr);
+            if (!rr->rdata.ns_name) return log_errno_rf("No space to store ns_name");
         }
         wptr += rc;
         rdata_desc = rdata_str;
@@ -713,11 +709,9 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (rc < 0) return rc;
         ridx += len;
         // store rdata
-        if (rec) {
-            rec->rdata.cname = msg_store_name(msg, wptr);
-            if (!rec->rdata.cname) {
-                return log_errno_rf("No space to store cname");
-            }
+        if (rr) {
+            rr->rdata.cname = msg_store_name(msg, wptr);
+            if (!rr->rdata.cname) return log_errno_rf("No space to store cname");
         }
         wptr += rc;
         rdata_desc = rdata_str;
@@ -737,11 +731,9 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (rc < 0) return rc;
         ridx += len;
         // store rdata
-        if (rec) {
-            rec->rdata.soa.mname = msg_store_name(msg, wptr);
-            if (!rec->rdata.soa.mname) {
-                return log_errno_rf("No space to store mname");
-            }
+        if (rr) {
+            rr->rdata.soa.mname = msg_store_name(msg, wptr);
+            if (!rr->rdata.soa.mname) return log_errno_rf("No space to store mname");
         }
         wptr += rc;
 
@@ -758,11 +750,9 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (rc < 0) return rc;
         ridx += len;
         // store rdata
-        if (rec) {
-            rec->rdata.soa.rname = msg_store_name(msg, wptr);
-            if (!rec->rdata.soa.mname) {
-                return log_errno_rf("No space to store rname");
-            }
+        if (rr) {
+            rr->rdata.soa.rname = msg_store_name(msg, wptr);
+            if (!rr->rdata.soa.mname) return log_errno_rf("No space to store rname");
         }
         wptr += rc;
 
@@ -783,12 +773,12 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
             }
         }
         // store rdata
-        if (rec) {
-            rec->rdata.soa.serial  = vals[0];
-            rec->rdata.soa.refresh = vals[1];
-            rec->rdata.soa.retry   = vals[2];
-            rec->rdata.soa.expire  = vals[3];
-            rec->rdata.soa.min_ttl = vals[4];
+        if (rr) {
+            rr->rdata.soa.serial  = vals[0];
+            rr->rdata.soa.refresh = vals[1];
+            rr->rdata.soa.retry   = vals[2];
+            rr->rdata.soa.expire  = vals[3];
+            rr->rdata.soa.min_ttl = vals[4];
         }
         // decoded
         rdata_desc = rdata_str;
@@ -802,11 +792,9 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (rc < 0) return rc;
         ridx += len;
         // store rdata
-        if (rec) {
-            rec->rdata.ptr_name = msg_store_name(msg, wptr);
-            if (!rec->rdata.ptr_name) {
-                return log_errno_rf("No space to store PTR");
-            }
+        if (rr) {
+            rr->rdata.ptr_name = msg_store_name(msg, wptr);
+            if (!rr->rdata.ptr_name) return log_errno_rf("No space to store PTR");
         }
         wptr += rc;
         rdata_desc = rdata_str;
@@ -828,11 +816,9 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
             wptr += rc;
         }
         // store rdata
-        if (rec) {
-            rec->rdata.hinfo.cpu_str = msg_store_str(msg, (char *) rdata + ridx, len);
-            if (!rec->rdata.hinfo.cpu_str) {
-                return log_errno_rf("No space to store HINFO:CPU");
-            }
+        if (rr) {
+            rr->rdata.hinfo.cpu_str = msg_store_str(msg, (char *) rdata + ridx, len);
+            if (!rr->rdata.hinfo.cpu_str) return log_errno_rf("No space to store HINFO:CPU");
         }
         ridx += len;
 
@@ -851,11 +837,9 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
             wptr += rc;
         }
         // store rdata
-        if (rec)  {
-            rec->rdata.hinfo.os_str = msg_store_str(msg, (char *) rdata + ridx, len);
-            if (!rec->rdata.hinfo.os_str) {
-                return log_errno_rf("No space to store HINFO:OS");
-            }
+        if (rr)  {
+            rr->rdata.hinfo.os_str = msg_store_str(msg, (char *) rdata + ridx, len);
+            if (!rr->rdata.hinfo.os_str) return log_errno_rf("No space to store HINFO:OS");
         }
         ridx += len;
         // decoded
@@ -880,12 +864,10 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (rc < 0) return rc;
         ridx += len;
         // store rdata
-        if (rec) {
-            rec->rdata.mx.pref = pref;
-            rec->rdata.mx.name = msg_store_name(msg, wptr);
-            if (!rec->rdata.mx.name) {
-                return log_errno_rf("No space to store mx_name");
-            }
+        if (rr) {
+            rr->rdata.mx.pref = pref;
+            rr->rdata.mx.name = msg_store_name(msg, wptr);
+            if (!rr->rdata.mx.name) return log_errno_rf("No space to store mx_name");
         }
         wptr += rc;
         // decoded
@@ -906,16 +888,16 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
                 wptr += rc;
             }
             // store rdata
-            if (rec) {
-                if (rec->rdata.txt.num_str >= ARR_LEN(rec->rdata.txt.str)) {
+            if (rr) {
+                if (rr->rdata.txt.num_str >= ARR_LEN(rr->rdata.txt.str)) {
                     return log_errno_rf("No space for TXT entry");
                 }
                 char *txt = make_ptr(rdata, ridx);
-                rec->rdata.txt.str[rec->rdata.txt.num_str] = msg_store_str(msg, txt, len);
-                if (!rec->rdata.txt.str[rec->rdata.txt.num_str]) {
+                rr->rdata.txt.str[rr->rdata.txt.num_str] = msg_store_str(msg, txt, len);
+                if (!rr->rdata.txt.str[rr->rdata.txt.num_str]) {
                     return log_errno_rf("No space to store TXT str");
                 }
-                rec->rdata.txt.num_str++;
+                rr->rdata.txt.num_str++;
             }
             ridx += len;
         }
@@ -928,7 +910,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         }
         ridx += 16;
         // store rdata
-        if (rec) memcpy(rec->rdata.aaaa, rdata, rdlen);
+        if (rr) memcpy(rr->rdata.aaaa, rdata, rdlen);
         // describe
         if (dec->need_emsg) {
             if (!inet_ntop(AF_INET6, rdata, wptr,wend - wptr)) {
@@ -961,12 +943,12 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (rc < 0) return rc;
         ridx += len;
         // store rdata
-        if (rec) {
-            rec->rdata.srv.prior = prior;
-            rec->rdata.srv.weight = weight;
-            rec->rdata.srv.port = port;
-            rec->rdata.srv.name = msg_store_name(msg, wptr);
-            if (!rec->rdata.srv.name) {
+        if (rr) {
+            rr->rdata.srv.prior = prior;
+            rr->rdata.srv.weight = weight;
+            rr->rdata.srv.port = port;
+            rr->rdata.srv.name = msg_store_name(msg, wptr);
+            if (!rr->rdata.srv.name) {
                 return log_errno_rf("No space to store srv_name");
             }
         }
@@ -987,18 +969,18 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         uint32_t ttl_val  = dec_u32(dec->pkt_buf + ridx + 2);
         uint8_t ext_rcode = (ttl_val >> 24) & 0xFF;
         uint8_t version   = (ttl_val >> 16) & 0xFF;
-        uint8_t do_bit   = (ttl_val & 0x8000);
+        uint8_t do_bit    = (ttl_val & 0x8000);
 
         // store rdata
-        if (rec) {
-            rec->rdata.opt.udp_size = udp_size;
-            rec->rdata.opt.ttl_val = ttl_val;
-            rec->rdata.opt.ext_rcode = ext_rcode;
-            rec->rdata.opt.edns_ver = version;
-            rec->rdata.opt.do_bit = do_bit;
-            rec->class = 0;
-            rec->name = msg_store_name(msg, name);
-            if (!rec->name) {
+        if (rr) {
+            rr->rdata.opt.udp_size = udp_size;
+            rr->rdata.opt.ttl_val = ttl_val;
+            rr->rdata.opt.ext_rcode = ext_rcode;
+            rr->rdata.opt.edns_ver = version;
+            rr->rdata.opt.do_bit = do_bit;
+            rr->class = 0;
+            rr->name = msg_store_name(msg, name);
+            if (!rr->name) {
                 return log_errno_rf("No space to store root");
             }
         }
@@ -1033,9 +1015,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
     // rdata decoded - TODO check if ridx != rdlen
     dec->offset += rdlen;
     // next record
-    if (rec && sect) {
-        sect->num_rec++;
-    }
+    if (rr && sect) sect->rr_count++;
 
     if (dec->need_emsg) {
         // ensure no hidden fields
@@ -1157,7 +1137,7 @@ static int decode_qd(struct dns_dec *dec, struct dns_msg *msg)
 // decode DNS header
 static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
 {
-    struct dns_header *hdr = &msg->hdr;
+    struct dns_hdr *hdr = &msg->hdr;
 
     // read header
     int rc = parse_dns_header(dec->pkt_buf, dec->pkt_len, hdr);
@@ -1470,7 +1450,7 @@ static int dns_enc_str(struct dns_enc *enc, char *str, size_t len, int sc, int t
 }
 
 // encode an RR record into packet buffer
-static int encode_rec(struct dns_enc *enc, struct dns_rec *rec, int sc)
+static int encode_rec(struct dns_enc *enc, struct dns_rr *rec, int sc)
 {
     // add hdr (name|type|class|ttl|rdlength
     int len = DNS_NAME_MAXLEN + 2 + 2 + 4 + 2;
@@ -1585,7 +1565,7 @@ static int encode_rec(struct dns_enc *enc, struct dns_rec *rec, int sc)
 static int dns_enc_sect(struct dns_enc *enc, int nrec, int sc, struct dns_sect *sect)
 {
     for (int i = 0; i < nrec; i++) {
-        int rc = encode_rec(enc, &sect->rec[i], sc);
+        int rc = encode_rec(enc, &sect->rrs[i], sc);
         if (rc) return rc;
     }
 
@@ -1625,11 +1605,11 @@ static int encode_qd(struct dns_enc *enc, struct dns_msg *msg)
 static int encode_hdr(struct dns_enc *enc, struct dns_msg *msg)
 {
     // sync hdr
-    struct dns_header *hdr = &msg->hdr;
+    struct dns_hdr *hdr = &msg->hdr;
     hdr->qd_count = msg->num_qd;
-    hdr->an_count = msg->an_recs.num_rec;
-    hdr->ns_count = msg->ns_recs.num_rec;
-    hdr->ar_count = msg->ar_recs.num_rec;
+    hdr->an_count = msg->an_recs.rr_count;
+    hdr->ns_count = msg->ns_recs.rr_count;
+    hdr->ar_count = msg->ar_recs.rr_count;
 
     // make space
     uint8_t *wbuf = dns_enc_mkspace(enc, DNS_HDR_LEN);
@@ -1677,114 +1657,114 @@ ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len)
     return enc.pkt_len;
 }
 
-// add a dns_rec to a DNS msg section record
+// add a dns_rr to a DNS msg section record
 static int dns_msg_add_sect(struct dns_msg *msg,
-    int sc, struct dns_sect *sect, struct dns_rec *src_rec)
+    int sc, struct dns_sect *sect, struct dns_rr *src_rr)
 {
-    if (!src_rec) {
+    if (!src_rr) {
         return log_error_rf("Store %s record is <null>", dec_code_tostr(sc));
     }
 
     // space for record ?
-    struct dns_rec *rec;
-    if (sect->num_rec >= ARR_LEN(sect->rec)) {
+    struct dns_rr *rr;
+    if (sect->rr_count >= ARR_LEN(sect->rrs)) {
         return log_error_rf("No space to store %s record", dec_code_tostr(sc));
     }
-    rec = &sect->rec[sect->num_rec];
+    rr = &sect->rrs[sect->rr_count];
 
-    if (!src_rec->name) {
-        return log_error_rf("Store %s record name is <null>", dec_code_tostr(sc));
+    if (!src_rr->name) {
+        return log_error_rf("src %s record name is <null>", dec_code_tostr(sc));
     }
 
     // store name
-    int len = strlen(src_rec->name);
+    int len = strlen(src_rr->name);
     if (len > DNS_NAME_MAXSTR) {
-        return log_error_rf("%s name length %d bigger than max %u", dec_code_tostr(sc), len, DNS_NAME_MAXSTR);
+        return log_error_rf("%s name len %d bigger than max %u", dec_code_tostr(sc), len, DNS_NAME_MAXSTR);
     }
 
-    rec->name = msg_store_name(msg, src_rec->name);
-    if (!rec->name) {
-        return log_errno_rf("No space to store record name for %s", dec_code_tostr(sc));
+    rr->name = msg_store_name(msg, src_rr->name);
+    if (!rr->name) {
+        return log_errno_rf("No space to store rr name for %s", dec_code_tostr(sc));
     }
-    rec->type  = src_rec->type;
-    rec->class = src_rec->class;
-    rec->ttl   = src_rec->ttl;
+    rr->type  = src_rr->type;
+    rr->class = src_rr->class;
+    rr->ttl   = src_rr->ttl;
 
     // store rdata
-    switch(rec->type) {
+    switch(rr->type) {
     case DNS_TYPE_A: 
-        memcpy(rec->rdata.a, src_rec->rdata.a, 4);
+        memcpy(rr->rdata.a, src_rr->rdata.a, 4);
         break;
     case DNS_TYPE_NS:
-        rec->rdata.ns_name = msg_store_name(msg, src_rec->rdata.ns_name);
-        if (!rec->rdata.ns_name) {
+        rr->rdata.ns_name = msg_store_name(msg, src_rr->rdata.ns_name);
+        if (!rr->rdata.ns_name) {
             return log_errno_rf("No space to store ns_name for %s", dec_code_tostr(sc));
         }
         break;
     case DNS_TYPE_CNAME: // Canonical Name (Alias)
-       rec->rdata.cname = msg_store_name(msg, src_rec->rdata.cname);
-       if (!rec->rdata.cname) {
+       rr->rdata.cname = msg_store_name(msg, src_rr->rdata.cname);
+       if (!rr->rdata.cname) {
           return log_errno_rf("No space to store cname for %s", dec_code_tostr(sc));
        }
        break;
     case DNS_TYPE_SOA: { // Start of Authority
         // Primary Master Name Server - MNAME
-        rec->rdata.soa.mname = msg_store_name(msg, src_rec->rdata.soa.mname);
-        if (!rec->rdata.soa.mname) {
+        rr->rdata.soa.mname = msg_store_name(msg, src_rr->rdata.soa.mname);
+        if (!rr->rdata.soa.mname) {
             return log_errno_rf("No space to store mname");
         }
         // Responsible Person's Email - RNAME
-        rec->rdata.soa.rname = msg_store_name(msg, src_rec->rdata.soa.rname);
-        if (!rec->rdata.soa.mname) {
+        rr->rdata.soa.rname = msg_store_name(msg, src_rr->rdata.soa.rname);
+        if (!rr->rdata.soa.mname) {
             return log_errno_rf("No space to store rname");
         }
-        rec->rdata.soa.serial   = src_rec->rdata.soa.serial;
-        rec->rdata.soa.refresh  = src_rec->rdata.soa.refresh;
-        rec->rdata.soa.retry    = src_rec->rdata.soa.retry;
-        rec->rdata.soa.expire   = src_rec->rdata.soa.expire;
-        rec->rdata.soa.min_ttl  = src_rec->rdata.soa.min_ttl;
+        rr->rdata.soa.serial   = src_rr->rdata.soa.serial;
+        rr->rdata.soa.refresh  = src_rr->rdata.soa.refresh;
+        rr->rdata.soa.retry    = src_rr->rdata.soa.retry;
+        rr->rdata.soa.expire   = src_rr->rdata.soa.expire;
+        rr->rdata.soa.min_ttl  = src_rr->rdata.soa.min_ttl;
         break;
     }
     case DNS_TYPE_PTR: // Domain Name Pointer (Reverse DNS)
-        rec->rdata.ptr_name = msg_store_name(msg, src_rec->rdata.ptr_name);
-        if (!rec->rdata.ptr_name) {
+        rr->rdata.ptr_name = msg_store_name(msg, src_rr->rdata.ptr_name);
+        if (!rr->rdata.ptr_name) {
             return log_errno_rf("No space to store PTR");
         }
         break;
     case DNS_TYPE_HINFO: // Host Information
-        rec->rdata.hinfo.cpu_str = msg_store_name(msg, src_rec->rdata.hinfo.cpu_str);
-        rec->rdata.hinfo.os_str  = msg_store_name(msg, src_rec->rdata.hinfo.os_str);
+        rr->rdata.hinfo.cpu_str = msg_store_name(msg, src_rr->rdata.hinfo.cpu_str);
+        rr->rdata.hinfo.os_str  = msg_store_name(msg, src_rr->rdata.hinfo.os_str);
         break;
     case DNS_TYPE_MX: // Mail Exchange 
-        rec->rdata.mx.pref = src_rec->rdata.mx.pref;
-        rec->rdata.mx.name = msg_store_name(msg, src_rec->rdata.mx.name);
-        if (!rec->rdata.mx.name) {
+        rr->rdata.mx.pref = src_rr->rdata.mx.pref;
+        rr->rdata.mx.name = msg_store_name(msg, src_rr->rdata.mx.name);
+        if (!rr->rdata.mx.name) {
             return log_errno_rf("No space to store mx_name");
         }
         break;
     case DNS_TYPE_TXT: {
-        for (int i = 0; i < src_rec->rdata.txt.num_str; i++) {
-            char *src_str = src_rec->rdata.txt.str[i];
-            if (rec->rdata.txt.num_str >= ARR_LEN(rec->rdata.txt.str)) {
+        for (int i = 0; i < src_rr->rdata.txt.num_str; i++) {
+            char *src_str = src_rr->rdata.txt.str[i];
+            if (rr->rdata.txt.num_str >= ARR_LEN(rr->rdata.txt.str)) {
                 return log_errno_rf("No space for TXT entry");
             }
-            rec->rdata.txt.str[rec->rdata.txt.num_str] = msg_store_name(msg, src_str);
-            if (!rec->rdata.txt.str[rec->rdata.txt.num_str]) {
+            rr->rdata.txt.str[rr->rdata.txt.num_str] = msg_store_name(msg, src_str);
+            if (!rr->rdata.txt.str[rr->rdata.txt.num_str]) {
                 return log_errno_rf("No space to store TXT str");
             }
-            rec->rdata.txt.num_str++;
+            rr->rdata.txt.num_str++;
         }
         break;
     }
     case DNS_TYPE_AAAA:  // IPv6 Address
-        mempcpy(rec->rdata.aaaa, src_rec->rdata.aaaa, 16);
+        mempcpy(rr->rdata.aaaa, src_rr->rdata.aaaa, 16);
         break;
     case DNS_TYPE_SRV: // Service Locator
-        rec->rdata.srv.prior  = src_rec->rdata.srv.prior;
-        rec->rdata.srv.weight = src_rec->rdata.srv.weight;
-        rec->rdata.srv.port   = src_rec->rdata.srv.port;
-        rec->rdata.srv.name   = msg_store_name(msg, src_rec->rdata.srv.name);
-        if (!rec->rdata.srv.name) {
+        rr->rdata.srv.prior  = src_rr->rdata.srv.prior;
+        rr->rdata.srv.weight = src_rr->rdata.srv.weight;
+        rr->rdata.srv.port   = src_rr->rdata.srv.port;
+        rr->rdata.srv.name   = msg_store_name(msg, src_rr->rdata.srv.name);
+        if (!rr->rdata.srv.name) {
             return log_errno_rf("No space to store srv_name");
         }
         break;
@@ -1796,7 +1776,7 @@ static int dns_msg_add_sect(struct dns_msg *msg,
     }
 
     // record loaded okay
-    sect->num_rec++;
+    sect->rr_count++;
 
     return 0;
 }
@@ -1829,7 +1809,7 @@ int dns_msg_add_qd(struct dns_msg *msg,
 }
 
 // add a qd|ns|ar section record to DNS msg
-int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rec *rec)
+int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rr *rec)
 {
     struct dns_sect *sect;
 
@@ -1844,12 +1824,12 @@ int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rec *rec)
 }
 
 // get first dns resource record
-struct dns_rec *dns_msg_get_rec(struct dns_msg *msg)
+struct dns_rr *dns_msg_get_rec(struct dns_msg *msg)
 {
     if (dns_msg_cnt_rec(msg) != 1) return NULL;
-    if (dns_msg_num_an(msg)) return &msg->an_recs.rec[0];
-    if (dns_msg_num_ns(msg)) return &msg->ns_recs.rec[0];
-    if (dns_msg_num_ar(msg)) return &msg->ar_recs.rec[0];
+    if (dns_msg_num_an(msg)) return &msg->an_recs.rrs[0];
+    if (dns_msg_num_ns(msg)) return &msg->ns_recs.rrs[0];
+    if (dns_msg_num_ar(msg)) return &msg->ar_recs.rrs[0];
 
     return NULL;
 }
@@ -1895,7 +1875,7 @@ int dns_get_flag(const char *str)
  * =====================
  *  addr =  ip4addr|ip6addr|regname [<ttl>] [class=IN|CS|CH|HS]
  */
-int dns_rec_load(struct dns_rec *rec, int sc, const char *src)
+int dns_rr_load(struct dns_rr *rec, int sc, const char *src)
 {
     // get addr
     struct str_slice addr  = slice_make_cstr(src);

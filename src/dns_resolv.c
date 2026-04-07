@@ -589,7 +589,7 @@ static int enc_dnspkt(struct dns_ns *ns, struct dns_query *q)
 static int chk_dnsmsg(struct dns_ns *ns, struct dns_query *q)
 {
     struct dns_msg *msg = &ns->msg;
-    struct dns_header *hdr = &msg->hdr;
+    struct dns_hdr *hdr = &msg->hdr;
     int is_rsp = hdr->flags & DNS_FLAGS_QR ? 1 : 0;
     int rcode = hdr->flags & DNS_FLAGS_RCODE;
 
@@ -597,7 +597,7 @@ static int chk_dnsmsg(struct dns_ns *ns, struct dns_query *q)
         hdr->id, hdr->flags & DNS_FLAGS_QR ? 1 : 0,
         opcode_tostr((hdr->flags & DNS_FLAGS_OPCODE) >> 11),
         is_rsp ? rcode_tostr(rcode) : "?", 
-        msg->num_qd, msg->an_recs.num_rec,
+        msg->num_qd, msg->an_recs.rr_count,
         SLICE(ns->name),
         dns_class_tostr(q->qclass),
         dns_type_tostr(q->qtype));
@@ -639,7 +639,7 @@ static int chk_dnsmsg(struct dns_ns *ns, struct dns_query *q)
 static int set_dnsmsg(struct dns_ns *ns, struct dns_query *q)
 {
     struct dns_msg *msg = &ns->msg;
-    struct dns_header *hdr = &msg->hdr;
+    struct dns_hdr *hdr = &msg->hdr;
     struct str_slice name = ns->name;
 
     dns_msg_reset(msg);
@@ -667,14 +667,14 @@ static int ns_add_ans(struct dns_ns *ns)
     // a query worked
     ns->have_ans = 1;
 
-    for (size_t i = 0; i < ans->num_rec && !res_isfull(ns->res); i++) {
-        struct dns_rec *rec =  &ans->rec[i];
-        switch(rec->type) {
+    for (size_t i = 0; i < ans->rr_count && !res_isfull(ns->res); i++) {
+        struct dns_rr *rr =  &ans->rrs[i];
+        switch(rr->type) {
         case DNS_TYPE_A:
-            if (res_add_ip(ns->res, DNS_IPV4, rec->rdata.a)) ns->have_ip4 = 1;
+            if (res_add_ip(ns->res, DNS_IPV4, rr->rdata.a)) ns->have_ip4 = 1;
             break;
         case DNS_TYPE_AAAA: 
-            if (res_add_ip(ns->res, DNS_IPV6, rec->rdata.aaaa)) ns->have_ip6 = 1;
+            if (res_add_ip(ns->res, DNS_IPV6, rr->rdata.aaaa)) ns->have_ip6 = 1;
             break;
         }
     }
