@@ -30,6 +30,7 @@
 #include "util.h"
 #include "list.h"
 #include "log.h"
+#include "dns_resolv.h"
 #include "sock.h"
 #include "db.h"
 
@@ -521,7 +522,7 @@ static const char *examples[] = {
 };
 
 // process cmd-line options
-static int server_parse_argv(struct simple_server *serv, int argc, char *argv[])
+static int server_argv(struct simple_server *serv, int argc, char *argv[])
 {
     struct cmd_argv parser = { argc, argv, opts };
     int rc;
@@ -607,13 +608,13 @@ int main(int argc, char *argv[])
     log_init(NULL, APP_LOGLEVEL);
 
     if (!(serv = server_create())) { ec = 1; goto done; }
-    if (server_init(serv))    { ec = 2; goto done; }
-    if (setup_signals(&serv->sig))  { ec = 3 ;goto done; }
-    if (server_parse_argv(serv, argc, argv)) { ec = 4;  goto done; }
-    if (setup_database(serv)) { ec = 5; goto done; }
-    if (setup_listener(serv)) { ec = 6; goto done; }
-
-    if (server_run(serv) != 0) { ec = 7; goto done; }
+    if (server_init(serv))         { ec = 2; goto done; }
+    if (setup_signals(&serv->sig)) { ec = 3 ;goto done; }
+    if (server_argv(serv, argc, argv)) { ec = 4; goto done; }
+    if (dns_init())            { ec = 5; goto done; }
+    if (setup_database(serv))  { ec = 6; goto done; }
+    if (setup_listener(serv))  { ec = 7; goto done; }
+    if (server_run(serv) != 0) { ec = 8; goto done; }
 
     // all done
     ec = 0;

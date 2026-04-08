@@ -4,6 +4,7 @@
  *
  * API sections
  * ------------
+ * dns_init();
  * dns_resolv(flags, hostname, port, max_addr, addrs) : resolve hostname/port to array of addr
  * dns_sockaddr_tostr(addr) : convert sock-addr to text form
  * dns_socktype_tostr(addr) : convert sock-type to text form
@@ -17,15 +18,22 @@
 #define DNS_RESOLV "resolv"
 #define DNS_SERVICES "/etc/services"
 #define DNS_RESOLV_CONF "/etc/resolv.conf"
+#define DNS_HOSTS "/etc/hosts"
 
 #define DNS_MAXADDR 16  // default result
 #define DNS_MAXNAME 256
-#define DNS_MAXSRCH 8
-#define DNS_MAXNS 3
+
 #define DNS_PORT 53
 #define DNS_PKTSIZE 1280
 #define DNS_ATTEMPTS 2
 #define DNS_TIMEOUT_SECS 5
+
+#define DNS_CFG_MAXNS    3
+#define DNS_CFG_MAXSRCH  8
+#define DNS_CFG_MAXSTORE 256
+
+#define DNS_HOSTS_MAXADDR 128
+#define DNS_HOSTS_MAXSTORE BUFSIZ
 
 // resolv flags
 #define DNS_TCP      (1 << 0)
@@ -62,11 +70,10 @@ struct dns_sockaddr {
     };
 };
 
-// resolve hostname,port to array of resolv_addr - returns num-addr or error
+int dns_init(void);
 int dns_resolv(uint32_t flags, 
     const char *hostname, const char *port,
     int max_addr, struct dns_sockaddr addrs[max_addr]);
-
 char *dns_sockaddr_tostr(struct dns_sockaddr *addr);
 char *dns_socktype_tostr(struct dns_sockaddr *addr);
 

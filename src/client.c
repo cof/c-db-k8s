@@ -24,6 +24,7 @@
 #include "config.h"
 #include "util.h"
 #include "log.h"
+#include "dns_resolv.h"
 #include "sock.h"
 
 // pipe state
@@ -204,6 +205,8 @@ int main(int argc, char *argv[])
     struct simple_sig sig;
     rc = setup_signals(&sig);
     if (rc) fatal_error("setup signals");
+    rc = dns_init();
+    if (rc) fatal_error("setup resolver");
 
     // server connect
     struct my_pipe serv = MY_PIPE_INIT(serv, -1, -1);
