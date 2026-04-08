@@ -1,7 +1,7 @@
 /*
  * MAP api
  * -------
- * hasmap32/hashmap64        : map types
+ * hasmap32/hashmap64/hashmapstr : map types
  * -
  * map_init(m, capacity)  : initialize map
  * map_free(m)            : free map memory
