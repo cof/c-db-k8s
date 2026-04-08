@@ -200,7 +200,7 @@ size_t ip6_str_decode(const char *str, size_t len, uint8_t dst[static 16])
                 dst_ptr = enc_u16(dst_ptr, acc);
             }
             // double-colon
-            if (str_ptr + 1 < str_end && str_ptr[1] == ':') {
+            if (str_ptr < str_end && *str_ptr == ':') {
                 if (zero_ptr) return 0; // 2nd '::'
                 zero_ptr = dst_ptr;
                 str_ptr++;

@@ -5,6 +5,7 @@
  * - signal handling
  * - string buffer
  * - string parsing
+ * - hash tables
  * - codecs
  * - cmd-line parsing
  *
@@ -50,7 +51,7 @@
 #define make_ptr(ptr, offset)  ((void *)  ( ((char *) ptr) + offset))
 #define make_offset(base, ptr) ((uint64_t) ((char *) (ptr) - (char *) (base)))
 #define make_mem(val) ((void *) ((uintptr_t) val))
-#define unmake_mem(val) ((uintptr_t) (val))
+#define unmake_mem(val) ((uint64_t) ((uintptr_t) (val)))
 
 // Stringification macros
 #define XSTR(a) #a
@@ -878,7 +879,6 @@ static inline size_t slice_ip6_decode(const struct str_slice str, uint8_t dst[st
 {
     return ip6_str_decode(str.ptr, str.len, dst);
 }
-
 
 /*
  * Setter API
