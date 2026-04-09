@@ -70,7 +70,7 @@ struct dns_sockaddr {
     };
 };
 
-int dns_init(void);
+int dns_init(uint32_t hosts_size, uint32_t cache_size, struct simple_sig *sig);
 int dns_resolv(uint32_t flags, 
     const char *hostname, const char *port,
     int max_addr, struct dns_sockaddr addrs[max_addr]);

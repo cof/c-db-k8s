@@ -1868,6 +1868,14 @@ int dns_get_flag(const char *str)
     return 0;
 }
 
+// decode ip-addr str
+static uint32_t ipstr_decode(struct str_slice str, uint8_t dst[static 16])
+{
+    if (ip4_str_decode(str.ptr, str.len, dst)) return DNS_TYPE_A;
+    if (ip6_str_decode(str.ptr, str.len, dst)) return DNS_TYPE_AAAA;
+    return DNS_TYPE_CNAME;
+}
+
 /*
  * Figure out the record
  * =====================
@@ -1875,48 +1883,27 @@ int dns_get_flag(const char *str)
  */
 int dns_rr_load(struct dns_rr *rec, int sc, const char *src)
 {
-    // get addr
-    struct str_slice addr  = slice_make_cstr(src);
-    struct str_slice attrs = slice_splitch(&addr, ' ');
-    slice_trim(&addr);
+    // get name
+    struct str_slice rr_str = slice_make_cstr(src);
+    struct str_slice name = slice_splitch(&rr_str, ' ');
+    slice_trim(&name);
 
-    if (addr.len > DNS_NAME_MAXSTR) {
+    if (name.len > DNS_NAME_MAXSTR) {
         return log_error_rf("%s <addr> len %zu bigger than max %d", 
-            dec_code_tostr(sc), addr.len, DNS_NAME_MAXSTR);
+            dec_code_tostr(sc), name.len, DNS_NAME_MAXSTR);
     }
 
-    // need a copy for inet_pton call
-    char addr_str[DNS_NAME_MAXLEN];
-    memcpy(addr_str, addr.ptr, addr.len);
-    addr_str[addr.len] = '\0';
-
-    // parse addr_str (ip4|ip6|name)
-    uint8_t addr_raw[DNS_NAME_MAXLEN];
-    if (inet_pton(AF_INET, addr_str, addr_raw) == 1) {
-        // IPv4
-        rec->type = DNS_TYPE_A;
-        memcpy(rec->rdata.a, addr_raw, 4);
-    }
-    else if (inet_pton(AF_INET6, addr_str, addr_raw) == 1) {
-        // IPv6
-        rec->type = DNS_TYPE_AAAA;
-        memcpy(rec->rdata.aaaa, addr_raw, 16);
-    }
-    else {
-        // reg-name
-        rec->type = DNS_TYPE_CNAME;
-        rec->rdata.cname = addr_str;
-    }
-
-    // default class to Internet
+    // decode ip4|ip6|name
+    uint8_t ip_addr[16];
+    rec->type = ipstr_decode(name, ip_addr);
     rec->class = DNS_CLASS_IN;
     
     // look for remaining attrs (e.g 3600 CH)
-    while (attrs.len) {
-        struct str_slice attr = slice_splitch(&attrs, ' ');
-        char name[20];
+    while (rr_str.len) {
+        struct str_slice attr = slice_splitch(&rr_str, ' ');
         slice_trim(&attr);
         // covert slice to cptr
+        char name[20];
         size_t len = min(attr.len, sizeof(name) - 1);
         memcpy(name, attr.ptr, len);
         name[len] = '\0';

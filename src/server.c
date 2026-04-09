@@ -87,13 +87,12 @@ static int send_rsp(struct simple_client *client, struct str_slice rsp)
 // handler - SET key value
 static int cmd_set(struct simple_client *client, struct str_slice args)
 {
-    struct str_slice key = slice_copy(args);
-    struct str_slice val = slice_splitch(&key, ' ');  
-
+    struct str_slice val = slice_copy(args);
+    struct str_slice key = slice_splitch(&val, ' ');  
+    slice_trim(&key);
     slice_trim(&val);
 
     struct str_slice res;
-
     if (!key.len || ! val.len)
         res = slice_make(STR_LIT("FAIL"));
     else if (db_set(key, val)) 
@@ -177,16 +176,14 @@ static int find_cli_cmd(struct str_slice cmd)
     return 0;
 }
 
-static int process_cli_cmd(struct simple_client *client, struct str_slice cmd)
+static int process_line(struct simple_client *client, struct str_slice cmd)
 {
-    struct str_slice name = slice_copy(cmd);
-    struct str_slice args = slice_splitch(&name, ' ');
-
+    struct str_slice name = slice_splitch(&cmd, ' ');
     name = slice_toupper(name);
-    slice_trim(&args);
+    slice_trim(&cmd);
 
     int cmd_idx = find_cli_cmd(name);
-    int rc = cli_cmds[cmd_idx].func(client, args);
+    int rc = cli_cmds[cmd_idx].func(client, cmd);
 
     return rc;
 }
@@ -268,7 +265,7 @@ void do_client_recv(struct simple_client *client)
         // recv cmd-line
         while ((rc = sock_recv_line(&client->sock, &line, is_eof)) > 0) {
             if (client->log_line) log_info("LOG", "recv-req: %.*s", SLICE(line));
-            rc = process_cli_cmd(client, line);
+            rc = process_line(client, line);
             if (rc != 0) break;
         }
         if (rc < 0) break;
@@ -607,11 +604,11 @@ int main(int argc, char *argv[])
 
     log_init(NULL, APP_LOGLEVEL);
 
-    if (!(serv = server_create())) { ec = 1; goto done; }
-    if (server_init(serv))         { ec = 2; goto done; }
-    if (setup_signals(&serv->sig)) { ec = 3 ;goto done; }
+    if (!(serv = server_create())) { ec = 1;  goto done; }
+    if (server_init(serv))         { ec = 2;  goto done; }
+    if (setup_signals(&serv->sig)) { ec = 3 ; goto done; }
     if (server_argv(serv, argc, argv)) { ec = 4; goto done; }
-    if (dns_init())            { ec = 5; goto done; }
+    if (dns_init(0, 0, &serv->sig))  { ec = 5; goto done; }
     if (setup_database(serv))  { ec = 6; goto done; }
     if (setup_listener(serv))  { ec = 7; goto done; }
     if (server_run(serv) != 0) { ec = 8; goto done; }

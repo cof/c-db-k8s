@@ -205,7 +205,7 @@ int main(int argc, char *argv[])
     struct simple_sig sig;
     rc = setup_signals(&sig);
     if (rc) fatal_error("setup signals");
-    rc = dns_init();
+    rc = dns_init(0,0, &sig);
     if (rc) fatal_error("setup resolver");
 
     // server connect

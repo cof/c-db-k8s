@@ -21,10 +21,22 @@
 #include "dns_proto.h"
 #include "dns_resolv.h"
 
+// cached dns answers
+struct dns_cache {
+    size_t store_len;
+    size_t num_addr;
+    size_t max_addr;
+    hashmapstr name_toaddr;
+    mapstr_entry buffer[DNS_HOSTS_MAXADDR * 4 / 3];
+    char store[DNS_HOSTS_MAXSTORE];
+    struct dns_sockaddr addrs[DNS_HOSTS_MAXADDR];
+};
+
 // hosts file
 struct dns_hosts {
     size_t store_len;
     size_t num_addr;
+    size_t max_addr;
     hashmapstr name_toaddr;
     mapstr_entry buffer[DNS_HOSTS_MAXADDR * 4 / 3];
     char store[DNS_HOSTS_MAXSTORE];
@@ -102,6 +114,8 @@ struct dns_ns {
 
 static struct dns_config glob_cfg;
 static struct dns_hosts  glob_hosts;
+static struct dns_cache  glob_cache;
+static struct simple_sig *glob_sig;
 
 const uint8_t ip4_any[4] = { 0 };
 const uint8_t ip4_loopback[4] = { 127, 0, 0, 1 };
@@ -273,65 +287,60 @@ static int fixup_addrs(struct dns_result *res)
     return 0;
 }
 
-static int read_block(int fd, struct rwbuf *buf)
+static int read_line(int fd, struct rwbuf *buf, struct str_slice *line)
 {
-    void *mem = rwbuf_wptr(buf);
-    size_t space = rwbuf_space(buf);
+    if (fd == -1) return 0;
+    int flags = 0;
+    if (!rwbuf_used(buf)) {
+        // read block from file
+        void *mem = rwbuf_wptr(buf);
+        size_t space = rwbuf_space(buf);
+        ssize_t nread = read(fd, mem, space);
+        if (nread < 0) return -1;
+        if (nread == 0) flags = RWBUF_EOF;
+        buf->widx += nread;
+    }
 
-    ssize_t nread = read(fd, mem, space);
-    if (nread < 0) return -1;
-    if (nread == 0) return 0;
-    buf->widx += nread;
-
-    return 1;
+    return rwbuf_readline(buf, line, buf->size, flags);
 }
 
-static int try_services(char *file_path, int flags, struct str_slice name, struct dns_result *res)
+static int try_services(int flags, struct str_slice name, struct dns_result *res)
 {
-    int fd = open(file_path, O_RDONLY);
-    if (fd == -1) return log_errno_rf("open %s failed", file_path);
-
     uint8_t tmp[1024];
     struct rwbuf buf = RWBUF_INIT(tmp, sizeof(tmp));
+    struct str_slice line;
+    int rc;
 
     int need_tcp = flags & DNS_TCP;
     int need_udp = flags & DNS_UDP;
-    int rc;
 
-    while ((rc = read_block(fd, &buf)) >= 0) {
-        struct str_slice line;
-        int flags = rc == 0 ? RWBUF_EOF : 0;
-        // name port/protocol alias
-        while ( (rc = rwbuf_readline(&buf, &line, 0, flags)) > 0) {
-            slice_chop(&line, '#');
-            slice_trim(&line);
-            if (line.len == 0) continue;
-            struct str_slice service = slice_copy(line);
-            struct str_slice args = slice_splitch(&name, ' ');  
-            slice_trim(&name);
-            if (!slice_eq(service, name)) continue;
-            // found service name
-            struct str_slice port = slice_copy(args);
-            //struct str_slice alias = slice_split(&port, ' ');  
-            slice_trim(&port);
-            struct str_slice proto = slice_splitch(&port, '/');
-            if (!slice_isnumeric(port)) continue; 
-            uint16_t port_no = slice_tou32(port);
-            if (slice_eqmem(proto, STR_LIT("tcp")) && need_tcp) {
-                res->tcp_port = port_no; 
-                need_tcp = 0;
-            }
-            if (slice_eqmem(proto, STR_LIT("udp")) && need_udp) {
-                res->udp_port = port_no;
-                need_udp = 0;
-            }
-            if (!need_tcp && !need_udp) break;
+    int fd = open(DNS_SERVICES, O_RDONLY);
+    while ( (rc = read_line(fd, &buf, &line)) > 0) {
+        slice_chop(&line, '#');
+        slice_trim(&line);
+        if (line.len == 0) continue;
+        struct str_slice service = slice_copy(line);
+        struct str_slice args = slice_splitch(&name, ' ');  
+        slice_trim(&name);
+        if (!slice_eq(service, name)) continue;
+        // found service name
+        struct str_slice port = slice_copy(args);
+        //struct str_slice alias = slice_split(&port, ' ');  
+        slice_trim(&port);
+        struct str_slice proto = slice_splitch(&port, '/');
+        if (!slice_isnumeric(port)) continue; 
+        uint16_t port_no = slice_tou32(port);
+        if (slice_eqmem(proto, STR_LIT("tcp")) && need_tcp) {
+            res->tcp_port = port_no; 
+            need_tcp = 0;
         }
-        if (rc <= 0 || (!need_tcp && !need_udp)) break;
+        if (slice_eqmem(proto, STR_LIT("udp")) && need_udp) {
+            res->udp_port = port_no;
+            need_udp = 0;
+        }
+        if (!need_tcp && !need_udp) break;
     }
-
-    close(fd);
-    if (rc < 0) return rc;
+    if (fd != -1) close(fd);
 
     return 0;
 }
@@ -406,37 +415,33 @@ int str_tocfg(struct str_slice str)
     return 0;
 }
 
-static int load_resolv_conf(char *file_path, struct dns_config *cfg)
+static void init_config(struct dns_config *cfg)
 {
-    int fd = open(file_path, O_RDONLY);
-    if (fd == -1) return log_errno_rf("open %s failed", file_path);
-
     uint8_t tmp[1024];
     struct rwbuf buf = RWBUF_INIT(tmp, sizeof(tmp));
-    int num_ns = 0;
+    struct str_slice line;
     int rc;
-    
-    while ((rc = read_block(fd, &buf)) >= 0) {
-        struct str_slice line;
-        int flags = rc == 0 ? RWBUF_EOF : 0;
-        while ( (rc = rwbuf_readline(&buf, &line, 0, flags)) > 0) {
-            slice_chop(&line, '#');
-            slice_trim(&line);
-            if (line.len == 0) continue;
-            struct str_slice key = slice_splitset(&line, STR_LIT(" \t"));  
-            switch(str_tocfg(key)) {
-            case CFG_SERVER:  add_server(cfg,  line); break;
-            case CFG_SEARCH:  add_search(cfg,  line); break;
-            case CFG_OPTIONS: add_options(cfg, line); break;
-            }
-        }
-        if (rc <= 0) break;
-    }
-   
-    close(fd);
-    if (rc < 0) return rc;
 
-    return num_ns;
+    int fd = open(DNS_RESOLV_CONF, O_RDONLY);
+    while ( (rc = read_line(fd, &buf, &line)) > 0) {
+        slice_chop(&line, '#');
+        slice_trim(&line);
+        if (line.len == 0) continue;
+        struct str_slice key = slice_splitset(&line, STR_LIT(" \t"));  
+        switch(str_tocfg(key)) {
+        case CFG_SERVER:  add_server(cfg,  line); break;
+        case CFG_SEARCH:  add_search(cfg,  line); break;
+        case CFG_OPTIONS: add_options(cfg, line); break;
+        }
+    }
+    if (fd != -1) close(fd);
+
+    // set defaults
+    if (!cfg->attempts) cfg->attempts = DNS_ATTEMPTS;
+    if (!cfg->timeout_secs) cfg->timeout_secs = DNS_TIMEOUT_SECS;
+    if (!cfg->ndots) cfg->ndots = 1;
+    if (!cfg->num_ns) add_server(cfg, slice_make(STR_LIT("127.0.0.1")));
+
 }
 
 struct dns_sockaddr *hosts_find(struct dns_hosts *hosts, struct str_slice host)
@@ -489,30 +494,30 @@ static int add_hosts(struct dns_hosts *hosts, struct str_slice ip_str, struct st
     return 0;
 }
 
-static int load_hosts(const char *file_path, struct dns_hosts *hosts)
+static void init_hosts(struct dns_hosts *hosts, uint32_t hosts_size)
 {
-    int fd = open(file_path, O_RDONLY);
-    if (fd == -1) return log_errno_rf("open %s failed", file_path);
-
     uint8_t tmp[1024];
     struct rwbuf buf = RWBUF_INIT(tmp, sizeof(tmp));
+    struct str_slice line;
     int rc;
-    
-    while ((rc = read_block(fd, &buf)) >= 0) {
-        struct str_slice line;
-        int flags = rc == 0 ? RWBUF_EOF : 0;
-        while ( (rc = rwbuf_readline(&buf, &line, 0, flags)) > 0) {
-            slice_chop(&line, '#');
-            slice_trim(&line);
-            if (line.len == 0) continue;
-            struct str_slice key = slice_splitset(&line, STR_LIT(" \t"));  
-            if (key.len == 0 || line.len == 0) continue;
-            add_hosts(hosts, key, line);
-        }
-        if (rc <= 0) break;
+
+    hosts->max_addr = hosts_size;
+
+    int fd = open(DNS_HOSTS, O_RDONLY);
+    while ( (rc = read_line(fd, &buf, &line)) > 0) {
+        slice_chop(&line, '#');
+        slice_trim(&line);
+        if (line.len == 0) continue;
+        struct str_slice key = slice_splitset(&line, STR_LIT(" \t"));  
+        if (key.len == 0 || line.len == 0) continue;
+        add_hosts(hosts, key, line);
     }
-    close(fd);
-    if (rc < 0) return rc;
+    if (fd != -1) close(fd);
+}
+
+static int init_cache(struct dns_cache *cache, uint32_t cache_size)
+{
+    cache->max_addr = cache_size;
 
     return 0;
 }
@@ -1039,7 +1044,10 @@ static int try_nameserver(struct str_slice name,
         rc = poll(fds, ARR_LEN(fds), ms);
         if (rc <= 0) {
             if (rc == 0) rc = DNS_ETIMEOUT;
-            if (errno == EINTR) continue;
+            if (errno == EINTR) {
+                if (!glob_sig || !glob_sig->run) break;
+                continue;
+            }
             if (rc < 1) log_errno("poll failed");
             break;
         }
@@ -1177,7 +1185,7 @@ static int try_port(struct dns_result *res)
     if (res->flags & DNS_NUMPORT) return log_error_rf("port '%.*s' not a number", SLICE(port));
 
     // services file
-    return try_services(DNS_SERVICES, res->flags, port, res);
+    return try_services(res->flags, port, res);
 }
 
 static int try_hostname(struct dns_result *res)
@@ -1239,20 +1247,19 @@ static int try_hosts(struct dns_result *res)
     return res->num_addr ?: -1;
 }
 
-int dns_init(void)
+int dns_init(uint32_t hosts_size, uint32_t cache_size, struct simple_sig *sig)
 {
     // resolv.conf
     struct dns_config *cfg = &glob_cfg;
-    load_resolv_conf(DNS_RESOLV_CONF, cfg);
-
-    // set defaults
-    if (!cfg->attempts) cfg->attempts = DNS_ATTEMPTS;
-    if (!cfg->timeout_secs) cfg->timeout_secs = DNS_TIMEOUT_SECS;
-    if (!cfg->ndots) cfg->ndots = 1;
-    if (!cfg->num_ns) add_server(cfg, slice_make(STR_LIT("127.0.0.1")));
+    init_config(cfg);
 
     struct dns_hosts *hosts = &glob_hosts;
-    load_hosts(DNS_HOSTS, hosts);
+    init_hosts(hosts, hosts_size);
+
+    struct dns_cache *cache = &glob_cache;
+    init_cache(cache, cache_size);
+
+    glob_sig = sig;
 
     return 0;
 }
