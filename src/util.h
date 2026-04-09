@@ -615,7 +615,7 @@ struct str_slice {
  * slice_make(str, len)   : return a slice set with str and len
  * slice_make_cstr(str)   : return a slice set with str
  * slice_copy(str)        : return a copy of str 
- * slice_tobuf(slice, men, len) : copy slice to mem
+ * slice_tomem(slice, men, len) : copy slice to mem
  * -
  * slice_cmp(s1, s2)             : cmp slices - return < 0, 0, > 0 if lt, eq or gt 
  * slice_cmpmem(slice, mem, len) : cmp slice to mem - return < 0, 0, > 0 if lt, eq or gt 

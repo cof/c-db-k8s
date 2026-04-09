@@ -21,19 +21,26 @@
 #define DNS_HOSTS "/etc/hosts"
 
 #define DNS_MAXADDR 16  // default result
-#define DNS_MAXNAME 256
 
 #define DNS_PORT 53
 #define DNS_PKTSIZE 1280
 #define DNS_ATTEMPTS 2
 #define DNS_TIMEOUT_SECS 5
 
+// resolv.conf limits
 #define DNS_CFG_MAXNS    3
 #define DNS_CFG_MAXSRCH  8
 #define DNS_CFG_MAXSTORE 256
 
+// hosts limits
+#define DNS_HOSTS_MAXNAME 256
 #define DNS_HOSTS_MAXADDR 128
 #define DNS_HOSTS_MAXSTORE BUFSIZ
+
+// servics limts
+#define DNS_SVC_MAXNAME 32
+#define DNS_SVC_MAXPORT 256
+#define DNS_SVC_MAXSTORE BUFSIZ
 
 // resolv flags
 #define DNS_TCP      (1 << 0)

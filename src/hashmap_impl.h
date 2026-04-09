@@ -83,15 +83,21 @@ static inline void MAP_FN(free)(MAP_TYPE *m)
     }
 }
 
-static inline void MAP_FN(attach)(MAP_TYPE *m, MAP_FN(entry) *buffer, uint32_t capacity)
+static inline int MAP_FN(attach)(MAP_TYPE *m, MAP_FN(entry) *buffer, uint32_t capacity)
 {
+    // capacity MUST be at least 4 and a power of 2
+    if (capacity < 4 || (capacity & (capacity - 1))) return 0;
+
+    // setup static buffer
     m->buckets = buffer;
     m->capacity = capacity;
-    m->threshold =  (capacity >> 1) + (capacity >> 2);
+    m->threshold = (capacity >> 1) + (capacity >> 2);
     m->size = 0;
     m->mask  = m->capacity -1;
     m->nbits = MAP_FN(calc_bits)(capacity - 1);
     m->is_fixed = 1;
+
+    return 1;
 }
 
 // return map end - aka capacity

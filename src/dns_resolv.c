@@ -26,8 +26,8 @@ struct dns_cache {
     size_t store_len;
     size_t num_addr;
     size_t max_addr;
-    hashmapstr name_toaddr;
-    mapstr_entry buffer[DNS_HOSTS_MAXADDR * 4 / 3];
+    hashmap64s name_toaddr;
+    map64s_entry buffer[DNS_HOSTS_MAXADDR * 4 / 3];
     char store[DNS_HOSTS_MAXSTORE];
     struct dns_sockaddr addrs[DNS_HOSTS_MAXADDR];
 };
@@ -37,8 +37,8 @@ struct dns_hosts {
     size_t store_len;
     size_t num_addr;
     size_t max_addr;
-    hashmapstr name_toaddr;
-    mapstr_entry buffer[DNS_HOSTS_MAXADDR * 4 / 3];
+    hashmap64s name_toaddr;
+    map64s_entry buffer[DNS_HOSTS_MAXADDR * 4 / 3];
     char store[DNS_HOSTS_MAXSTORE];
     struct dns_sockaddr addrs[DNS_HOSTS_MAXADDR];
 };
@@ -55,6 +55,15 @@ struct dns_config {
     char store[DNS_CFG_MAXSTORE];
     char *search[DNS_CFG_MAXSRCH];
     struct dns_sockaddr ns_addrs[DNS_CFG_MAXNS];
+};
+
+struct dns_services {
+    size_t store_len;
+    size_t num_svc;
+    size_t max_svc;
+    hashmap32s name_toport;
+    map32s_entry buffer[DNS_SVC_MAXPORT * 4 / 3];
+    char store[DNS_SVC_MAXSTORE];
 };
 
 // result state
@@ -112,10 +121,12 @@ struct dns_ns {
     unsigned int have_ip6  : 1;
 };
 
-static struct dns_config glob_cfg;
-static struct dns_hosts  glob_hosts;
-static struct dns_cache  glob_cache;
-static struct simple_sig *glob_sig;
+// resolver config
+static struct dns_config  glob_cfg;
+static struct dns_hosts   glob_hosts;
+static struct dns_services glob_svcs;
+static struct dns_cache   glob_cache;
+static struct simple_sig  *glob_sig;
 
 const uint8_t ip4_any[4] = { 0 };
 const uint8_t ip4_loopback[4] = { 127, 0, 0, 1 };
@@ -179,14 +190,14 @@ static int sockaddr_store(struct dns_sockaddr *addr,
         addr->sock_type = sock_type;
         addr->len = sizeof(addr->v4);
         addr->v4.sin_family = AF_INET;
-        addr->v4.sin_port   = port;
+        addr->v4.sin_port   = __builtin_bswap16(port);
         memcpy(&addr->v4.sin_addr.s_addr, ip, 4);
         return 1;
     case DNS_IPV6:
         addr->sock_type = sock_type;
         addr->len = sizeof(addr->v6);
         addr->v6.sin6_family = AF_INET6;
-        addr->v6.sin6_port   = port;
+        addr->v6.sin6_port   = __builtin_bswap16(port);
         memcpy(&addr->v6.sin6_addr, ip, 16);
         return 1;
     }
@@ -290,60 +301,23 @@ static int fixup_addrs(struct dns_result *res)
 static int read_line(int fd, struct rwbuf *buf, struct str_slice *line)
 {
     if (fd == -1) return 0;
-    int flags = 0;
-    if (!rwbuf_used(buf)) {
-        // read block from file
-        void *mem = rwbuf_wptr(buf);
-        size_t space = rwbuf_space(buf);
-        ssize_t nread = read(fd, mem, space);
-        if (nread < 0) return -1;
-        if (nread == 0) flags = RWBUF_EOF;
-        buf->widx += nread;
+    int flags = rwbuf_used(buf) ? 0 : 1;
+again:
+    if (flags) {
+       // read block from file
+       void *mem = rwbuf_wptr(buf);
+       size_t space = rwbuf_space(buf);
+       ssize_t nread = read(fd, mem, space);
+       if (nread < 0) return -1;
+       flags = nread == 0 ? RWBUF_EOF : 0;
+       buf->widx += nread;
     }
-
-    return rwbuf_readline(buf, line, buf->size, flags);
+    int rc = rwbuf_readline(buf, line, buf->size, flags);
+    if (rc || !rwbuf_used(buf)) return rc;
+    flags = 1;
+    goto again;
 }
 
-static int try_services(int flags, struct str_slice name, struct dns_result *res)
-{
-    uint8_t tmp[1024];
-    struct rwbuf buf = RWBUF_INIT(tmp, sizeof(tmp));
-    struct str_slice line;
-    int rc;
-
-    int need_tcp = flags & DNS_TCP;
-    int need_udp = flags & DNS_UDP;
-
-    int fd = open(DNS_SERVICES, O_RDONLY);
-    while ( (rc = read_line(fd, &buf, &line)) > 0) {
-        slice_chop(&line, '#');
-        slice_trim(&line);
-        if (line.len == 0) continue;
-        struct str_slice service = slice_copy(line);
-        struct str_slice args = slice_splitch(&name, ' ');  
-        slice_trim(&name);
-        if (!slice_eq(service, name)) continue;
-        // found service name
-        struct str_slice port = slice_copy(args);
-        //struct str_slice alias = slice_split(&port, ' ');  
-        slice_trim(&port);
-        struct str_slice proto = slice_splitch(&port, '/');
-        if (!slice_isnumeric(port)) continue; 
-        uint16_t port_no = slice_tou32(port);
-        if (slice_eqmem(proto, STR_LIT("tcp")) && need_tcp) {
-            res->tcp_port = port_no; 
-            need_tcp = 0;
-        }
-        if (slice_eqmem(proto, STR_LIT("udp")) && need_udp) {
-            res->udp_port = port_no;
-            need_udp = 0;
-        }
-        if (!need_tcp && !need_udp) break;
-    }
-    if (fd != -1) close(fd);
-
-    return 0;
-}
 
 // options
 #define OPT_NDOTS    1
@@ -397,7 +371,7 @@ static int add_server(struct dns_config *cfg, struct str_slice ip_str)
 
     // add
     int ptype = SOCK_DGRAM;
-    uint16_t port = __builtin_bswap16(53);
+    uint16_t port = 53;
     if (!sockaddr_store(addr, type, ip_addr, ptype, port)) return 0;
 
     cfg->num_ns++;
@@ -441,13 +415,12 @@ static void init_config(struct dns_config *cfg)
     if (!cfg->timeout_secs) cfg->timeout_secs = DNS_TIMEOUT_SECS;
     if (!cfg->ndots) cfg->ndots = 1;
     if (!cfg->num_ns) add_server(cfg, slice_make(STR_LIT("127.0.0.1")));
-
 }
 
 struct dns_sockaddr *hosts_find(struct dns_hosts *hosts, struct str_slice host)
 {
     // lowercase name
-    char name[DNS_MAXNAME];
+    char name[DNS_HOSTS_MAXNAME];
     size_t len = slice_tomem(host, name, ARR_LEN(name));
     if (!len) return NULL;
     str_tolower(name, len);
@@ -458,7 +431,7 @@ struct dns_sockaddr *hosts_find(struct dns_hosts *hosts, struct str_slice host)
     return make_mem(map_val(&hosts->name_toaddr, idx));
 }
 
-static int add_hosts(struct dns_hosts *hosts, struct str_slice ip_str, struct str_slice names)
+static int add_host(struct dns_hosts *hosts, struct str_slice ip_str, struct str_slice names)
 {
     if (hosts->num_addr >= ARR_LEN(hosts->addrs)) return 0;
     struct dns_sockaddr *addr = &hosts->addrs[hosts->num_addr];
@@ -475,23 +448,23 @@ static int add_hosts(struct dns_hosts *hosts, struct str_slice ip_str, struct st
     while (names.len) {
         struct str_slice name = slice_splitset(&names, STR_LIT(" \t"));
         if (hosts->store_len + name.len + 1 > sizeof(hosts->store)) continue;
-        // store name
+        // new name
         char *str = hosts->store + hosts->store_len;
         memcpy(str, name.ptr, name.len);
         str[name.len] = '\0';
         str_tolower(str, name.len);
-        hosts->store_len += name.len + 1;
         // add name:ip-addr
         uint32_t idx = map_put(&hosts->name_toaddr, str, unmake_mem(addr));
-        if (idx != map_end(&hosts->name_toaddr)) num_add++;
+        if (idx == map_end(&hosts->name_toaddr)) continue;
+        num_add++;
+        hosts->store_len += name.len + 1;
     }
 
-    if (num_add) {
-        hosts->num_addr++;
-        return 1;
-    }
-    
-    return 0;
+    if (!num_add) return 0;
+
+    // hosts entry added
+    hosts->num_addr++;
+    return 1;
 }
 
 static void init_hosts(struct dns_hosts *hosts, uint32_t hosts_size)
@@ -502,17 +475,104 @@ static void init_hosts(struct dns_hosts *hosts, uint32_t hosts_size)
     int rc;
 
     hosts->max_addr = hosts_size;
+    size_t lines = 0, total= 0, num_add = 0;
 
     int fd = open(DNS_HOSTS, O_RDONLY);
     while ( (rc = read_line(fd, &buf, &line)) > 0) {
+        lines++;
         slice_chop(&line, '#');
         slice_trim(&line);
         if (line.len == 0) continue;
+        total++;
         struct str_slice key = slice_splitset(&line, STR_LIT(" \t"));  
         if (key.len == 0 || line.len == 0) continue;
-        add_hosts(hosts, key, line);
+        if (add_host(hosts, key, line)) num_add++;
     }
     if (fd != -1) close(fd);
+
+    log_debug("lines %zu services %zu added %zu", lines, total, num_add);
+}
+
+static uint32_t services_find(struct dns_services *svcs, struct str_slice port)
+{
+    char name[DNS_SVC_MAXNAME];
+    size_t len = slice_tomem(port, name, ARR_LEN(name));
+    if (!len) return 0;
+    str_tolower(name, len);
+
+    uint32_t idx = map_get(&svcs->name_toport, name);
+    return map_val(&svcs->name_toport, idx);
+}
+
+static int add_service(struct dns_services *svcs,
+    struct str_slice name_str, struct str_slice pp_str,
+    struct str_slice alias_str)
+{
+    log_debug("name=%.*s pp=%.*s", SLICE(name_str), SLICE(pp_str));
+
+    (void) alias_str;
+    if (svcs->num_svc >= svcs->max_svc) return 0;
+
+    // get port, protocol
+    struct str_slice port_str = slice_splitch(&pp_str, '/');
+    uint16_t port_no = slice_tou32(port_str);
+    int port_type = 0;
+    if (slice_eqmem(pp_str, STR_LIT("tcp"))) port_type = DNS_TCP;
+    if (slice_eqmem(pp_str, STR_LIT("udp"))) port_type = DNS_UDP;
+    if (!port_no || !port_type) return 0;
+
+    char name[DNS_SVC_MAXNAME];
+    size_t name_len = slice_tomem(name_str, name, sizeof(name));
+    str_tolower(name, name_len);
+
+    uint32_t idx = map_get(&svcs->name_toport, name);
+    if (idx == map_end(&svcs->name_toport)) {
+        // new service name
+        if (svcs->store_len + name_len + 1 > sizeof(svcs->store)) return 0;
+        char *str = svcs->store + svcs->store_len;
+        memcpy(str, name, name_len);
+        str[name_len] = '\0';
+        idx = map_put(&svcs->name_toport, str, 0);
+        if (idx == map_end(&svcs->name_toport)) return 0;
+        svcs->store_len += name_len + 1;
+        svcs->num_svc++;
+    }
+
+    // update port-no
+    uint32_t val = map_val(&svcs->name_toport, idx);
+    if (port_type == DNS_TCP) val |= port_no;
+    if (port_type == DNS_UDP) val |= port_no << 16;
+    map_set(&svcs->name_toport, idx, val);
+
+    return 1;
+}
+
+static void init_services(struct dns_services *svcs)
+{
+    uint8_t tmp[1024];
+    struct rwbuf buf = RWBUF_INIT(tmp, sizeof(tmp));
+    struct str_slice line;
+    int rc;
+
+    if (!map_attach(&svcs->name_toport, svcs->buffer, DNS_SVC_MAXPORT)) return;
+    svcs->max_svc = DNS_SVC_MAXPORT;
+    size_t lines=0,total=0,num_add = 0;
+
+    int fd = open(DNS_SERVICES, O_RDONLY);
+    while ( (rc = read_line(fd, &buf, &line)) > 0) {
+        lines++;
+        slice_chop(&line, '#');
+        slice_trim(&line);
+        if (line.len == 0) continue;
+        total++;
+        struct str_slice name = slice_splitset(&line, STR_LIT(" \t"));  
+        struct str_slice pp = slice_splitset(&line, STR_LIT(" \t"));  
+        if (name.len == 0 || pp.len == 0) continue;
+        if (add_service(svcs, name, pp, line)) num_add++;
+    }
+    if (fd != -1) close(fd);
+
+    log_debug("lines %zu services %zu added %zu", lines, total, num_add);
 }
 
 static int init_cache(struct dns_cache *cache, uint32_t cache_size)
@@ -1111,7 +1171,7 @@ static int query_name(struct str_slice name, struct dns_config *cfg, struct dns_
 static int query_search(struct str_slice name, struct dns_config *cfg, struct dns_result *res)
 {
     int rc = DNS_NXDOMAIN;
-    char tmp[DNS_MAXNAME];
+    char tmp[DNS_HOSTS_MAXNAME];
     struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
 
     log_debug("name:%.*s nsearch:%zu", SLICE(name), cfg->num_search);
@@ -1161,11 +1221,14 @@ static int try_nameservers(struct dns_result *res)
     return rc;
 }
 
+
 static int try_port(struct dns_result *res)
 {
     // unspecified type
+    int any = 0;
     if ((res->flags & (DNS_TCP | DNS_UDP)) == 0) {
         res->flags |= (DNS_TCP | DNS_UDP);
+        any = 1;
     }
 
     // empty port-str
@@ -1176,7 +1239,6 @@ static int try_port(struct dns_result *res)
     if (slice_isnumeric(port)) {
         uint32_t portno = slice_tou32(port);
         if (portno > 65535) return log_error_rf("port '%.*s' too big", SLICE(port));
-        portno = __builtin_bswap16(portno);
         if (res->flags & DNS_TCP) res->tcp_port = portno;
         if (res->flags & DNS_UDP) res->udp_port = portno;
         return 0;
@@ -1184,8 +1246,26 @@ static int try_port(struct dns_result *res)
 
     if (res->flags & DNS_NUMPORT) return log_error_rf("port '%.*s' not a number", SLICE(port));
 
-    // services file
-    return try_services(res->flags, port, res);
+    // service port-str
+    uint32_t pp = services_find(&glob_svcs, port);
+    uint16_t tcp_port= pp & 0xffff;
+    uint16_t udp_port = pp >> 16;
+
+    uint32_t found = 0;
+    if ((res->flags & DNS_TCP) && tcp_port) {
+        res->tcp_port = tcp_port;
+        found |= DNS_TCP;
+    }
+    if ((res->flags & DNS_UDP) && udp_port) {
+        res->udp_port = udp_port;
+        found |= DNS_UDP;
+    }
+
+    if (!found) return log_error_rf("port %.*s not-found", SLICE(port));
+    uint32_t want = res->flags & (DNS_TCP | DNS_UDP);
+    if (!any && want != found) return log_error_rf("port %.*s no-match", SLICE(port));
+
+    return 0;
 }
 
 static int try_hostname(struct dns_result *res)
@@ -1249,15 +1329,10 @@ static int try_hosts(struct dns_result *res)
 
 int dns_init(uint32_t hosts_size, uint32_t cache_size, struct simple_sig *sig)
 {
-    // resolv.conf
-    struct dns_config *cfg = &glob_cfg;
-    init_config(cfg);
-
-    struct dns_hosts *hosts = &glob_hosts;
-    init_hosts(hosts, hosts_size);
-
-    struct dns_cache *cache = &glob_cache;
-    init_cache(cache, cache_size);
+    init_config(&glob_cfg);
+    init_hosts(&glob_hosts, hosts_size);
+    init_services(&glob_svcs);
+    init_cache(&glob_cache, cache_size);
 
     glob_sig = sig;
 

@@ -55,7 +55,7 @@ static inline int map_streq(const char *a, const char *b)
 #define CAT(a, b) CAT_INNER(a, b)
 #define MAP_FN(name) CAT(MAP_PREFIX, name)
 
-// -- 32-bit --
+// -- 32-bit key+val --
 #define MAP_TYPE   hashmap32
 #define MAP_PREFIX map32
 #define KEY_HASH   map_hash32
@@ -70,7 +70,7 @@ static inline int map_streq(const char *a, const char *b)
 #undef KEY_TYPE
 #undef VAL_TYPE
 
-// -- 64-bit --
+// -- 64-bit key+val --
 #define MAP_TYPE   hashmap64
 #define MAP_PREFIX map64
 #define KEY_HASH   map_hash64
@@ -85,9 +85,24 @@ static inline int map_streq(const char *a, const char *b)
 #undef KEY_TYPE
 #undef VAL_TYPE
 
-// -- str --
-#define MAP_TYPE   hashmapstr
-#define MAP_PREFIX mapstr
+// -- str + 32-bit val --
+#define MAP_TYPE   hashmap32s
+#define MAP_PREFIX map32s
+#define KEY_HASH   map_hashstr
+#define KEY_EQ     map_streq
+#define KEY_TYPE   char *
+#define VAL_TYPE   uint32_t
+#include "hashmap_impl.h"
+#undef MAP_TYPE
+#undef MAP_PREFIX
+#undef KEY_HASH
+#undef KEY_EQ
+#undef KEY_TYPE
+#undef VAL_TYPE
+
+// -- str + 64-bit val --
+#define MAP_TYPE   hashmap64s
+#define MAP_PREFIX map64s
 #define KEY_HASH   map_hashstr
 #define KEY_EQ     map_streq
 #define KEY_TYPE   char *
@@ -103,75 +118,87 @@ static inline int map_streq(const char *a, const char *b)
 // -- map api -- using generic
 
 #define map_init(M, C) _Generic((M), \
-    hashmap32*:  map32_init, \
-    hashmap64*:  map64_init, \
-    hashmapstr*: mapstr_init \
+    hashmap32*:  map32_init,  \
+    hashmap64*:  map64_init,  \
+    hashmap32s*: map32s_init, \
+    hashmap64s*: map64s_init  \
 )(M, C)
 
 #define map_free(M) _Generic((M), \
-    hashmap32*:  map32_free, \
-    hashmap64*:  map64_free, \
-    hashmapstr*: mapstr_free \
+    hashmap32*:  map32_free,  \
+    hashmap64*:  map64_free,  \
+    hashmap32s*: map32s_free, \
+    hashmap64s*: map64s_free  \
 )(M)
 
 #define map_attach(M, B, C) _Generic((M), \
-    hashmap32*:  map32_attach, \
-    hashmap64*:  map64_attach, \
-    hashmapstr*: mapstr_attach \
+    hashmap32*:  map32_attach,  \
+    hashmap64*:  map64_attach,  \
+    hashmap32s*: map32s_attach, \
+    hashmap64s*: map64s_attach  \
 )(M, B, C)
 
 #define map_end(M) _Generic((M), \
-    hashmap32*:  map32_end, \
-    hashmap64*:  map64_end, \
-    hashmapstr*: mapstr_end \
+    hashmap32*:  map32_end,  \
+    hashmap64*:  map64_end,  \
+    hashmap32s*: map32s_end, \
+    hashmap64s*: map64s_end  \
 )(M)
 
 #define map_size(M) _Generic((M), \
     hashmap32*:  map32_size,  \
     hashmap64*:  map64_size,  \
-    hashmapstr*: mapstr_size \
+    hashmap32s*: map32s_size, \
+    hashmap64s*: map64s_size  \
 )(M)
 
 #define map_put(M, K, V) _Generic((M), \
-    hashmap32*:  map32_put, \
-    hashmap64*:  map64_put, \
-    hashmapstr*: mapstr_put \
+    hashmap32*:  map32_put,  \
+    hashmap64*:  map64_put,  \
+    hashmap32s*: map32s_put, \
+    hashmap64s*: map64s_put  \
 )(M, K, V)
 
 #define map_get(M, K) _Generic((M), \
-    hashmap32*:  map32_get, \
-    hashmap64*:  map64_get, \
-    hashmapstr*: mapstr_get \
+    hashmap32*:  map32_get,  \
+    hashmap64*:  map64_get,  \
+    hashmap32s*: map32s_get, \
+    hashmap64s*: map64s_get  \
 )(M, K)
 
 #define map_del(M, K) _Generic((M), \
-    hashmap32*:  map32_del, \
-    hashmap64*:  map64_del, \
-    hashmapstr*: mapstr_del \
+    hashmap32*:  map32_del,  \
+    hashmap64*:  map64_del,  \
+    hashmap32s*: map32s_del, \
+    hashmap64s*: map64s_del  \
 )(M, K)
 
 #define map_key(M, I) _Generic((M), \
-    hashmap32*:  map32_key, \
-    hashmap64*:  map64_key, \
-    hashmapstr*: mapstr_key \
+    hashmap32*:  map32_key,  \
+    hashmap64*:  map64_key,  \
+    hashmap32s*: map32s_key, \
+    hashmap64s*: map64s_key  \
 )(M, I)
 
 #define map_val(M, I) _Generic((M), \
-    hashmap32*:  map32_val, \
-    hashmap64*:  map64_val, \
-    hashmapstr*: mapstr_val \
+    hashmap32*:  map32_val,  \
+    hashmap64*:  map64_val,  \
+    hashmap32s*: map32s_val, \
+    hashmap64s*: map64s_val  \
 )(M, I)
 
 #define map_rem(M, I) _Generic((M), \
-    hashmap32*:  map32_rem, \
-    hashmap64*:  map64_rem, \
-    hashmapstr*: mapstr_rem \
+    hashmap32*:  map32_rem,  \
+    hashmap64*:  map64_rem,  \
+    hashmap32s*: map32s_rem, \
+    hashmap64s*: map64s_rem  \
 )(M, I)
 
 #define map_set(M, I, V) _Generic((M), \
-    hashmap32*:  map32_set, \
-    hashmap64*:  map64_set, \
-    hashmapstr*: mapstr_set \
+    hashmap32*:  map32_set,  \
+    hashmap64*:  map64_set,  \
+    hashmap32s*: map32s_set, \
+    hashmap64s*: map64s_set  \
 )(M, I, V)
 
 #endif
