@@ -177,13 +177,12 @@ int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32
         return rlen;
     }
 
-    /*
     if (buf->ridx > 0) {
         // ensure partial line at buffer start
-        memmove(buf->data, buf->rptr, buf->len);
+        memmove(buf->data, rptr, rlen);
         buf->ridx = 0;
+        buf->widx = rlen;
     }
-    */
 
     // wait for eol
     return 0;
