@@ -615,6 +615,7 @@ struct str_slice {
  * slice_make(str, len)   : return a slice set with str and len
  * slice_make_cstr(str)   : return a slice set with str
  * slice_copy(str)        : return a copy of str 
+ * slice_tobuf(slice, men, len) : copy slice to mem
  * -
  * slice_cmp(s1, s2)             : cmp slices - return < 0, 0, > 0 if lt, eq or gt 
  * slice_cmpmem(slice, mem, len) : cmp slice to mem - return < 0, 0, > 0 if lt, eq or gt 
@@ -666,6 +667,14 @@ static inline struct str_slice slice_make_cstr(const char *str)
 static inline struct str_slice slice_copy(struct str_slice val)
 {
     return val;
+}
+
+static inline int slice_tomem(struct str_slice val, void *mem, size_t len)
+{
+    if (val.len + 1 > len) return 0;
+    memcpy(mem, val.ptr, len);
+    ((char *) mem)[len] = '\0';
+    return len;
 }
 
 static inline int slice_cmp(struct str_slice str1, struct str_slice str2)

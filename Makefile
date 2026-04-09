@@ -897,7 +897,8 @@ clean-rootfs:
 
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR) $(CMDS) $(BIN_DIR) tags
+	@echo "Removing build-dirs,cmds,tags"
+	$(Q)rm -rf $(BUILD_DIR) $(BIN_DIR) $(CMDS) tags
 
 .PHONY: clean-all
 clean-all: clean-k8s clean-rootfs vm-clean clean

@@ -446,8 +446,15 @@ static int load_resolv_conf(char *file_path, struct dns_config *cfg)
 
 struct dns_sockaddr *hosts_find(struct dns_hosts *hosts, struct str_slice host)
 {
-    uint32_t idx = map_get(&hosts->name_toaddr, unmake_mem(host.ptr));
+    // lowercase name
+    char name[DNS_MAXNAME];
+    size_t len = slice_tomem(host, name, ARR_LEN(name));
+    if (!len) return NULL;
+    str_tolower(name, len);
+
+    uint32_t idx = map_get(&hosts->name_toaddr, name);
     if (idx == map_end(&hosts->name_toaddr)) return NULL;
+
     return make_mem(map_val(&hosts->name_toaddr, idx));
 }
 
@@ -474,9 +481,10 @@ static int add_hosts(struct dns_hosts *hosts, struct str_slice ip_str, struct st
         char *str = hosts->store + hosts->store_len;
         memcpy(str, name.ptr, name.len);
         str[name.len] = '\0';
+        str_tolower(str, name.len);
         hosts->store_len += name.len + 1;
         // add name:ip-addr
-        uint32_t idx = map_put(&hosts->name_toaddr, unmake_mem(str), unmake_mem(addr));
+        uint32_t idx = map_put(&hosts->name_toaddr, str, unmake_mem(addr));
         if (idx != map_end(&hosts->name_toaddr)) num_add++;
     }
 
@@ -1230,6 +1238,7 @@ static int try_hosts(struct dns_result *res)
     // lookup host
     struct dns_hosts *hosts = &glob_hosts;
     struct dns_sockaddr *addr = hosts_find(hosts, res->host);
+
     log_debug("lookup host=%.*s addr=%s", SLICE(res->host), dns_sockaddr_tostr(addr));
     if (!addr) return 0;
 
@@ -1250,9 +1259,7 @@ int dns_init(void)
     if (!cfg->attempts) cfg->attempts = DNS_ATTEMPTS;
     if (!cfg->timeout_secs) cfg->timeout_secs = DNS_TIMEOUT_SECS;
     if (!cfg->ndots) cfg->ndots = 1;
-    if (!cfg->num_ns) {
-        add_server(cfg, slice_make(STR_LIT("127.0.0.1")));
-    }
+    if (!cfg->num_ns) add_server(cfg, slice_make(STR_LIT("127.0.0.1")));
 
     struct dns_hosts *hosts = &glob_hosts;
     load_hosts(DNS_HOSTS, hosts);
@@ -1294,17 +1301,21 @@ char *dns_sockaddr_tostr(struct dns_sockaddr *addr)
     static char bufs[16][IP_ADDRPORT_STRLEN];
     static int idx;
 
+    // select buffer
     char *buf = bufs[idx];
     size_t len = sizeof(bufs[0]);
     idx = (idx + 1) & 15;
+
     char *str = "<null>";
     if (!addr) return str;
+    int flags;
 
     switch (addr->sa.sa_family) {
     case AF_INET: // a.b.c.d:port
         if (addr->len != sizeof(addr->v4)) break;
         str = buf;
         str += ip4_str_encode((void *) &addr->v4.sin_addr.s_addr, str, len); 
+        if (!addr->v4.sin_port) break;
         *str++ = ':'; 
         str = uint16_toa(str, __builtin_bswap16(addr->v4.sin_port));
         str = '\0';
@@ -1313,7 +1324,10 @@ char *dns_sockaddr_tostr(struct dns_sockaddr *addr)
         if (addr->len != sizeof(addr->v6)) break;
         str = buf;
         str = buf;
-        str += ip6_str_encode(addr->v6.sin6_addr.s6_addr, IP6_STR_ADDBRACK | IP6_STR_STRIPV4, str, len);
+        flags = IP6_STR_STRIPV4;
+        if (addr->v6.sin6_port) flags |= IP6_STR_ADDBRACK;
+        str += ip6_str_encode(addr->v6.sin6_addr.s6_addr, flags, str, len);
+        if (!addr->v6.sin6_port) break;
         *str++ = ':'; 
         str = uint16_toa(str, __builtin_bswap16(addr->v6.sin6_port));
         str = '\0';

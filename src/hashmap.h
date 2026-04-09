@@ -37,18 +37,17 @@ static inline uint32_t map_hash64(uint64_t key, int bits)
     return (uint32_t)((key * 0x9E3779B97F4A7C15ULL) >> (64 - bits));
 }
 
-static inline uint32_t map_hashstr(uint64_t key, int bits)
+static inline uint32_t map_hashstr(const char *key, int bits)
 {
-    char *str = (char *) (uintptr_t) key;
-    uint64_t hash = dbj2a_hash_str(str);
+    uint64_t hash = dbj2a_hash_str(key);
     return (hash * 0x9E3779B97F4A7C15ULL) >> (64 - bits);
 }
 
-static inline int map_streq(uint64_t a, uint64_t b) 
+static inline int map_streq(const char *a, const char *b) 
 {
     if (a == b) return 1;
     if (!a || !b) return 0;
-    return strcmp((char *)(uintptr_t)a, (char *)(uintptr_t)b) == 0;
+    return strcmp(a, b) == 0;
 }
 
 // macros to add prefix to function names
@@ -91,7 +90,7 @@ static inline int map_streq(uint64_t a, uint64_t b)
 #define MAP_PREFIX mapstr
 #define KEY_HASH   map_hashstr
 #define KEY_EQ     map_streq
-#define KEY_TYPE   uint64_t
+#define KEY_TYPE   char *
 #define VAL_TYPE   uint64_t
 #include "hashmap_impl.h"
 #undef MAP_TYPE
