@@ -632,8 +632,8 @@ struct str_slice {
  * slice_unbracket(str, left, right) : strip left and right chars from str
  * slice_chop(str, ch)    : chop str-slice at ch if founc
  * slice_rsplit(src, ch)  : split string from right at ch if found
- * slice_split(src, ch)   : split string from left if ch found
- * slice_consume(str, ch) : split str at ch, consume up to ch
+ * slice_splitch(src, ch)        : split string from left if ch found
+ * slice_splitset(src, set, len) : split string from left if ch found in set
  * slice_countch(str,ch)  : count number of ch in slice
  * slice_tou32(str)         : convert str-slice to uint32_t
  * slice_ltrim(str)         : left trim leading whitespace
@@ -672,8 +672,8 @@ static inline struct str_slice slice_copy(struct str_slice val)
 static inline int slice_tomem(struct str_slice val, void *mem, size_t len)
 {
     if (val.len + 1 > len) return 0;
-    memcpy(mem, val.ptr, len);
-    ((char *) mem)[len] = '\0';
+    memcpy(mem, val.ptr, val.len);
+    ((char *) mem)[val.len] = '\0';
     return len;
 }
 
@@ -783,44 +783,45 @@ static inline struct str_slice slice_rsplit(struct str_slice *src, int ch)
     return dst;
 }
 
-static inline struct str_slice slice_split(struct str_slice *src, int ch)
+static inline struct str_slice slice_splitch(struct str_slice *src, int ch)
 {
-    struct str_slice dst;
-   
-    dst.ptr = memchr(src->ptr, ch, src->len);
-
-    if (dst.ptr) {
-        dst.len = src->len - (dst.ptr - src->ptr + 1);
-        src->len -= dst.len + 1;
-        dst.ptr++;
-    }
-    else {
-        dst.len = 0;
-    }
-
-    return dst;
-}
-
-static inline struct str_slice slice_consume(struct str_slice *src, int ch)
-{
-    struct str_slice dst;
-
+    struct str_slice dst = { src->ptr, 0 };
     char *ptr = memchr(src->ptr, ch, src->len);
 
     if (ptr) {
-        // take up to ch
-        dst.ptr = src->ptr;
+        // match
         dst.len = ptr - src->ptr;
         src->ptr += dst.len + 1;
         src->len -= dst.len + 1;
     }
     else {
-        // take it all
-        dst.ptr = src->ptr;
+        // no match
         dst.len = src->len;
-        src->ptr = NULL;
+        src->ptr += src->len;
         src->len = 0;
     }
+
+    return dst;
+}
+
+static inline struct str_slice slice_splitset(struct str_slice *src, const char *set, size_t len)
+{
+    struct str_slice dst = { src->ptr, 0 };
+    size_t i = 0;
+
+    // find first delimiter
+    while (i < src->len && !memchr(set, src->ptr[i], len)) {
+        i++;
+    }
+    dst.len = i;
+
+    // skip delimiters
+    while (i < src->len && memchr(set, src->ptr[i], len)) {
+        i++;
+    }
+
+    src->ptr += i;
+    src->len -= i;
 
     return dst;
 }
@@ -829,7 +830,6 @@ static inline size_t slice_countch(struct str_slice str, int ch)
 {
     return str_countch(str.ptr, str.len, ch);
 }
-
 
 static inline uint32_t slice_tou32(struct str_slice str)
 {

@@ -88,7 +88,7 @@ static int send_rsp(struct simple_client *client, struct str_slice rsp)
 static int cmd_set(struct simple_client *client, struct str_slice args)
 {
     struct str_slice key = slice_copy(args);
-    struct str_slice val = slice_split(&key, ' ');  
+    struct str_slice val = slice_splitch(&key, ' ');  
 
     slice_trim(&val);
 
@@ -180,7 +180,7 @@ static int find_cli_cmd(struct str_slice cmd)
 static int process_cli_cmd(struct simple_client *client, struct str_slice cmd)
 {
     struct str_slice name = slice_copy(cmd);
-    struct str_slice args = slice_split(&name, ' ');
+    struct str_slice args = slice_splitch(&name, ' ');
 
     name = slice_toupper(name);
     slice_trim(&args);

@@ -307,14 +307,14 @@ static int try_services(char *file_path, int flags, struct str_slice name, struc
             slice_trim(&line);
             if (line.len == 0) continue;
             struct str_slice service = slice_copy(line);
-            struct str_slice args = slice_split(&name, ' ');  
+            struct str_slice args = slice_splitch(&name, ' ');  
             slice_trim(&name);
             if (!slice_eq(service, name)) continue;
             // found service name
             struct str_slice port = slice_copy(args);
             //struct str_slice alias = slice_split(&port, ' ');  
             slice_trim(&port);
-            struct str_slice proto = slice_split(&port, '/');
+            struct str_slice proto = slice_splitch(&port, '/');
             if (!slice_isnumeric(port)) continue; 
             uint16_t port_no = slice_tou32(port);
             if (slice_eqmem(proto, STR_LIT("tcp")) && need_tcp) {
@@ -351,9 +351,8 @@ int str_toopt(struct str_slice str)
 static void add_options(struct dns_config *cfg, struct str_slice str)
 {
     while (str.len) {
-        struct str_slice key = slice_consume(&str, ' ');
-        slice_trim(&key);
-        struct str_slice val = slice_split(&key, ':');
+        struct str_slice val = slice_splitset(&str, STR_LIT(" \t"));
+        struct str_slice key = slice_splitch(&val, ':');
         switch(str_toopt(key)) {
         case OPT_NDOTS:    cfg->ndots = slice_tou32(val); break;
         case OPT_TIMEOUT:  cfg->timeout_secs = slice_tou32(val); break;
@@ -365,8 +364,7 @@ static void add_options(struct dns_config *cfg, struct str_slice str)
 static void add_search(struct dns_config *cfg, struct str_slice str)
 {
     while (str.len && cfg->num_search < ARR_LEN(cfg->search)) {
-       struct str_slice name = slice_consume(&str, ' ');  
-       slice_trim(&name);
+       struct str_slice name = slice_splitset(&str, STR_LIT(" \t"));
        if (cfg->store_len + name.len + 1 > sizeof(cfg->store)) return;
         // copy name
         char *str = cfg->store + cfg->store_len;
@@ -378,15 +376,15 @@ static void add_search(struct dns_config *cfg, struct str_slice str)
     }
 }
 
-static int add_server(struct dns_config *cfg, struct str_slice str)
+static int add_server(struct dns_config *cfg, struct str_slice ip_str)
 { 
     if (cfg->num_ns >= ARR_LEN(cfg->ns_addrs)) return 0;
     struct dns_sockaddr *addr = &cfg->ns_addrs[cfg->num_ns];
 
     // get addr
     uint8_t ip_addr[16];
-    int type = ipstr_decode(str, ip_addr);
-    if (type == 0) return log_error_rc(0, "Invalid nameserver %.*s", SLICE(str));
+    int type = ipstr_decode(ip_str, ip_addr);
+    if (type == 0) return log_error_rc(0, "Invalid nameserver %.*s", SLICE(ip_str));
 
     // add
     int ptype = SOCK_DGRAM;
@@ -425,14 +423,11 @@ static int load_resolv_conf(char *file_path, struct dns_config *cfg)
             slice_chop(&line, '#');
             slice_trim(&line);
             if (line.len == 0) continue;
-            struct str_slice key = slice_copy(line);
-            struct str_slice val = slice_split(&key, ' ');  
-            slice_trim(&key);
-            slice_trim(&val);
+            struct str_slice key = slice_splitset(&line, STR_LIT(" \t"));  
             switch(str_tocfg(key)) {
-            case CFG_SERVER:  add_server(cfg, val); break;
-            case CFG_SEARCH:  add_search(cfg, val); break;
-            case CFG_OPTIONS: add_options(cfg, val); break;
+            case CFG_SERVER:  add_server(cfg,  line); break;
+            case CFG_SEARCH:  add_search(cfg,  line); break;
+            case CFG_OPTIONS: add_options(cfg, line); break;
             }
         }
         if (rc <= 0) break;
@@ -473,9 +468,7 @@ static int add_hosts(struct dns_hosts *hosts, struct str_slice ip_str, struct st
 
     int num_add = 0;
     while (names.len) {
-        struct str_slice name = slice_consume(&names, ' ');
-        slice_trim(&name);
-        if (name.len == 0) continue;
+        struct str_slice name = slice_splitset(&names, STR_LIT(" \t"));
         if (hosts->store_len + name.len + 1 > sizeof(hosts->store)) continue;
         // store name
         char *str = hosts->store + hosts->store_len;
@@ -512,12 +505,9 @@ static int load_hosts(const char *file_path, struct dns_hosts *hosts)
             slice_chop(&line, '#');
             slice_trim(&line);
             if (line.len == 0) continue;
-            struct str_slice key = slice_copy(line);
-            struct str_slice val = slice_split(&key, ' ');  
-            slice_trim(&key);
-            slice_trim(&val);
-            if (key.len == 0 || val.len == 0) continue;
-            add_hosts(hosts, key, val);
+            struct str_slice key = slice_splitset(&line, STR_LIT(" \t"));  
+            if (key.len == 0 || line.len == 0) continue;
+            add_hosts(hosts, key, line);
         }
         if (rc <= 0) break;
     }
@@ -1197,10 +1187,10 @@ static int try_hostname(struct dns_result *res)
         res->flags |= (DNS_IPV4 | DNS_IPV6);
     }
 
-    struct str_slice host = res->host;
+    struct str_slice host_str = res->host;
 
     // empty hostname
-    if (!host.len) {
+    if (!host_str.len) {
         if (res->flags & DNS_PASSIVE) {
             if (need_ip4(res->flags)) res_add_ip(res, DNS_IPV4, ip4_any);
             if (need_ip6(res->flags)) res_add_ip(res, DNS_IPV6, ip6_any);
@@ -1215,7 +1205,7 @@ static int try_hostname(struct dns_result *res)
 
     // decode ip-addr
     uint8_t ip_addr[16];
-    uint32_t addr_type = ipstr_decode(host, ip_addr);
+    uint32_t addr_type = ipstr_decode(host_str, ip_addr);
     if (!addr_type) return 0; // assume DNS name
 
     // check allowed
@@ -1223,7 +1213,7 @@ static int try_hostname(struct dns_result *res)
     if (allow & DNS_V4MAPPED) allow |= DNS_IPV4;
     if ((allow & addr_type)  == 0) {
         return log_error_rf("ip-addr type %d match %d failed for %.*s",
-            addr_type, allow, SLICE(host));
+            addr_type, allow, SLICE(host_str));
     }
 
     // add

@@ -1877,7 +1877,7 @@ int dns_rr_load(struct dns_rr *rec, int sc, const char *src)
 {
     // get addr
     struct str_slice addr  = slice_make_cstr(src);
-    struct str_slice attrs = slice_split(&addr, ' ');
+    struct str_slice attrs = slice_splitch(&addr, ' ');
     slice_trim(&addr);
 
     if (addr.len > DNS_NAME_MAXSTR) {
@@ -1913,7 +1913,7 @@ int dns_rr_load(struct dns_rr *rec, int sc, const char *src)
     
     // look for remaining attrs (e.g 3600 CH)
     while (attrs.len) {
-        struct str_slice attr = slice_split(&attrs, ' ');
+        struct str_slice attr = slice_splitch(&attrs, ' ');
         char name[20];
         slice_trim(&attr);
         // covert slice to cptr
