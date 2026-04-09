@@ -900,23 +900,24 @@ int apply_seccomp(const char *name)
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, nr))),
 
         // whitelist syscalls
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_accept4, 32, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_arch_prctl, 31, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_bind, 30, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_brk, 29, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_close, 28, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_connect, 27, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_create1, 26, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_ctl, 25, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_wait, 24, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_execve, 23, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_exit_group, 22, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_fcntl, 21, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_getpid, 20, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_getrandom, 19, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_listen, 18, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_mprotect, 17, 0),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_newfstatat, 16, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_accept4, 33, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_arch_prctl, 32, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_bind, 31, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_brk, 30, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_close, 29, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_connect, 28, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_create1, 27, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_ctl, 26, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_epoll_wait, 25, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_execve, 24, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_exit_group, 23, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_fcntl, 22, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_getpid, 21, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_getrandom, 20, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_listen, 19, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_mprotect, 18, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_newfstatat, 17, 0),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_openat, 16, 0),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_poll, 15, 0),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_prlimit64, 14, 0),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_read, 13, 0),
@@ -935,6 +936,7 @@ int apply_seccomp(const char *name)
         // actions
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)
+
     };
 
     struct sock_fprog prog = {
