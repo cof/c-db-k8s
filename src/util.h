@@ -45,13 +45,13 @@
 #define STR_LIT(s) (s), (sizeof(s) - 1)
 #define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
 
-// ptr macros
+// ptr macros - mkmem/umkmem aka TOPTR/FROMPTR
 #define RMCONST(_t, _v) ((_t)(uintptr_t)(_v))
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
-#define make_ptr(ptr, offset)  ((void *)  ( ((char *) ptr) + offset))
-#define make_offset(base, ptr) ((uint64_t) ((char *) (ptr) - (char *) (base)))
-#define make_mem(val) ((void *) ((uintptr_t) val))
-#define unmake_mem(val) ((uint64_t) ((uintptr_t) (val)))
+#define mkptr(ptr, offset)  ((void *)  ( ((char *) ptr) + offset))
+#define mkoffset(base, ptr) ((uint64_t) ((char *) (ptr) - (char *) (base)))
+#define mkmem(val) ((void *) ((uintptr_t) val))
+#define umkmem(val) ((uint64_t) ((uintptr_t) (val)))
 
 // Stringification macros
 #define XSTR(a) #a
