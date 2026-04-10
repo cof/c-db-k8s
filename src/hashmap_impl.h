@@ -115,8 +115,8 @@ static inline uint32_t MAP_FN(size)(MAP_TYPE *m)
 // put key, value in map - return index or end
 static inline uint32_t MAP_FN(put)(MAP_TYPE *m, KEY_TYPE key, VAL_TYPE val) 
 {
-    if (m->size >= m->threshold) {
-        if (!MAP_FN(resize)(m, m->capacity + 1)) return m->capacity;
+    if (m->size >= m->threshold && !MAP_FN(resize)(m, m->capacity + 1)) {
+        return m->capacity;
     }
 
     if (key == (KEY_TYPE) -1) return m->capacity;

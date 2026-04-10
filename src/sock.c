@@ -99,8 +99,7 @@ static int connect_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
     int type = addr->sock_type; 
     sock->fd = socket(domain, type, 0);
 
-    log_debug("addr=%s type=%s fd=%d", 
-        dns_sockaddr_tostr(addr), dns_socktype_tostr(addr), sock->fd);
+    log_debug("a=%s t=%s fd=%d", dns_sockaddr_tostr(addr), dns_socktype_tostr(addr), sock->fd);
     if (sock->fd == -1) return log_errno_rf("socket(%d,%d) failed", domain, type);
 
     // need-connect

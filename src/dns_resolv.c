@@ -417,56 +417,75 @@ static void init_config(struct dns_config *cfg)
     if (!cfg->num_ns) add_server(cfg, slice_make(STR_LIT("127.0.0.1")));
 }
 
-struct dns_sockaddr *hosts_find(struct dns_hosts *hosts, struct str_slice host)
+struct dns_sockaddr *hosts_get(struct dns_hosts *hosts, struct str_slice hostname)
 {
     // lowercase name
     char name[DNS_HOSTS_MAXNAME];
-    size_t len = slice_tomem(host, name, ARR_LEN(name));
+    size_t len = slice_tomem(hostname, name, ARR_LEN(name));
     if (!len) return NULL;
     str_tolower(name, len);
 
     uint32_t idx = map_get(&hosts->name_toaddr, name);
     if (idx == map_end(&hosts->name_toaddr)) return NULL;
+    struct dns_sockaddr *addr = make_mem(map_val(&hosts->name_toaddr, idx));
 
-    return make_mem(map_val(&hosts->name_toaddr, idx));
+    return addr;
 }
 
-static int add_host(struct dns_hosts *hosts, struct str_slice ip_str, struct str_slice names)
+static int hosts_put(struct dns_hosts *hosts, struct str_slice hostname, struct dns_sockaddr *addr)
+{
+    // lowercase hostname
+    char name[DNS_HOSTS_MAXNAME];
+    size_t name_len = slice_tomem(hostname, name, ARR_LEN(name));
+    if (!name_len) return 0;
+    str_tolower(name, name_len);
+
+    uint32_t idx = map_get(&hosts->name_toaddr, name);
+    if (idx == map_end(&hosts->name_toaddr)) {
+        // new name
+        if (hosts->store_len + name_len + 1 > sizeof(hosts->store)) return 0;
+        char *str = hosts->store + hosts->store_len;
+        memcpy(str, name, name_len);
+        str[name_len] = '\0';
+        idx = map_put(&hosts->name_toaddr, str, 0);
+        if (idx == map_end(&hosts->name_toaddr)) return 0;
+        hosts->store_len += name_len + 1;
+        hosts->num_addr++;
+    }
+
+    // add
+    map_set(&hosts->name_toaddr, idx, unmake_mem(addr));
+    return 1;
+}
+
+static int hosts_add(struct dns_hosts *hosts,
+    struct str_slice ip, struct str_slice hostname, struct str_slice aliases)
 {
     if (hosts->num_addr >= ARR_LEN(hosts->addrs)) return 0;
     struct dns_sockaddr *addr = &hosts->addrs[hosts->num_addr];
 
-    log_debug("ip_str=%.*s names=%.*s", SLICE(ip_str), SLICE(names));
+    log_debug("ip=%.*s h=%.*s a=%.*s", SLICE(ip), SLICE(hostname), SLICE(aliases));
 
     // decode ip-addr
     uint8_t ip_addr[16];
-    int type = ipstr_decode(ip_str, ip_addr);
-    if (type == 0) return log_error_rc(0, "Invalid ip-addr %.*s", SLICE(ip_str));
+    int type = ipstr_decode(ip, ip_addr);
+    if (type == 0) return log_error_rc(0, "Invalid ip-addr %.*s", SLICE(ip));
     if (!sockaddr_store(addr, type, ip_addr, 0, 0)) return 0;
 
-    int num_add = 0;
-    while (names.len) {
-        struct str_slice name = slice_splitset(&names, STR_LIT(" \t"));
-        if (hosts->store_len + name.len + 1 > sizeof(hosts->store)) continue;
-        // new name
-        char *str = hosts->store + hosts->store_len;
-        memcpy(str, name.ptr, name.len);
-        str[name.len] = '\0';
-        str_tolower(str, name.len);
-        // add name:ip-addr
-        uint32_t idx = map_put(&hosts->name_toaddr, str, unmake_mem(addr));
-        if (idx == map_end(&hosts->name_toaddr)) continue;
-        num_add++;
-        hosts->store_len += name.len + 1;
+    // add hostname
+    if (!hosts_put(hosts, hostname, addr)) return 0;
+
+    // add aliases
+    int num_add = 1;
+    while (aliases.len) {
+        struct str_slice alias = slice_splitset(&aliases, STR_LIT(" \t"));
+        if (hosts_put(hosts, alias, addr)) num_add++;
     }
 
-    if (!num_add) return 0;
-
-    // hosts entry added
-    hosts->num_addr++;
-    return 1;
+    return num_add;
 }
 
+// load hosts file -  IP_address canonical_hostname [aliases...]
 static void init_hosts(struct dns_hosts *hosts, uint32_t hosts_size)
 {
     uint8_t tmp[1024];
@@ -484,16 +503,17 @@ static void init_hosts(struct dns_hosts *hosts, uint32_t hosts_size)
         slice_trim(&line);
         if (line.len == 0) continue;
         total++;
-        struct str_slice key = slice_splitset(&line, STR_LIT(" \t"));  
-        if (key.len == 0 || line.len == 0) continue;
-        if (add_host(hosts, key, line)) num_add++;
+        struct str_slice addr = slice_splitset(&line, STR_LIT(" \t"));  
+        struct str_slice name = slice_splitset(&line, STR_LIT(" \t"));  
+        if (addr.len == 0 || name.len == 0) continue;
+        if (hosts_add(hosts, addr, name, line)) num_add++;
     }
     if (fd != -1) close(fd);
 
     log_debug("lines %zu services %zu added %zu", lines, total, num_add);
 }
 
-static uint32_t services_find(struct dns_services *svcs, struct str_slice port)
+static uint32_t services_get(struct dns_services *svcs, struct str_slice port)
 {
     char name[DNS_SVC_MAXNAME];
     size_t len = slice_tomem(port, name, ARR_LEN(name));
@@ -504,25 +524,12 @@ static uint32_t services_find(struct dns_services *svcs, struct str_slice port)
     return map_val(&svcs->name_toport, idx);
 }
 
-static int add_service(struct dns_services *svcs,
-    struct str_slice name_str, struct str_slice pp_str,
-    struct str_slice alias_str)
+static int services_put(struct dns_services *svcs,
+    struct str_slice service, int ptype, int16_t port)
 {
-    log_debug("name=%.*s pp=%.*s", SLICE(name_str), SLICE(pp_str));
-
-    (void) alias_str;
-    if (svcs->num_svc >= svcs->max_svc) return 0;
-
-    // get port, protocol
-    struct str_slice port_str = slice_splitch(&pp_str, '/');
-    uint16_t port_no = slice_tou32(port_str);
-    int port_type = 0;
-    if (slice_eqmem(pp_str, STR_LIT("tcp"))) port_type = DNS_TCP;
-    if (slice_eqmem(pp_str, STR_LIT("udp"))) port_type = DNS_UDP;
-    if (!port_no || !port_type) return 0;
-
     char name[DNS_SVC_MAXNAME];
-    size_t name_len = slice_tomem(name_str, name, sizeof(name));
+    size_t name_len = slice_tomem(service, name, sizeof(name));
+    if (!name_len) return 0;
     str_tolower(name, name_len);
 
     uint32_t idx = map_get(&svcs->name_toport, name);
@@ -538,15 +545,34 @@ static int add_service(struct dns_services *svcs,
         svcs->num_svc++;
     }
 
-    // update port-no
+    // update ptype and port
     uint32_t val = map_val(&svcs->name_toport, idx);
-    if (port_type == DNS_TCP) val |= port_no;
-    if (port_type == DNS_UDP) val |= port_no << 16;
+    if (ptype == DNS_TCP) val |= port;
+    if (ptype == DNS_UDP) val |= port << 16;
     map_set(&svcs->name_toport, idx, val);
 
     return 1;
 }
 
+static int services_add(struct dns_services *svcs,
+    struct str_slice name, struct str_slice pp, struct str_slice aliases)
+{
+    log_debug("n=%.*s p=%.*s as%.*s", SLICE(name), SLICE(pp), SLICE(aliases));
+
+    if (svcs->num_svc >= svcs->max_svc) return 0;
+
+    // get port and ptype
+    struct str_slice port_str = slice_splitch(&pp, '/');
+    uint16_t port = slice_tou32(port_str);
+    int ptype = 0;
+    if (slice_eqmem(pp, STR_LIT("tcp"))) ptype = DNS_TCP;
+    if (slice_eqmem(pp, STR_LIT("udp"))) ptype = DNS_UDP;
+    if (!ptype || !port) return 0;
+
+    return services_put(svcs, name, ptype, port);
+}
+
+// load services file :  service-name  port/protocol  [aliases ...]
 static void init_services(struct dns_services *svcs)
 {
     uint8_t tmp[1024];
@@ -568,7 +594,7 @@ static void init_services(struct dns_services *svcs)
         struct str_slice name = slice_splitset(&line, STR_LIT(" \t"));  
         struct str_slice pp = slice_splitset(&line, STR_LIT(" \t"));  
         if (name.len == 0 || pp.len == 0) continue;
-        if (add_service(svcs, name, pp, line)) num_add++;
+        if (services_add(svcs, name, pp, line)) num_add++;
     }
     if (fd != -1) close(fd);
 
@@ -1247,7 +1273,7 @@ static int try_port(struct dns_result *res)
     if (res->flags & DNS_NUMPORT) return log_error_rf("port '%.*s' not a number", SLICE(port));
 
     // service port-str
-    uint32_t pp = services_find(&glob_svcs, port);
+    uint32_t pp = services_get(&glob_svcs, port);
     uint16_t tcp_port= pp & 0xffff;
     uint16_t udp_port = pp >> 16;
 
@@ -1315,7 +1341,7 @@ static int try_hosts(struct dns_result *res)
 {
     // lookup host
     struct dns_hosts *hosts = &glob_hosts;
-    struct dns_sockaddr *addr = hosts_find(hosts, res->host);
+    struct dns_sockaddr *addr = hosts_get(hosts, res->host);
 
     log_debug("lookup host=%.*s addr=%s", SLICE(res->host), dns_sockaddr_tostr(addr));
     if (!addr) return 0;
