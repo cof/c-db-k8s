@@ -22,6 +22,9 @@
 
 #define DNS_MAXADDR 16  // default result
 
+// uses 31-bit serial number (rfc1982) window good for 68 years
+#define DNS_TIME_GEQ(a,b) ((int32_t)((a)-(b)) >= 0)
+
 #define DNS_PORT 53
 #define DNS_PKTSIZE 1280
 #define DNS_ATTEMPTS 2

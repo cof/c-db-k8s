@@ -892,7 +892,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
                 if (rr->rdata.txt.num_str >= ARR_LEN(rr->rdata.txt.str)) {
                     return log_errno_rf("No space for TXT entry");
                 }
-                char *txt = make_ptr(rdata, ridx);
+                char *txt = mkptr(rdata, ridx);
                 rr->rdata.txt.str[rr->rdata.txt.num_str] = msg_store_str(msg, txt, len);
                 if (!rr->rdata.txt.str[rr->rdata.txt.num_str]) {
                     return log_errno_rf("No space to store TXT str");

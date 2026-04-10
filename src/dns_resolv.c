@@ -3,6 +3,11 @@
  * -------------------------------
  * See dns_resolv.h for API description.
  *
+ * TODO
+ * - Happy Eyeballs 
+ * - EDNS0 
+ * - CNAME
+ *
  * API sections
  * ------------
  * dns_resolv - resolve hostname/port to array of add 
@@ -20,6 +25,13 @@
 #include "hashmap.h"
 #include "dns_proto.h"
 #include "dns_resolv.h"
+
+// helper macros for log_debug
+#define ADDR_STR(a) dns_sockaddr_tostr(a)
+#define NEED(r) (r)->need_ip4, (r)->need_ip6
+#define CFG(c) (c)->attempts, (c)->timeout_secs, (c)->num_ns
+#define CFG_NS(c) (c)->attempts, (c)->timeout_secs, (c)->ndots, (c)->num_ns
+#define CFG_QN(c) (c)->attempts, (c)->timeout_secs, (c)->num_ns
 
 // cached dns answers
 struct dns_cache {
@@ -43,7 +55,7 @@ struct dns_hosts {
     struct dns_sockaddr addrs[DNS_HOSTS_MAXADDR];
 };
 
-// resolv.conf
+// resolv.conf file
 struct dns_config {
     uint32_t attempts;
     uint32_t timeout_secs;
@@ -57,6 +69,7 @@ struct dns_config {
     struct dns_sockaddr ns_addrs[DNS_CFG_MAXNS];
 };
 
+// services file
 struct dns_services {
     size_t store_len;
     size_t num_svc;
@@ -79,6 +92,9 @@ struct dns_result {
     int num_addr;
     int max_addr;
     struct dns_sockaddr *addrs;
+    // bit fields
+    unsigned int need_ip4 : 1;
+    unsigned int need_ip6 : 1;
 };
 
 // conection state
@@ -147,16 +163,16 @@ static uint16_t gen_tid()
     return next_tid++;
 }
 
-static inline int need_ip4(uint32_t flags)
+static int64_t get_now_ms(void) 
 {
-    if (flags & DNS_IPV4) return 1;
-    if (flags & (DNS_IPV6 | DNS_V4MAPPED)) return 1;
-    return 0;
-}
+    struct timespec ts;
 
-static inline int need_ip6(uint32_t flags)
-{
-    return flags & DNS_IPV6 ? 1 : 0;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        // failed - return ts that will trigger a timout
+        return  0x7FFFFFFFFFFFFFFFLL;
+    }
+
+    return ts.tv_sec * 1000 + (ts.tv_nsec / 1000000);
 }
 
 // decode ip-addr str
@@ -167,8 +183,8 @@ static uint32_t ipstr_decode(struct str_slice str, uint8_t dst[static 16])
     return 0;
 }
 
-// store ip+port to addr
-static int sockaddr_store(struct dns_sockaddr *addr, 
+// load addr with ip + port
+static int sockaddr_load(struct dns_sockaddr *addr, 
     int type, const void *ip, 
     int ptype, uint16_t port)
 {
@@ -210,6 +226,7 @@ static inline int res_isfull(struct dns_result *res)
     return res->num_addr >= res->max_addr;
 }
 
+// return index where stored else -1
 static int res_add_ip_port(struct dns_result *res, 
     int type, const void *ip, 
     int ptype, uint16_t port)
@@ -221,31 +238,37 @@ static int res_add_ip_port(struct dns_result *res,
     switch(type) {
     case DNS_IPV4: idx = res->max_addr - res->num_ip4 - 1; break;
     case DNS_IPV6: idx = res->num_ip6; break;
-    default: return 0;
+    default: return -1;
     }
 
-    if (sockaddr_store(&res->addrs[idx], type, ip, ptype, port)) {
+    if (sockaddr_load(&res->addrs[idx], type, ip, ptype, port)) {
         switch(type) {
         case DNS_IPV4: res->num_ip4++; break;
         case DNS_IPV6: res->num_ip6++; break;
         }
         res->num_addr++;
-        return 1;
+        return idx;
     }
 
-    return 0;
+    return -1;
 }
 
 static int res_add_ip(struct dns_result *res, int type, const void *ip)
 {
     int add_tcp = res->flags & DNS_TCP;
     int add_udp = res->flags & DNS_UDP;
-    int add = 0;
+    int rc, idx = -1;
 
-    if (add_tcp && res_add_ip_port(res, type, ip, DNS_TCP, res->tcp_port)) add++;
-    if (add_udp && res_add_ip_port(res, type, ip, DNS_UDP, res->udp_port)) add++;
+    if (add_tcp) {
+        rc = res_add_ip_port(res, type, ip, DNS_TCP, res->tcp_port);
+        if (rc != -1) idx = rc;
+    }
+    if (add_udp) {
+        rc = res_add_ip_port(res, type, ip, DNS_UDP, res->udp_port);
+        if (rc != -1) idx = rc;
+    }
 
-    return add;
+    return idx;
 }
 
 static int res_add_addr(struct dns_result *res, struct dns_sockaddr *addr)
@@ -259,7 +282,7 @@ static int res_add_addr(struct dns_result *res, struct dns_sockaddr *addr)
         return res_add_ip(res, DNS_IPV6, addr->v6.sin6_addr.s6_addr);
     }
 
-    return 0;
+    return -1;
 }
 
 static int fixup_addrs(struct dns_result *res)
@@ -372,7 +395,7 @@ static int add_server(struct dns_config *cfg, struct str_slice ip_str)
     // add
     int ptype = SOCK_DGRAM;
     uint16_t port = 53;
-    if (!sockaddr_store(addr, type, ip_addr, ptype, port)) return 0;
+    if (!sockaddr_load(addr, type, ip_addr, ptype, port)) return 0;
 
     cfg->num_ns++;
     return 1;
@@ -419,21 +442,25 @@ static void init_config(struct dns_config *cfg)
 
 struct dns_sockaddr *hosts_get(struct dns_hosts *hosts, struct str_slice hostname)
 {
+    struct dns_sockaddr *addr = NULL;
+
     // lowercase name
     char name[DNS_HOSTS_MAXNAME];
-    size_t len = slice_tomem(hostname, name, ARR_LEN(name));
-    if (!len) return NULL;
-    str_tolower(name, len);
+    size_t name_len = slice_tomem(hostname, name, ARR_LEN(name));
+    if (!name_len) return addr;
+    str_tolower(name, name_len);
 
     uint32_t idx = map_get(&hosts->name_toaddr, name);
-    if (idx == map_end(&hosts->name_toaddr)) return NULL;
-    struct dns_sockaddr *addr = make_mem(map_val(&hosts->name_toaddr, idx));
+    if (idx == map_end(&hosts->name_toaddr)) return addr;
+    addr = mkmem(map_val(&hosts->name_toaddr, idx));
 
     return addr;
 }
 
 static int hosts_put(struct dns_hosts *hosts, struct str_slice hostname, struct dns_sockaddr *addr)
 {
+    if (hosts->num_addr >= hosts->max_addr) return 0;
+
     // lowercase hostname
     char name[DNS_HOSTS_MAXNAME];
     size_t name_len = slice_tomem(hostname, name, ARR_LEN(name));
@@ -447,14 +474,19 @@ static int hosts_put(struct dns_hosts *hosts, struct str_slice hostname, struct 
         char *str = hosts->store + hosts->store_len;
         memcpy(str, name, name_len);
         str[name_len] = '\0';
-        idx = map_put(&hosts->name_toaddr, str, 0);
+        // add to map
+        struct dns_sockaddr *sa = &hosts->addrs[hosts->num_addr];
+        idx = map_put(&hosts->name_toaddr, str, umkmem(sa));
         if (idx == map_end(&hosts->name_toaddr)) return 0;
+        // added
         hosts->store_len += name_len + 1;
         hosts->num_addr++;
     }
 
-    // add
-    map_set(&hosts->name_toaddr, idx, unmake_mem(addr));
+    // update
+    struct dns_sockaddr *sa = mkmem(map_val(&hosts->name_toaddr, idx));
+    *sa = *addr;
+
     return 1;
 }
 
@@ -470,7 +502,7 @@ static int hosts_add(struct dns_hosts *hosts,
     uint8_t ip_addr[16];
     int type = ipstr_decode(ip, ip_addr);
     if (type == 0) return log_error_rc(0, "Invalid ip-addr %.*s", SLICE(ip));
-    if (!sockaddr_store(addr, type, ip_addr, 0, 0)) return 0;
+    if (!sockaddr_load(addr, type, ip_addr, 0, 0)) return 0;
 
     // add hostname
     if (!hosts_put(hosts, hostname, addr)) return 0;
@@ -485,20 +517,21 @@ static int hosts_add(struct dns_hosts *hosts,
     return num_add;
 }
 
-// load hosts file -  IP_address canonical_hostname [aliases...]
-static void init_hosts(struct dns_hosts *hosts, uint32_t hosts_size)
+// load hosts file - IP_address canonical_hostname [aliases...]
+static void init_hosts(struct dns_hosts *hosts)
 {
     uint8_t tmp[1024];
     struct rwbuf buf = RWBUF_INIT(tmp, sizeof(tmp));
     struct str_slice line;
     int rc;
 
-    hosts->max_addr = hosts_size;
+    hosts->max_addr = ARR_LEN(hosts->addrs);
     size_t lines = 0, total= 0, num_add = 0;
 
     int fd = open(DNS_HOSTS, O_RDONLY);
     while ( (rc = read_line(fd, &buf, &line)) > 0) {
         lines++;
+        // skip blank lines
         slice_chop(&line, '#');
         slice_trim(&line);
         if (line.len == 0) continue;
@@ -572,7 +605,7 @@ static int services_add(struct dns_services *svcs,
     return services_put(svcs, name, ptype, port);
 }
 
-// load services file :  service-name  port/protocol  [aliases ...]
+// load services file : service-name  port/protocol  [aliases ...]
 static void init_services(struct dns_services *svcs)
 {
     uint8_t tmp[1024];
@@ -587,9 +620,11 @@ static void init_services(struct dns_services *svcs)
     int fd = open(DNS_SERVICES, O_RDONLY);
     while ( (rc = read_line(fd, &buf, &line)) > 0) {
         lines++;
+        // skip blank lines
         slice_chop(&line, '#');
         slice_trim(&line);
         if (line.len == 0) continue;
+        // add service 
         total++;
         struct str_slice name = slice_splitset(&line, STR_LIT(" \t"));  
         struct str_slice pp = slice_splitset(&line, STR_LIT(" \t"));  
@@ -601,23 +636,94 @@ static void init_services(struct dns_services *svcs)
     log_debug("lines %zu services %zu added %zu", lines, total, num_add);
 }
 
-static int init_cache(struct dns_cache *cache, uint32_t cache_size)
+static struct dns_sockaddr *cache_get(struct dns_cache *cache,
+    int type, struct str_slice hostname)
 {
-    cache->max_addr = cache_size;
+    struct dns_sockaddr *addr = NULL;
 
-    return 0;
-}
+    log_debug("t=%d n=%.*s", type, SLICE(hostname));
 
-static int64_t get_now_ms(void) 
-{
-    struct timespec ts;
+    // lowercase name
+    char name[DNS_HOSTS_MAXNAME];
+    name[0] = type & DNS_IPV4 ? '4' : '6';
+    size_t name_len = slice_tomem(hostname, name + 1, ARR_LEN(name) - 1);
+    if (!name_len) return addr;
+    name_len++;
+    str_tolower(name, name_len);
 
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
-        // failed - return ts that will trigger a timout
-        return  0x7FFFFFFFFFFFFFFFLL;
+    uint32_t idx = map_get(&cache->name_toaddr, name);
+    if (idx == map_end(&cache->name_toaddr)) return addr;
+
+    addr = mkmem(map_val(&cache->name_toaddr, idx));
+    uint32_t now_secs = get_now_ms() / 1000;
+    uint32_t expiry = addr->sock_type;
+
+    if (DNS_TIME_GEQ(now_secs, expiry)) {
+        map_rem(&cache->name_toaddr, idx);
+        addr->sock_type = 0;
+        cache->num_addr--;
+        return NULL;
     }
 
-    return ts.tv_sec * 1000 + (ts.tv_nsec / 1000000);
+    return addr;
+}
+
+static int cache_put(struct dns_cache *cache, 
+    int type, struct str_slice hostname,
+    struct dns_sockaddr *addr, uint32_t ttl)
+{
+    log_debug("t=%d n=%.*s a=%s ttl=%u", type, SLICE(hostname), ADDR_STR(addr), ttl);
+
+    if (cache->num_addr >= cache->max_addr) return 0;
+    if (ttl == 0 || ttl & 0x80000000) return 0;
+
+    // lowercase name
+    char name[DNS_HOSTS_MAXNAME];
+    name[0] = type & DNS_IPV4 ? '4' : '6';
+    size_t name_len = slice_tomem(hostname, name + 1, ARR_LEN(name) - 1);
+    if (!name_len) return 0;
+    name_len++;
+    str_tolower(name, name_len);
+
+    uint32_t idx = map_get(&cache->name_toaddr, name);
+    if (idx == map_end(&cache->name_toaddr)) {
+        // new name
+        if (cache->store_len + name_len + 1 > sizeof(cache->store)) return 0;
+        char *str = cache->store + cache->store_len;
+        memcpy(str, name, name_len);
+        str[name_len] = '\0';
+        // find free slot - TODO need array/list
+        struct dns_sockaddr *sa = NULL;
+        for (size_t i = 0; i < cache->max_addr; i++) {
+            if (cache->addrs[i].sock_type == 0) {
+                sa = &cache->addrs[i];
+                break;
+            }
+        }
+        if (!sa) return 0;
+        // add to map
+        idx = map_put(&cache->name_toaddr, str, umkmem(sa));
+        if (idx == map_end(&cache->name_toaddr)) return 0;
+        // added
+        cache->store_len += name_len + 1;
+        cache->num_addr++;
+    }
+
+    // update
+    struct dns_sockaddr *sa = mkmem(map_val(&cache->name_toaddr, idx));
+    *sa = *addr;
+    sa->sock_type = get_now_ms() / 1000 + ttl;
+
+    log_debug("expiry in %u", sa->sock_type);
+
+    return 1;
+}
+
+static int init_cache(struct dns_cache *cache)
+{
+    cache->max_addr = ARR_LEN(cache->addrs);
+
+    return 0;
 }
 
 static inline void query_close(struct dns_query *q)
@@ -635,8 +741,8 @@ static struct dns_query *get_query(struct dns_ns *ns, uint16_t qtype)
     struct dns_result *res = ns->res;
 
     switch(qtype) {
-    case DNS_TYPE_A:    if (need_ip4(res->flags)) return &ns->v4_query; break;
-    case DNS_TYPE_AAAA: if (need_ip6(res->flags)) return &ns->v6_query; break;
+    case DNS_TYPE_A:    if (res->need_ip4) return &ns->v4_query; break;
+    case DNS_TYPE_AAAA: if (res->need_ip6) return &ns->v6_query; break;
     }
 
     return NULL;
@@ -855,6 +961,9 @@ static int ns_add_ans(struct dns_ns *ns)
 {
     struct dns_msg *msg = &ns->msg;
     struct dns_sect *ans = &msg->an_recs;
+    struct dns_cache *cache = &glob_cache;
+    struct dns_result *res = ns->res;
+    int idx;
 
     // a query worked
     ns->have_ans = 1;
@@ -863,10 +972,18 @@ static int ns_add_ans(struct dns_ns *ns)
         struct dns_rr *rr =  &ans->rrs[i];
         switch(rr->type) {
         case DNS_TYPE_A:
-            if (res_add_ip(ns->res, DNS_IPV4, rr->rdata.a)) ns->have_ip4 = 1;
+            idx = res_add_ip(res, DNS_IPV4, rr->rdata.a);
+            if (idx != -1) {
+                cache_put(cache, DNS_IPV4, ns->name, &res->addrs[idx], rr->ttl);
+                ns->have_ip4 = 1;
+            }
             break;
         case DNS_TYPE_AAAA: 
-            if (res_add_ip(ns->res, DNS_IPV6, rr->rdata.aaaa)) ns->have_ip6 = 1;
+            idx = res_add_ip(res, DNS_IPV6, rr->rdata.aaaa);
+            if (idx != -1) {
+                cache_put(cache, DNS_IPV6, ns->name, &res->addrs[idx], rr->ttl);
+                ns->have_ip6 = 1;
+            }
             break;
         }
     }
@@ -1107,15 +1224,14 @@ static int try_nameserver(struct str_slice name,
     struct dns_sockaddr *addr, uint32_t timeout_secs,
     struct dns_result *res)
 {
+    log_debug("n=%.*s a=%s 4=%d 6=%d", SLICE(name), ADDR_STR(addr), NEED(res));
+
     struct dns_ns ns = {
         .name = name,
         .res =  res,
         .addr = addr,
         .timeout_ms = timeout_secs * 1000
     };
-
-    log_debug("ns_addr:%s ip4=%d ip6=%d", dns_sockaddr_tostr(addr),
-        need_ip4(res->flags), need_ip6(res->flags));
 
     connect_all(&ns);
     query_all(&ns);
@@ -1176,13 +1292,36 @@ static struct str_slice build_name(struct strbuf *buf,
     return slice_make(strbuf_start(buf), strbuf_used(buf));
 }
 
+static int try_cache(struct str_slice name, struct dns_result *res)
+{
+    log_debug("lookup n=%.*s ", SLICE(name));
+
+    struct dns_cache *cache = &glob_cache;
+
+    if (res->need_ip4) {
+       struct dns_sockaddr *addr = cache_get(cache, DNS_IPV4, res->host);
+       if (addr && res_add_addr(res, addr) != -1) {
+           res->need_ip4 = 0;
+       }
+    }
+
+    if (res->need_ip6) {
+       struct dns_sockaddr *addr = cache_get(cache, DNS_IPV6, res->host);
+       if (addr && res_add_addr(res, addr) != -1) {
+           res->need_ip6 = 0;
+       }
+    }
+
+    return res->need_ip4 || res->need_ip6;
+}
+
 static int query_name(struct str_slice name, struct dns_config *cfg, struct dns_result *res)
 {
+    log_debug("n %.*s #att %d tmo %u #ns %zu", SLICE(name), CFG_QN(cfg));
+
+    if (!try_cache(name, res)) return 0;
+
     int rc = DNS_ERR;
-
-    log_debug("name:%.*s attempts:%d timeout:%u num_ns:%zu",
-        SLICE(name), cfg->attempts, cfg->timeout_secs, cfg->num_ns);
-
     for (size_t a = 0; a < cfg->attempts; a++) {
         for (size_t n = 0; n < cfg->num_ns; n++) {
             struct dns_sockaddr *addr = &cfg->ns_addrs[n];
@@ -1200,7 +1339,7 @@ static int query_search(struct str_slice name, struct dns_config *cfg, struct dn
     char tmp[DNS_HOSTS_MAXNAME];
     struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
 
-    log_debug("name:%.*s nsearch:%zu", SLICE(name), cfg->num_search);
+    log_debug("n=%.*s nsearch=%zu", SLICE(name), cfg->num_search);
 
     for (size_t s = 0; s < cfg->num_search; s++) {
         struct str_slice suffix = slice_make_cstr(cfg->search[s]);
@@ -1216,8 +1355,7 @@ static int try_nameservers(struct dns_result *res)
 {
     struct dns_config *cfg = &glob_cfg;
 
-    log_debug("attempts:%u timeout:%u ndots:%u num_ns:%zu",
-        cfg->attempts, cfg->timeout_secs, cfg->ndots, cfg->num_ns);
+    log_debug("#att %u tmo:%u ndots %u #ns %zu", CFG_NS(cfg));
 
     // check fqdn
     struct str_slice name = res->host;
@@ -1246,7 +1384,6 @@ static int try_nameservers(struct dns_result *res)
 
     return rc;
 }
-
 
 static int try_port(struct dns_result *res)
 {
@@ -1301,17 +1438,22 @@ static int try_hostname(struct dns_result *res)
         res->flags |= (DNS_IPV4 | DNS_IPV6);
     }
 
+    // set the name querys we need
+    if (res->flags & DNS_IPV6) res->need_ip6 = 1;
+    if (res->flags & DNS_IPV4) res->need_ip4 = 1;
+    if (res->flags & (DNS_IPV6 | DNS_V4MAPPED)) res->need_ip4 = 1;
+
     struct str_slice host_str = res->host;
 
     // empty hostname
     if (!host_str.len) {
         if (res->flags & DNS_PASSIVE) {
-            if (need_ip4(res->flags)) res_add_ip(res, DNS_IPV4, ip4_any);
-            if (need_ip6(res->flags)) res_add_ip(res, DNS_IPV6, ip6_any);
+            if (res->need_ip4) res_add_ip(res, DNS_IPV4, ip4_any);
+            if (res->need_ip6) res_add_ip(res, DNS_IPV6, ip6_any);
         }
         else {
-            if (need_ip4(res->flags)) res_add_ip(res, DNS_IPV4, ip4_loopback);
-            if (need_ip6(res->flags)) res_add_ip(res, DNS_IPV6, ip6_loopback);
+            if (res->need_ip4) res_add_ip(res, DNS_IPV4, ip4_loopback);
+            if (res->need_ip6) res_add_ip(res, DNS_IPV6, ip6_loopback);
         }
         fixup_addrs(res);
         return res->num_addr ?: -1;
@@ -1355,10 +1497,13 @@ static int try_hosts(struct dns_result *res)
 
 int dns_init(uint32_t hosts_size, uint32_t cache_size, struct simple_sig *sig)
 {
+    (void) hosts_size;
+    (void) cache_size;
+
     init_config(&glob_cfg);
-    init_hosts(&glob_hosts, hosts_size);
+    init_hosts(&glob_hosts);
     init_services(&glob_svcs);
-    init_cache(&glob_cache, cache_size);
+    init_cache(&glob_cache);
 
     glob_sig = sig;
 

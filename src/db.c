@@ -72,15 +72,13 @@ static struct db_rec *create_rec(struct str_slice key, struct str_slice val)
          if (db_hdr->next_offset + rec_size > db_size) {
             return log_error_rn("mmap rec_size %zu failed", rec_size);
          }
-         rec = make_ptr(db_mmap_ptr, db_hdr->next_offset);
+         rec = mkptr(db_mmap_ptr, db_hdr->next_offset);
          db_hdr->next_offset += rec_size;
          db_hdr->num_rec++;
     }
     else {
         rec = malloc(rec_size);
-        if (!rec) {
-            return log_errno_rn("malloc rec_size %zu failed", rec_size);
-        }
+        if (!rec) return log_errno_rn("malloc rec_size %zu failed", rec_size);
     }
 
     rec->next = 0;
@@ -113,8 +111,8 @@ static int hash_del(struct str_slice key)
     while (*pp) {
         // get hash or mmap entry
         struct db_rec *rec = db_file
-            ? make_ptr(db_mmap_ptr, *pp)
-            : make_mem(*pp);
+            ? mkptr(db_mmap_ptr, *pp)
+            : mkmem(*pp);
         if (slice_eqmem(key, rec->data, key.len)) {
             // unchain
             *pp = rec->next; 
@@ -139,8 +137,8 @@ static struct db_rec *hash_search(int idx, struct str_slice key)
     while (db_link) {
         // get hash or mmap entry
         struct db_rec *rec = db_file    
-            ? make_ptr(db_mmap_ptr, db_link)
-            : make_mem(db_link);
+            ? mkptr(db_mmap_ptr, db_link)
+            : mkmem(db_link);
         if (slice_eqmem(key, rec->data, key.len)) return rec;
         db_link = rec->next;
     }
@@ -164,8 +162,8 @@ static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
     while (*pp) {
         // get hash or mmap entry
         struct db_rec *rec = db_file
-            ? make_ptr(db_mmap_ptr, *pp)
-            : make_mem(*pp);
+            ? mkptr(db_mmap_ptr, *pp)
+            : mkmem(*pp);
         // does record match key
         if (slice_eqmem(key, rec->data, key.len)) {
             // replace existing entry
@@ -174,8 +172,8 @@ static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
             // chain
             new_rec->next = rec->next;
             *pp = db_file 
-                ? make_offset(db_mmap_ptr, new_rec)
-                : unmake_mem(new_rec);
+                ? mkoffset(db_mmap_ptr, new_rec)
+                : umkmem(new_rec);
             // all done
             del_rec(rec);
             return new_rec;
@@ -190,8 +188,8 @@ static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
     // chain
     new_rec->next = db_buckets[idx];
     db_buckets[idx] = db_file
-        ? make_offset(db_mmap_ptr, new_rec)
-        : unmake_mem(new_rec);
+        ? mkoffset(db_mmap_ptr, new_rec)
+        : umkmem(new_rec);
 
     return new_rec;
 }
@@ -218,7 +216,7 @@ static int file_check(void)
             if (db_link + rec_size > db_size) {
                 return log_error_rf("Truncated rec-hdr at offset %lu", db_link);
             }
-            rec = make_ptr(db_mmap_ptr, db_link);
+            rec = mkptr(db_mmap_ptr, db_link);
             rec_size += rec->key_len + rec->val_len;
             if (db_link + rec_size > db_size) {
                 return log_error_rf("truncated rec-data at offset %lu", db_link);
@@ -284,9 +282,9 @@ static int file_init(const char *file)
     // setup db file
     db_file = 1;
     db_mmap_ptr = mmap_ptr;
-    db_size = file_size;
-    db_hdr = make_ptr(db_mmap_ptr, 0);
-    db_buckets = make_ptr(db_mmap_ptr, sizeof(*db_hdr));
+    db_size    = file_size;
+    db_hdr     = mkptr(db_mmap_ptr, 0);
+    db_buckets = mkptr(db_mmap_ptr, sizeof(*db_hdr));
 
     if (new_file) {
         db_hdr->magic = htobe32(DB_MAGIC);
