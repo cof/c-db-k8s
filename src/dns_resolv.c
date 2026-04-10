@@ -770,25 +770,20 @@ static int chk_connect(struct dns_query *q)
 
 static int rcv_dnspkt(struct dns_query *q)
 {
-    size_t rlen = sizeof(q->pkt_buf);
-
-    if (q->is_tcp) {
-        rlen = q->pkt_off < 2
-            ? 2 - q->pkt_off
-            : q->pkt_len - (q->pkt_off - 2);
-    }
-
-retry:
-    log_debug("read fd=%d len=%zu", q->fd, rlen);
     uint8_t *rptr = q->pkt_buf + q->pkt_off;
+    size_t rlen = sizeof(q->pkt_buf) - q->pkt_off;
+
+    log_debug("read fd=%d len=%zu", q->fd, rlen);
+again:
     ssize_t nread = read(q->fd, rptr, rlen);
     if (nread == -1) {
         // read failed
-        if (errno == EINTR) goto retry;
+        if (errno == EINTR) goto again;
         if (errno == EAGAIN || errno == EWOULDBLOCK) return DNS_EAGAIN;
         return log_errno_rf("read fd=%d failed", q->fd);
     }
     if (nread == 0) return DNS_ECLOSED;
+
     q->pkt_off += nread;
 
     // UDP done
@@ -797,18 +792,16 @@ retry:
         return 0;
     }
 
-    // TCP 2-byte prefix
-    if (q->pkt_off == 2) {
-        q->pkt_len = dec_u16(q->pkt_buf);
+    // TCP - 2-byte prefix
+    if (q->pkt_len == 0 && q->pkt_off >= 2) {
+        q->pkt_len = q->pkt_buf[0] << 8 | q->pkt_buf[1];
         if (q->pkt_len + 2 > sizeof(q->pkt_buf)) {
             return log_error_rf("prefix %zu too big", q->pkt_len);
         }
-        rlen = q->pkt_len;
-        goto retry;
     }
 
     // TCP done
-    if (q->pkt_off > 2 && q->pkt_off - 2 == q->pkt_len) {
+    if (q->pkt_off >= 2 + q->pkt_len) {
         return 0;
     }
 
@@ -820,12 +813,12 @@ static int snd_dnspkt(struct dns_query *q)
     uint8_t *wptr = q->pkt_buf + q->pkt_off;
     size_t wlen = q->pkt_len - q->pkt_off;
 
-retry:
+again:
     log_debug("write fd=%d len=%zu", q->fd, wlen);
     ssize_t nw = write(q->fd, wptr, wlen);
     if (nw == -1) {
         // write failed
-        if (errno == EINTR) goto retry;
+        if (errno == EINTR) goto again;
         if (errno == EAGAIN || errno == EWOULDBLOCK) return DNS_EAGAIN;
         return log_errno_rf("write fd=%d failed", q->fd);
     }
