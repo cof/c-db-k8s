@@ -72,6 +72,7 @@
 
 // Our limits
 #define DNS_MAX_PDUSIZE  2048
+#define DNS_EMSG_MAXLEN  4096
 #define DNS_MAX_QD          1 // max question data
 #define DNS_MAX_RR         32 // max record
 #define DNS_MAX_TXT        32 // max txt string
