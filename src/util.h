@@ -242,7 +242,7 @@ static inline size_t str_countch(const char *str, size_t len, int ch)
     return count;
 }
 
-static inline int str_cmpmem(const void *s1, size_t len1, const void *s2, size_t len2)
+static inline int str_cmp(const void *s1, size_t len1, const void *s2, size_t len2)
 {
     if (len1 != len2) {
         size_t len = len1 < len2 ? len1 : len2;
@@ -254,7 +254,7 @@ static inline int str_cmpmem(const void *s1, size_t len1, const void *s2, size_t
     return memcmp(s1, s2, len1);
 }
 
-static inline int str_cmpmemi(const char *s1, size_t len1, const char *s2, size_t len2)
+static inline int str_casecmp(const char *s1, size_t len1, const char *s2, size_t len2)
 {
     size_t len = len1 < len2 ? len1 : len2;
 
@@ -620,11 +620,11 @@ struct str_slice {
  * slice_cmp(s1, s2)             : cmp slices - return < 0, 0, > 0 if lt, eq or gt 
  * slice_cmpmem(slice, mem, len) : cmp slice to mem - return < 0, 0, > 0 if lt, eq or gt 
  * slice_cmpstr(slice, str)      : cmp slice to str - return < 0, 0, > 0 if lt, eq or gt
- * slice_cmpstri(slice, str)     : cmp slice to str ignore case - return < 0, 0, > 0 if lt, eq or gt
- * slice_eq(s1, s2)              : true if slices match
- * slcie_eqmem(slice, mem, len)  : true if slice matchs mem
- * slice_eqstr(slice, str)       : true if slice matchs str
- * slice_eqstri(s1, s2, len)     : true if slice matchs str ignoring case
+ * -
+ * slice_casecmp(s1, s2)             : cmp slice - ignore case
+ * slice_casecmpmem(slice, mem, len) : cmp slice to mem - return < 0, 0, > 0 if lt, eq or gt 
+ * slice_casecmpstr(slice, str)      : cmp slice to str - return < 0, 0, > 0 if lt, eq or gt
+ * -
  * slice_startswith(str,ch)      : true if str begins with ch
  * slice_endswith(str,ch)        : true if str ends with ch
  * slice_isnumeric(str)          : true if slice is numeric 
@@ -679,57 +679,32 @@ static inline int slice_tomem(struct str_slice val, void *mem, size_t len)
 
 static inline int slice_cmp(struct str_slice str1, struct str_slice str2)
 {
-    return str_cmpmem(str1.ptr, str1.len, str2.ptr, str2.len);
-}
-
-static inline int slice_cmpi(struct str_slice str1, struct str_slice str2)
-{
-    return str_cmpmemi(str1.ptr, str1.len, str2.ptr, str2.len);
+    return str_cmp(str1.ptr, str1.len, str2.ptr, str2.len);
 }
 
 static inline int slice_cmpmem(struct str_slice str, const char *mem, size_t len)
 {
-    return str_cmpmem(str.ptr, str.len, mem, len);
-}
-
-static inline int slice_cmpmemi(struct str_slice str, const char *mem, size_t len)
-{
-    return str_cmpmemi(str.ptr, str.len, mem, len);
+    return str_cmp(str.ptr, str.len, mem, len);
 }
 
 static inline int slice_cmpstr(struct str_slice slice, const char *str)
 {
-    return str_cmpmem(slice.ptr, slice.len, str, safe_strlen(str));
+    return str_cmp(slice.ptr, slice.len, str, safe_strlen(str));
 }
 
-static inline int slice_cmpstri(struct str_slice slice, const char *str)
+static inline int slice_casecmp(struct str_slice str1, struct str_slice str2)
 {
-    return str_cmpmemi(slice.ptr, slice.len, str, safe_strlen(str));
+    return str_casecmp(str1.ptr, str1.len, str2.ptr, str2.len);
 }
 
-static inline int slice_eq(struct str_slice s1, struct str_slice s2)
+static inline int slice_casecmpmem(struct str_slice slice, const char *mem, size_t len)
 {
-    return slice_cmp(s1, s2) == 0;
-} 
-
-static inline int slice_eqi(struct str_slice s1, struct str_slice s2)
-{
-    return slice_cmpi(s1, s2) == 0;
-} 
-
-static inline int slice_eqmem(struct str_slice str, const char *mem, size_t len)
-{
-    return slice_cmpmem(str, mem, len) == 0;
+    return str_casecmp(slice.ptr, slice.len, mem, len);
 }
 
-static inline int slice_eqstr(struct str_slice slice, const char *str)
+static inline int slice_casecmpstr(struct str_slice slice, const char *str)
 {
-    return slice_cmpstr(slice, str) == 0;
-}
-
-static inline int slice_eqstri(struct str_slice slice, const char *str)
-{
-    return slice_cmpstri(slice, str) == 0;
+    return str_casecmp(slice.ptr, slice.len, str, safe_strlen(str));
 }
 
 static inline int slice_startswith(struct str_slice str, int ch)

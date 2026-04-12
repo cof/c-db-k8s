@@ -91,7 +91,7 @@ static void my_pipe_readwrite(struct my_pipe *src, struct my_pipe *dst,
         }
         if (rc < 0) break;
         str = sock_recv_str(src->recv_sock);
-        if (slice_eqmem(str, STR_LIT("> "))) {
+        if (!slice_cmpmem(str, STR_LIT("> "))) {
             // discard prompt
             sock_recvbuf_consume(src->recv_sock, str.len);
         }

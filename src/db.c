@@ -113,7 +113,7 @@ static int hash_del(struct str_slice key)
         struct db_rec *rec = db_file
             ? mkptr(db_mmap_ptr, *pp)
             : mkmem(*pp);
-        if (slice_eqmem(key, rec->data, key.len)) {
+        if (!slice_cmpmem(key, rec->data, key.len)) {
             // unchain
             *pp = rec->next; 
             // delete existing entry
@@ -139,7 +139,7 @@ static struct db_rec *hash_search(int idx, struct str_slice key)
         struct db_rec *rec = db_file    
             ? mkptr(db_mmap_ptr, db_link)
             : mkmem(db_link);
-        if (slice_eqmem(key, rec->data, key.len)) return rec;
+        if (!slice_cmpmem(key, rec->data, key.len)) return rec;
         db_link = rec->next;
     }
 
@@ -165,7 +165,7 @@ static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
             ? mkptr(db_mmap_ptr, *pp)
             : mkmem(*pp);
         // does record match key
-        if (slice_eqmem(key, rec->data, key.len)) {
+        if (!slice_cmpmem(key, rec->data, key.len)) {
             // replace existing entry
             struct db_rec *new_rec = create_rec(key, val);
             if (!new_rec) return NULL;

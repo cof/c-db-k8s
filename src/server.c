@@ -167,7 +167,7 @@ static struct {
 static int find_cli_cmd(struct str_slice cmd)
 {
     for (size_t i = 1; i < ARR_LEN(cli_cmds); i++) {
-        if (slice_eqmem(cmd, cli_cmds[i].name, cli_cmds[i].len)) {
+        if (!slice_cmpmem(cmd, cli_cmds[i].name, cli_cmds[i].len)) {
             return i;
         }
     }
