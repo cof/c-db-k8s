@@ -203,10 +203,10 @@ struct dns_rr {
         } srv; // 33
         struct {
             uint16_t udp_size;
-            uint32_t ttl_val;
-            uint8_t ext_rcode;
-            uint8_t edns_ver;
-            uint8_t do_bit;
+            uint8_t  ext_rcode;
+            uint8_t  edns_ver;
+            uint16_t do_bit : 1;
+            uint16_t z_bits : 15;
         } opt; // 41
         const uint8_t *raw;
     } rdata;
@@ -311,12 +311,6 @@ static inline void dns_msg_init(struct dns_msg *msg, uint16_t id, uint16_t flags
     msg->hdr.flags = flags;
 }
 
-// DNS messaage sections
-#define DNS_MSG_QD 1
-#define DNS_MSG_AN 2
-#define DNS_MSG_NS 3
-#define DNS_MSG_AR 4
-
 int dns_add_qdn(struct dns_msg *msg, const char *qname, size_t len, uint16_t qtype, uint16_t qclass);
 
 static inline int dns_add_qd(struct dns_msg *msg, const char *qname, uint16_t qtype, uint16_t qclass)
@@ -324,7 +318,8 @@ static inline int dns_add_qd(struct dns_msg *msg, const char *qname, uint16_t qt
     return dns_add_qdn(msg, qname, qname ? strlen(qname) : 0, qtype, qclass);
 }
 
-int dns_add_rr(struct dns_msg *msg, int sc, struct dns_rr *rr);
+int dns_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dns_rr *rr);
+
 
 static inline int dns_msg_num_an(struct dns_msg *msg)
 {

@@ -143,6 +143,7 @@ struct dns_ns {
     struct dns_query v6_query;
     struct dns_msg msg;
     unsigned int use_tcp   : 1;
+    unsigned int use_esdn  : 1;
     unsigned int have_ans  : 1;
     unsigned int have_ip4  : 1;
     unsigned int have_ip6  : 1;
@@ -951,6 +952,16 @@ static int set_dnsreq(struct dns_ns *ns, struct dns_query *q)
     int rc = dns_add_qdn(msg, name.ptr, name.len, q->qtype, q->qclass);
     if (rc) return rc;
 
+    if (ns->use_esdn) {
+        // add ESDN0
+        struct dns_rr rr = {
+            .type = DNS_TYPE_OPT,
+            .rdata.opt.udp_size = min(sizeof(ns->sock.rx_buf), 1232)
+        };
+        rc = dns_add_rr(msg, &msg->ar_recs, &rr);
+        if (rc) return rc;
+    }
+
     log_debug("qclass:%s qtype:%s id:0x%04x opcode:%s rd:%d qd:%zu",
         dns_class_tostr(q->qclass), dns_type_tostr(q->qtype),
         hdr->id, opcode_tostr((hdr->flags & DNS_FLAGS_OPCODE) >> 11),
@@ -1071,22 +1082,33 @@ static bool chk_dnsqd(struct dns_query *query, struct dns_msg *rsp)
     return true;
 }
 
-// check rcode, body
+static void chk_dnsopt(struct dns_query *query, struct dns_msg *rsp)
+{
+    struct dns_sect *ar_sect = &rsp->ar_recs;
+    for (size_t i = 0; i < ar_sect->rr_count; i++) {
+        struct dns_rr *rr =  &ar_sect->rrs[i];
+        if (rr->type != DNS_TYPE_OPT) continue;
+        query->last_rc = (rr->rdata.opt.ext_rcode << 4) | (query->last_rc & 0xf);
+        break;
+    }
+}
+
+// check response is valid
 static int chk_dnsrsp(struct dns_ns *ns, struct dns_hdr *hdr, struct dns_query *q)
 {
-    ns->active--;
-    q->state = DNS_DONE; 
-    q->last_rc = hdr->flags & DNS_FLAGS_RCODE;
-
     log_debug("qclass:%s qtype:%s id:0x%04x opcode:%s rcode:%s qd:%d an:%d",
         dns_class_tostr(q->qclass), dns_type_tostr(q->qtype),
         hdr->id, opcode_tostr((hdr->flags & DNS_FLAGS_OPCODE) >> 11),
-        rcode_tostr(q->last_rc), hdr->qd_count, hdr->an_count);
+        rcode_tostr(hdr->flags & DNS_FLAGS_RCODE), hdr->qd_count, hdr->an_count);
 
-    // check result code - RCODE
+    ns->active--;
+    q->state = DNS_DONE; 
+    q->last_rc = hdr->flags & DNS_FLAGS_RCODE;
     if (q->last_rc) return q->last_rc;
+
     if (dec_dnsmsg(&ns->sock, &ns->msg)) return DNS_EBADMSG;
     if (!chk_dnsqd(q, &ns->msg)) return DNS_EQUEST;
+    chk_dnsopt(q, &ns->msg);
 
     // got okay resp
     return 0;
@@ -1232,7 +1254,8 @@ static int try_nameserver(struct str_slice name,
         .name = name,
         .addr = addr,
         .res =  res,
-        .timeout_ms = timeout_secs * 1000
+        .timeout_ms = timeout_secs * 1000,
+        .use_esdn = 1
     };
 
     struct pollfd fd;

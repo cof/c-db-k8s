@@ -26,7 +26,7 @@
 #define DNS_TIME_GEQ(a,b) ((int32_t)((a)-(b)) >= 0)
 
 #define DNS_PORT 53
-#define DNS_PKTSIZE 1248 // 1232 round up to 16
+#define DNS_PKTSIZE ALIGN_UP(1232, 16)
 #define DNS_ATTEMPTS 2
 #define DNS_TIMEOUT_SECS 5
 
