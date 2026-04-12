@@ -329,9 +329,9 @@ static inline int dns_msg_cnt_rec(struct dns_msg *msg)
 {
     int nrec = 0;
 
-    nrec += msg->hdr.an_count;
-    nrec += msg->hdr.ns_count;
-    nrec += msg->hdr.ar_count;
+    nrec += msg->an_len;
+    nrec += msg->ns_len;
+    nrec += msg->ar_len;
 
     return nrec;
 }

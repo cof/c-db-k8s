@@ -983,7 +983,6 @@ static int dns_rr_decode(struct dns_dec *dec, struct dns_msg *msg,
         ridx = dec->offset - 8;
 
         // decode
-        rr_class = 0;
         uint16_t udp_size = rr_class;
         uint8_t ext_rcode = (rr_ttl >> 24) & 0xff;
         uint8_t version   = (rr_ttl >> 16) & 0xff;
