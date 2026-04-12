@@ -1143,9 +1143,7 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
 
     // read header
     int rc = parse_dns_header(dec->pkt_buf, dec->pkt_len, hdr);
-    if (rc != 0) {
-        return dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_HDR, rc);
-    }
+    if (rc) return dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_HDR, rc);
     dec->offset += DNS_HDR_LEN;
 
     // describe msg ?

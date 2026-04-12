@@ -63,15 +63,17 @@
 #define DNS_ETID     -4
 #define DNS_EBADMSG  -5
 #define DNS_EQUEST   -6
-#define DNS_EINTR    -7
-#define DNS_ETIMEOUT -8
-#define DNS_EAGAIN   -9
-#define DNS_NODATA   -10
-#define DNS_FORMERR  -11
-#define DNS_SERVFAIL -12
-#define DNS_NXDOMAIN -13
-#define DNS_NOTIMP   -14
-#define DNS_REFUSED  -16
+#define DNS_ETRUNC   -7
+#define DNS_EPROTO   -8
+#define DNS_EINTR    -9
+#define DNS_ETIMEOUT -10
+#define DNS_EAGAIN   -11
+#define DNS_NODATA   -12
+#define DNS_FORMERR  -13
+#define DNS_SERVFAIL -14
+#define DNS_NXDOMAIN -15
+#define DNS_NOTIMP   -16
+#define DNS_REFUSED  -17
 
 // address
 struct dns_sockaddr {

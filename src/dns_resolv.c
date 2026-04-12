@@ -12,6 +12,12 @@
  * ------------
  * dns_resolv - resolve hostname/port to array of add 
  *
+ * Refs
+ * -----
+ * rfc1035 - DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION
+ * rfc6981 - Extension Mechanisms for DNS (EDNS(0))
+ * rfc7766 - DNS over TCP 
+ *
  */
 #include <stdbool.h>
 #include <sys/types.h>
@@ -65,6 +71,8 @@ struct dns_config {
     size_t num_search;
     size_t num_ns;
     size_t store_len;
+    // flags
+    unsigned int use_tcp : 1;
     // buffers
     char store[DNS_CFG_MAXSTORE];
     char *search[DNS_CFG_MAXSRCH];
@@ -358,11 +366,13 @@ again:
 #define OPT_NDOTS    1
 #define OPT_TIMEOUT  2
 #define OPT_ATTEMPTS 3
+#define OPT_USEVC    4
 int str_toopt(struct str_slice str)
 {
     if (slice_eqmem(str, STR_LIT("ndots"))) return OPT_NDOTS;
     if (slice_eqmem(str, STR_LIT("timeout"))) return OPT_TIMEOUT;
     if (slice_eqmem(str, STR_LIT("attempts"))) return OPT_ATTEMPTS;
+    if (slice_eqmem(str, STR_LIT("use-vc"))) return OPT_USEVC;
     return 0;
 }
 
@@ -375,6 +385,7 @@ static void cfg_add_options(struct dns_config *cfg, struct str_slice str)
         case OPT_NDOTS:    cfg->ndots = slice_tou32(val); break;
         case OPT_TIMEOUT:  cfg->timeout_secs = slice_tou32(val); break;
         case OPT_ATTEMPTS: cfg->attempts = slice_tou32(val); break;
+        case OPT_USEVC:    cfg->use_tcp = 1; break;
        }
     }
 }
@@ -1082,15 +1093,19 @@ static bool chk_dnsqd(struct dns_query *query, struct dns_msg *rsp)
     return true;
 }
 
-static void chk_dnsopt(struct dns_query *query, struct dns_msg *rsp)
+// check for OPT
+static bool chk_dnsopt(struct dns_query *query, struct dns_msg *rsp)
 {
     struct dns_sect *ar_sect = &rsp->ar_recs;
     for (size_t i = 0; i < ar_sect->rr_count; i++) {
         struct dns_rr *rr =  &ar_sect->rrs[i];
         if (rr->type != DNS_TYPE_OPT) continue;
         query->last_rc = (rr->rdata.opt.ext_rcode << 4) | (query->last_rc & 0xf);
-        break;
+        // updated rcode
+        return true;
     }
+
+    return false;
 }
 
 // check response is valid
@@ -1104,11 +1119,12 @@ static int chk_dnsrsp(struct dns_ns *ns, struct dns_hdr *hdr, struct dns_query *
     ns->active--;
     q->state = DNS_DONE; 
     q->last_rc = hdr->flags & DNS_FLAGS_RCODE;
+    if (hdr->flags & DNS_FLAGS_TC) return ns->use_tcp ? DNS_EPROTO : DNS_ETRUNC;
     if (q->last_rc) return q->last_rc;
 
     if (dec_dnsmsg(&ns->sock, &ns->msg)) return DNS_EBADMSG;
     if (!chk_dnsqd(q, &ns->msg)) return DNS_EQUEST;
-    chk_dnsopt(q, &ns->msg);
+    if (chk_dnsopt(q, &ns->msg)) return q->last_rc;
 
     // got okay resp
     return 0;
@@ -1208,7 +1224,10 @@ static int get_rcode(struct dns_ns *ns, int qtype)
     case DNS_RCODE_NXDOMAIN: rc = DNS_NXDOMAIN; break;
     case DNS_RCODE_NOTIMP:   rc = DNS_NOTIMP;  break;
     case DNS_RCODE_REFUSED:  rc = DNS_REFUSED; break;
-    default: rc = DNS_ERR;
+    default:
+        rc = q->last_rc;
+        if (rc != DNS_ETRUNC) rc = DNS_ERR;
+        break;
     }
 
     return rc;
@@ -1245,16 +1264,18 @@ static int ns_getrc(struct dns_ns *ns, int rc)
 }
 
 static int try_nameserver(struct str_slice name,
-    struct dns_sockaddr *addr, uint32_t timeout_secs,
+    struct dns_sockaddr *addr, uint32_t timeout_secs, int use_tcp,
     struct dns_result *res)
 {
-    log_debug("n=%.*s a=%s 4=%d 6=%d", SLICE(name), ADDR_STR(addr), NEED(res));
+    log_debug("n=%.*s a=%s tout=%d tcp=%d 4=%d 6=%d", 
+        SLICE(name), ADDR_STR(addr), timeout_secs, use_tcp, NEED(res));
 
     struct dns_ns ns = {
         .name = name,
         .addr = addr,
         .res =  res,
         .timeout_ms = timeout_secs * 1000,
+        .use_tcp = use_tcp,
         .use_esdn = 1
     };
 
@@ -1352,7 +1373,10 @@ static int query_name(struct str_slice name, struct dns_config *cfg, struct dns_
     for (size_t a = 0; a < cfg->attempts; a++) {
         for (size_t n = 0; n < cfg->num_ns; n++) {
             struct dns_sockaddr *addr = &cfg->ns_addrs[n];
-            rc = try_nameserver(name, addr, cfg->timeout_secs, res);
+            rc = try_nameserver(name, addr, cfg->timeout_secs, cfg->use_tcp, res);
+            if (rc == DNS_ETRUNC) {
+                rc = try_nameserver(name, addr, cfg->timeout_secs, 1, res);
+            }
             if (stop_query(rc)) return rc;
         }
     }
