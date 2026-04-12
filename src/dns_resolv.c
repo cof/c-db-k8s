@@ -369,10 +369,10 @@ again:
 #define OPT_USEVC    4
 int str_toopt(struct str_slice str)
 {
-    if (slice_eqmem(str, STR_LIT("ndots"))) return OPT_NDOTS;
-    if (slice_eqmem(str, STR_LIT("timeout"))) return OPT_TIMEOUT;
-    if (slice_eqmem(str, STR_LIT("attempts"))) return OPT_ATTEMPTS;
-    if (slice_eqmem(str, STR_LIT("use-vc"))) return OPT_USEVC;
+    if (!slice_cmpmem(str, STR_LIT("ndots"))) return OPT_NDOTS;
+    if (!slice_cmpmem(str, STR_LIT("timeout"))) return OPT_TIMEOUT;
+    if (!slice_cmpmem(str, STR_LIT("attempts"))) return OPT_ATTEMPTS;
+    if (!slice_cmpmem(str, STR_LIT("use-vc"))) return OPT_USEVC;
     return 0;
 }
 
@@ -427,9 +427,9 @@ static int cfg_add_nameserver(struct dns_config *cfg, struct str_slice ip_str)
 #define CFG_OPTIONS 3
 int str_tocfg(struct str_slice str)
 {
-    if (slice_eqmem(str, STR_LIT("nameserver"))) return CFG_SERVER;
-    if (slice_eqmem(str, STR_LIT("search")))     return CFG_SEARCH;
-    if (slice_eqmem(str, STR_LIT("options")))    return CFG_OPTIONS;
+    if (!slice_cmpmem(str, STR_LIT("nameserver"))) return CFG_SERVER;
+    if (!slice_cmpmem(str, STR_LIT("search")))     return CFG_SEARCH;
+    if (!slice_cmpmem(str, STR_LIT("options")))    return CFG_OPTIONS;
     return 0;
 }
 
@@ -619,8 +619,8 @@ static int services_add(struct dns_services *svcs,
     struct str_slice port_str = slice_splitch(&pp, '/');
     uint16_t port = slice_tou32(port_str);
     int ptype = 0;
-    if (slice_eqmem(pp, STR_LIT("tcp"))) ptype = DNS_TCP;
-    if (slice_eqmem(pp, STR_LIT("udp"))) ptype = DNS_UDP;
+    if (slice_cmpmem(pp, STR_LIT("tcp"))) ptype = DNS_TCP;
+    if (slice_cmpmem(pp, STR_LIT("udp"))) ptype = DNS_UDP;
     if (!ptype || !port) return 0;
 
     return services_put(svcs, name, ptype, port);
@@ -918,7 +918,7 @@ static int dec_dnshdr(struct dns_sock *s, struct dns_hdr *hdr)
         buf += 2;
         len -= 2;
     }
-    return parse_dns_header(buf, len, hdr) ? DNS_EBADHDR : 0;
+    return dns_hdr_decode(hdr, buf, len) ? DNS_EBADHDR : 0;
 }
 
 static int enc_dnspkt(struct dns_sock *s, struct dns_msg *msg)
@@ -969,14 +969,14 @@ static int set_dnsreq(struct dns_ns *ns, struct dns_query *q)
             .type = DNS_TYPE_OPT,
             .rdata.opt.udp_size = min(sizeof(ns->sock.rx_buf), 1232)
         };
-        rc = dns_add_rr(msg, &msg->ar_recs, &rr);
+        rc = dns_add_rr(msg, DNS_MSG_AR, &rr);
         if (rc) return rc;
     }
 
-    log_debug("qclass:%s qtype:%s id:0x%04x opcode:%s rd:%d qd:%zu",
+    log_debug("qclass:%s qtype:%s id:0x%04x opcode:%s rd:%d qd:%u",
         dns_class_tostr(q->qclass), dns_type_tostr(q->qtype),
         hdr->id, opcode_tostr((hdr->flags & DNS_FLAGS_OPCODE) >> 11),
-        hdr->flags & DNS_FLAGS_RD ? 1 : 0, msg->num_qd);
+        hdr->flags & DNS_FLAGS_RD ? 1 : 0, msg->qd_len);
 
     return 0;
 }
@@ -984,7 +984,6 @@ static int set_dnsreq(struct dns_ns *ns, struct dns_query *q)
 static int add_dnsans(struct dns_ns *ns)  
 {
     struct dns_msg *msg = &ns->msg;
-    struct dns_sect *ans = &msg->an_recs;
     struct dns_cache *cache = &glob_cache;
     struct dns_result *res = ns->res;
     int idx;
@@ -992,8 +991,8 @@ static int add_dnsans(struct dns_ns *ns)
     // a query worked
     ns->have_ans = 1;
 
-    for (size_t i = 0; i < ans->rr_count && !res_isfull(ns->res); i++) {
-        struct dns_rr *rr =  &ans->rrs[i];
+    for (int i = 0; i < msg->an_len && !res_isfull(ns->res); i++) {
+        struct dns_rr *rr = &msg->an[i];
         switch(rr->type) {
         case DNS_TYPE_A:
             idx = res_add_ip(res, DNS_IPV4, rr->rdata.a);
@@ -1080,15 +1079,15 @@ static int try_query(struct dns_ns *ns, uint16_t qtype)
 // check question section matches what we sent
 static bool chk_dnsqd(struct dns_query *query, struct dns_msg *rsp)
 {
-    if (rsp->num_qd != 1) return false;
+    if (rsp->qd_len != 1) return false;
 
-    struct dns_quest *quest = &rsp->qd_recs[0];
+    struct dns_qd *qd = &rsp->qd[0];
     struct str_slice qname = query->qname;
     if (slice_endswith(qname, '.')) qname.len--;
 
-    if (!slice_eqstri(qname, quest->qname)) false;
-    if (query->qclass != quest->qclass) return false;
-    if (query->qtype != quest->qtype) return false;
+    if (slice_casecmpstr(qname, qd->qname)) false;
+    if (query->qclass != qd->qclass) return false;
+    if (query->qtype != qd->qtype) return false;
 
     return true;
 }
@@ -1096,9 +1095,8 @@ static bool chk_dnsqd(struct dns_query *query, struct dns_msg *rsp)
 // check for OPT
 static bool chk_dnsopt(struct dns_query *query, struct dns_msg *rsp)
 {
-    struct dns_sect *ar_sect = &rsp->ar_recs;
-    for (size_t i = 0; i < ar_sect->rr_count; i++) {
-        struct dns_rr *rr =  &ar_sect->rrs[i];
+    for (int i = 0; i < rsp->ar_len; i++) {
+        struct dns_rr *rr = &rsp->ar[i];
         if (rr->type != DNS_TYPE_OPT) continue;
         query->last_rc = (rr->rdata.opt.ext_rcode << 4) | (query->last_rc & 0xf);
         // updated rcode

@@ -34,18 +34,20 @@
  *
  * Basic API
  * ----------
+ * dns_hdr_decode(hdr, buf, len) : decode buffer into dns header
  * dns_msg_reset(msg) : reset fields to 0
  * dns_msg_decode(msg, buf, len) : decode buffer into a DNS message
  * dns_msg_encode(msg, buf, len) : encode DNS message into buffer
- * validate_dns_packet(pkt_buf, pkt_len, emsg) : check pkt valid and print desc to esmg
+ * dns_validate(pkt_buf, pkt_len, emsg, emsg_len) : check pkt valid and print desc to esmg
  *
  * Helpers
  * --------
+ * dns_msg_add_qdn(msg, qname, len, qtype, qclass): add to qd section 
+ * dns_msg_add_qd(msg, qname, qtype, qclass) : add to qd section - no qname len 
+ * dns_add_rr(msg, sect, rr) : add rr to a section an|ns|ar
  * dns_msg_sects_tostr(msg,buf,len) : print sections to str buffer
- * dns_msg_add_qd(msg,name, qtype, qclass) : add qd section
- * dns_msg_add_rec(msg, sc, rec) : add record to an|ns|ar section
+ * -
  * dns_msg_get_rec(msg) : get first rec if available
- *
  * dns_msg_cnt_rec(mg) - count total records in msg
  * dns_rr_load(rr, sc, str) - load text form of rr into rr
  *
@@ -70,12 +72,12 @@
 
 // Our limits
 #define DNS_MAX_PDUSIZE  2048
-#define DNS_EMSG_MAXLEN  4096
-#define DNS_MAX_REC       32  // max section records 
-#define DNS_MAX_TXT       32  // max txt string
-#define DNS_COMP_PTR    0xC0  // 1100000 upper 2 bits
-#define DNS_MAX_JMP       16  // max number of compression pointer jmps
-#define DNS_MAX_SUFFIX    32  // max number of compression names
+#define DNS_MAX_QD          1 // max question data
+#define DNS_MAX_RR         32 // max record
+#define DNS_MAX_TXT        32 // max txt string
+#define DNS_COMP_PTR     0xC0 // 1100000 upper 2 bits
+#define DNS_MAX_JMP        16 // max number of compression pointer jmps
+#define DNS_MAX_SUFFIX     32 // max number of compression names
 
 #define DNS_FAIL -1
 
@@ -129,19 +131,13 @@
 struct dns_hdr {
     uint16_t id;        // Transaction ID
     uint16_t flags;     // Flags (QR, Opcode, AA, TC, RD, RA, Z, RCODE)
-    uint16_t qd_count;  // Number of Questions
-    uint16_t an_count;  // Number of Answer RRs
-    uint16_t ns_count;  // Number of Authority RRs
-    uint16_t ar_count;  // Number of Additional RRs
+    uint16_t qd_count;  // Number of Question Data
+    uint16_t an_count;  // Number of Answer RR
+    uint16_t ns_count;  // Number of Authority RR
+    uint16_t ar_count;  // Number of Additional RR
 };
 
-// Required functions
-int parse_dns_header(const uint8_t *buf, size_t len, struct dns_hdr *hdr);
-int parse_dns_name(
-    const uint8_t *pkt, size_t pkt_len, 
-    size_t offset, char *out, size_t out_len, 
-    size_t *bytes_consumed);
-int validate_dns_packet(const uint8_t *pkt, size_t len, char *error_msg);
+int dns_hdr_decode(struct dns_hdr *hdr, const uint8_t *buf, size_t len);
 
 
 /*  
@@ -152,12 +148,15 @@ const char *opcode_tostr(int opcode);
 const char *dns_class_tostr(int ec);
 const char *dns_type_tostr(int ec);
 
-// DNS question entry
-struct dns_quest {
+// DNS question data (QD)
+struct dns_qd {
     const char *qname;
     uint16_t qtype;
     uint16_t qclass;
 };
+
+// convert dns msg section to readable string
+int dns_qd_tostr(struct dns_qd *qd, char *buf, size_t buf_len);
 
 // DNS resource record (RR)
 // ------------------------
@@ -212,16 +211,7 @@ struct dns_rr {
     } rdata;
 };
 
-// dns section
-struct dns_sect {
-    size_t rr_count; // num records in section
-    struct dns_rr rrs[DNS_MAX_REC];
-};
-
-// convert dns msg section to readable string
-int dns_quest_tostr(struct dns_quest *quest, char *buf, size_t buf_len);
-int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len);
-int dns_rr_tostr(struct dns_rr *rec, int sc, char *buf, size_t buf_len);
+int dns_rr_tostr(struct dns_rr *rr, int sc, char *buf, size_t buf_len);
 
 /*
  * DNS msg
@@ -229,17 +219,20 @@ int dns_rr_tostr(struct dns_rr *rec, int sc, char *buf, size_t buf_len);
  * msg is a stucture defined as follows:
  *
  *  DNS msg - struct dns_msg 
- *   - hdr (id, flags, qd_count, an_count, ns_count, ar_count)
+ *   - hdr     - dns header
  *   - qd_recs - Question section 
  *   - an_recs - Answer section 
  *   - ns_recs - Authority section
  *   - ar_recs - Additional section
  *
+ * Header 
+ * ------
+ *
  * Question Section:
  * -----------------
- *    num_qd    - number of question entires
- *    qd_recs   - array of dns_quest
- *    dns_quest - struct dns_quest
+ *    qd_count  - number of question entires
+ *    qd_recs   - array of struct dns_qd
+ *    struct dns_qd 
  *    - qname 
  *    - qtype 
  *    - qclas
@@ -261,14 +254,18 @@ int dns_rr_tostr(struct dns_rr *rec, int sc, char *buf, size_t buf_len);
  *  - a union type to store RDATA
  */
 struct dns_msg {
-    struct dns_hdr hdr;
+    struct dns_hdr hdr; 
+    // names store
     char names[DNS_MAX_PDUSIZE];
     int names_len;
-    size_t num_qd;
-    struct dns_quest qd_recs[DNS_MAX_REC];
-    struct dns_sect an_recs;
-    struct dns_sect ns_recs;
-    struct dns_sect ar_recs;
+    uint16_t qd_len;
+    uint16_t an_len;
+    uint16_t ns_len;
+    uint16_t ar_len;
+    struct dns_qd qd[DNS_MAX_QD];
+    struct dns_rr an[DNS_MAX_RR];
+    struct dns_rr ns[DNS_MAX_RR];
+    struct dns_rr ar[DNS_MAX_RR];
 };
 
 static inline struct dns_msg *dns_msg_reset(struct dns_msg *msg)
@@ -281,12 +278,12 @@ static inline struct dns_msg *dns_msg_reset(struct dns_msg *msg)
     msg->hdr.ns_count = 0;
     msg->hdr.ar_count = 0;
 
-    // reset sections
+    // reset len
     msg->names_len = 0;
-    msg->num_qd = 0;
-    msg->an_recs.rr_count = 0;
-    msg->ns_recs.rr_count = 0;
-    msg->ar_recs.rr_count = 0;
+    msg->qd_len = 0;
+    msg->an_len = 0;
+    msg->ns_len = 0;
+    msg->ar_len = 0;
 
     return msg;
 }
@@ -294,6 +291,7 @@ static inline struct dns_msg *dns_msg_reset(struct dns_msg *msg)
 // decode/encode a DNS message
 int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len);
 ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len);
+int dns_validate(const void *buf, size_t len, char *emsg, size_t emsg_len);
 
 // helper functions
 int dns_msg_sects_tostr(struct dns_msg *msg,  char *buf, size_t len);
@@ -318,31 +316,21 @@ static inline int dns_add_qd(struct dns_msg *msg, const char *qname, uint16_t qt
     return dns_add_qdn(msg, qname, qname ? strlen(qname) : 0, qtype, qclass);
 }
 
-int dns_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dns_rr *rr);
+// DNS message sections
+#define DNS_MSG_AN 1
+#define DNS_MSG_NS 2
+#define DNS_MSG_AR 3
 
+int dns_add_rr(struct dns_msg *msg, int sc, struct dns_rr *rr);
 
-static inline int dns_msg_num_an(struct dns_msg *msg)
-{
-    return msg->an_recs.rr_count;
-}
-
-static inline int dns_msg_num_ns(struct dns_msg *msg)
-{
-    return msg->ns_recs.rr_count;
-}
-
-static inline int dns_msg_num_ar(struct dns_msg *msg)
-{
-    return msg->ar_recs.rr_count;
-}
 
 static inline int dns_msg_cnt_rec(struct dns_msg *msg)
 {
     int nrec = 0;
 
-    nrec += dns_msg_num_an(msg);
-    nrec += dns_msg_num_ns(msg);
-    nrec += dns_msg_num_ar(msg);
+    nrec += msg->hdr.an_count;
+    nrec += msg->hdr.ns_count;
+    nrec += msg->hdr.ar_count;
 
     return nrec;
 }
