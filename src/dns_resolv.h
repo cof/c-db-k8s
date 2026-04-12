@@ -26,7 +26,7 @@
 #define DNS_TIME_GEQ(a,b) ((int32_t)((a)-(b)) >= 0)
 
 #define DNS_PORT 53
-#define DNS_PKTSIZE 1280
+#define DNS_PKTSIZE 1248 // 1232 round up to 16
 #define DNS_ATTEMPTS 2
 #define DNS_TIMEOUT_SECS 5
 
@@ -58,16 +58,20 @@
 // error codes
 #define DNS_OK        0
 #define DNS_ERR      -1
-#define DNS_EINTR    -2
-#define DNS_ETIMEOUT -3
-#define DNS_EAGAIN   -4
-#define DNS_ECLOSED  -5
-#define DNS_NODATA   -6
-#define DNS_FORMERR  -7
-#define DNS_SERVFAIL -8
-#define DNS_NXDOMAIN -9
-#define DNS_NOTIMP   -10
-#define DNS_REFUSED  -11
+#define DNS_EBADHDR  -2
+#define DNS_ENOTRSP  -3
+#define DNS_ETID     -4
+#define DNS_EBADMSG  -5
+#define DNS_EQUEST   -6
+#define DNS_EINTR    -7
+#define DNS_ETIMEOUT -8
+#define DNS_EAGAIN   -9
+#define DNS_NODATA   -10
+#define DNS_FORMERR  -11
+#define DNS_SERVFAIL -12
+#define DNS_NXDOMAIN -13
+#define DNS_NOTIMP   -14
+#define DNS_REFUSED  -16
 
 // address
 struct dns_sockaddr {

@@ -13,6 +13,7 @@
  * dns_resolv - resolve hostname/port to array of add 
  *
  */
+#include <stdbool.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -28,6 +29,7 @@
 
 // helper macros for log_debug
 #define ADDR_STR(a) dns_sockaddr_tostr(a)
+#define TYPE_STR(t) (t) == DNS_TCP ? "TCP" : "UDP"
 #define NEED(r) (r)->need_ip4, (r)->need_ip6
 #define CFG(c) (c)->attempts, (c)->timeout_secs, (c)->num_ns
 #define CFG_NS(c) (c)->attempts, (c)->timeout_secs, (c)->ndots, (c)->num_ns
@@ -100,38 +102,47 @@ struct dns_result {
 // conection state
 enum dns_state {
     DNS_IDLE = 0,
-    DNS_CONN,
     DNS_SEND,
     DNS_RECV,
     DNS_DONE
 };
 
-// query state
-struct dns_query {
+struct dns_sock {
     int fd;
-    int last_rc;
+    size_t tx_off;
+    size_t tx_len;
+    size_t rx_off;
+    size_t rx_len;
+    uint8_t tx_buf[DNS_PKTSIZE];
+    uint8_t rx_buf[DNS_PKTSIZE];
+    unsigned int is_open     : 1;
+    unsigned int is_tcp      : 1;
+    unsigned int in_progress : 1;
+    unsigned int is_connect  : 1;
+    unsigned int has_error   : 1;
+};
+
+struct dns_query {
+    struct str_slice qname;
     uint16_t qtype;
     uint16_t qclass;
     uint16_t tid;
-    size_t pkt_off;
-    size_t pkt_len;
-    uint8_t pkt_buf[DNS_PKTSIZE];
-    unsigned int sock_err : 1;
-    unsigned int is_tcp   : 1;
-    unsigned int recv_fin : 1;
-    unsigned int state    : 3;
+    int last_rc;
+    int state;
 };
 
 // nameserver state
 struct dns_ns {
     struct str_slice name;
-    struct dns_result *res;
     struct dns_sockaddr *addr;
+    struct dns_result *res;
+    struct dns_sock  sock;
     uint32_t timeout_ms;
     int active;
     struct dns_query v4_query;
     struct dns_query v6_query;
-    struct dns_msg msg; 
+    struct dns_msg msg;
+    unsigned int use_tcp   : 1;
     unsigned int have_ans  : 1;
     unsigned int have_ip4  : 1;
     unsigned int have_ip6  : 1;
@@ -354,7 +365,7 @@ int str_toopt(struct str_slice str)
     return 0;
 }
 
-static void add_options(struct dns_config *cfg, struct str_slice str)
+static void cfg_add_options(struct dns_config *cfg, struct str_slice str)
 {
     while (str.len) {
         struct str_slice val = slice_splitset(&str, STR_LIT(" \t"));
@@ -367,7 +378,7 @@ static void add_options(struct dns_config *cfg, struct str_slice str)
     }
 }
 
-static void add_search(struct dns_config *cfg, struct str_slice str)
+static void cfg_add_search(struct dns_config *cfg, struct str_slice str)
 {
     while (str.len && cfg->num_search < ARR_LEN(cfg->search)) {
        struct str_slice name = slice_splitset(&str, STR_LIT(" \t"));
@@ -382,20 +393,18 @@ static void add_search(struct dns_config *cfg, struct str_slice str)
     }
 }
 
-static int add_server(struct dns_config *cfg, struct str_slice ip_str)
+static int cfg_add_nameserver(struct dns_config *cfg, struct str_slice ip_str)
 { 
     if (cfg->num_ns >= ARR_LEN(cfg->ns_addrs)) return 0;
-    struct dns_sockaddr *addr = &cfg->ns_addrs[cfg->num_ns];
+    struct dns_sockaddr *ns_addr = &cfg->ns_addrs[cfg->num_ns];
 
     // get addr
     uint8_t ip_addr[16];
-    int type = ipstr_decode(ip_str, ip_addr);
-    if (type == 0) return log_error_rc(0, "Invalid nameserver %.*s", SLICE(ip_str));
+    int addr_type = ipstr_decode(ip_str, ip_addr);
+    if (addr_type == 0) return log_error_rc(0, "Invalid nameserver %.*s", SLICE(ip_str));
 
-    // add
-    int ptype = SOCK_DGRAM;
-    uint16_t port = 53;
-    if (!sockaddr_load(addr, type, ip_addr, ptype, port)) return 0;
+    // add nameserver
+    if (!sockaddr_load(ns_addr, addr_type, ip_addr, 0, 53)) return 0;
 
     cfg->num_ns++;
     return 1;
@@ -426,9 +435,9 @@ static void init_config(struct dns_config *cfg)
         if (line.len == 0) continue;
         struct str_slice key = slice_splitset(&line, STR_LIT(" \t"));  
         switch(str_tocfg(key)) {
-        case CFG_SERVER:  add_server(cfg,  line); break;
-        case CFG_SEARCH:  add_search(cfg,  line); break;
-        case CFG_OPTIONS: add_options(cfg, line); break;
+        case CFG_SERVER:  cfg_add_nameserver(cfg, line); break;
+        case CFG_SEARCH:  cfg_add_search(cfg, line); break;
+        case CFG_OPTIONS: cfg_add_options(cfg, line); break;
         }
     }
     if (fd != -1) close(fd);
@@ -437,7 +446,7 @@ static void init_config(struct dns_config *cfg)
     if (!cfg->attempts) cfg->attempts = DNS_ATTEMPTS;
     if (!cfg->timeout_secs) cfg->timeout_secs = DNS_TIMEOUT_SECS;
     if (!cfg->ndots) cfg->ndots = 1;
-    if (!cfg->num_ns) add_server(cfg, slice_make(STR_LIT("127.0.0.1")));
+    if (!cfg->num_ns) cfg_add_nameserver(cfg, slice_make(STR_LIT("127.0.0.1")));
 }
 
 struct dns_sockaddr *hosts_get(struct dns_hosts *hosts, struct str_slice hostname)
@@ -726,14 +735,25 @@ static int init_cache(struct dns_cache *cache)
     return 0;
 }
 
-static inline void query_close(struct dns_query *q)
+static inline bool dns_sock_is_ready(struct dns_sock *s)
 {
-    if (q->fd >= 0) {
-        close(q->fd);
-        q->fd = -1;
+    if (!s->is_open || s->has_error) return 0;
+    if (!s->is_tcp) return 1;
+    return !s->in_progress;
+}
+
+static inline void sock_close(struct dns_sock *s)
+{
+    if (s->is_open) {
+        close(s->fd);
+        s->is_open = 0;
     }
-    // reset state
-    q->state = DNS_IDLE;
+
+    // clear state
+    s->is_tcp = 0;
+    s->in_progress = 0;;
+    s->is_connect  = 0;;
+    s->has_error = 0;
 }
 
 static struct dns_query *get_query(struct dns_ns *ns, uint16_t qtype)
@@ -748,209 +768,198 @@ static struct dns_query *get_query(struct dns_ns *ns, uint16_t qtype)
     return NULL;
 }
 
-static int chk_connect(struct dns_query *q)
+static int check_error(struct dns_sock *s)
 {
-    int error = 0;
-    socklen_t len = sizeof(error);
+    int ec = 0;
+    socklen_t len = sizeof(ec);
 
-    if (getsockopt(q->fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
-        q->sock_err = 1;
-        return log_errno_rf("getsockopt(%d) failed", q->fd);
+    if (getsockopt(s->fd, SOL_SOCKET, SO_ERROR, &ec, &len) < 0) {
+        return log_errno_rf("getsockopt(%d) failed", s->fd);
     }
 
-    if (error != 0) {
+    if (ec != 0) {
         // connect failed
-        q->sock_err = -1;
-        return log_ec_rf(error, "connect (%d) failed", q->fd);
+        s->has_error = 0;
+        return log_ec_rf(ec, "connect (%d) failed", s->fd);
     }
 
     // connected
     return 0;
 }
 
-static int rcv_dnspkt(struct dns_query *q)
+static int rcv_dnspkt(struct dns_sock *s)
 {
-    uint8_t *rptr = q->pkt_buf + q->pkt_off;
-    size_t rlen = sizeof(q->pkt_buf) - q->pkt_off;
+    uint8_t *buf = s->rx_buf + s->rx_off;
+    size_t len = sizeof(s->rx_buf) - s->rx_off;
 
-    log_debug("read fd=%d len=%zu", q->fd, rlen);
+    log_debug("read fd=%d len=%zu", s->fd, len);
 again:
-    ssize_t nread = read(q->fd, rptr, rlen);
+    ssize_t nread = read(s->fd, buf, len);
     if (nread == -1) {
         // read failed
         if (errno == EINTR) goto again;
         if (errno == EAGAIN || errno == EWOULDBLOCK) return DNS_EAGAIN;
-        return log_errno_rf("read fd=%d failed", q->fd);
+        return log_errno_rf("read fd=%d failed", s->fd);
     }
-    if (nread == 0) return DNS_ECLOSED;
+    if (nread == 0) return DNS_ERR;
 
-    q->pkt_off += nread;
+    s->rx_off += nread;
 
-    // UDP done
-    if (!q->is_tcp) {
-        q->pkt_len = q->pkt_off;
+    if (!s->is_tcp) {
+        // UDP done
+        s->rx_len = s->rx_off;
         return 0;
     }
 
     // TCP - 2-byte prefix
-    if (q->pkt_len == 0 && q->pkt_off >= 2) {
-        q->pkt_len = q->pkt_buf[0] << 8 | q->pkt_buf[1];
-        if (q->pkt_len + 2 > sizeof(q->pkt_buf)) {
-            return log_error_rf("prefix %zu too big", q->pkt_len);
+    if (s->rx_len == 0 && s->rx_off >= 2) {
+        s->rx_len = s->rx_buf[0] << 8 | s->rx_buf[1];
+        if (s->rx_len + 2 > sizeof(s->rx_buf)) {
+            return log_error_rf("prefix %zu too big", s->rx_len);
         }
     }
 
-    // TCP done
-    if (q->pkt_off >= 2 + q->pkt_len) {
+    if (s->rx_off >= 2 + s->rx_len) {
+        // TCP done
         return 0;
     }
 
     return DNS_EAGAIN;
 }
 
-static int snd_dnspkt(struct dns_query *q)
+static int snd_dnspkt(struct dns_sock *s)
 {
-    uint8_t *wptr = q->pkt_buf + q->pkt_off;
-    size_t wlen = q->pkt_len - q->pkt_off;
+    uint8_t *buf = s->tx_buf + s->tx_off;
+    size_t len = s->tx_len - s->tx_off;
 
 again:
-    log_debug("write fd=%d len=%zu", q->fd, wlen);
-    ssize_t nw = write(q->fd, wptr, wlen);
+    log_debug("write fd=%d len=%zu", s->fd, len);
+    ssize_t nw = write(s->fd, buf, len);
     if (nw == -1) {
         // write failed
         if (errno == EINTR) goto again;
         if (errno == EAGAIN || errno == EWOULDBLOCK) return DNS_EAGAIN;
-        return log_errno_rf("write fd=%d failed", q->fd);
+        return log_errno_rf("write fd=%d failed", s->fd);
     }
 
-    q->pkt_off += nw;
-
     // pkt-sent
-    if (q->pkt_off == q->pkt_len) {
-        q->pkt_off = 0;
+    s->tx_off += nw;
+    if (s->tx_off == s->tx_len) {
+        s->tx_len = 0;
+        s->tx_off = 0;
         return 0;
     }
 
-    return q->is_tcp ? DNS_EAGAIN : DNS_ERR;
+    return s->is_tcp ? DNS_EAGAIN : DNS_ERR;
 }
 
-static int dec_dnspkt(struct dns_ns *ns, struct dns_query *q)
+static int dec_dnsmsg(struct dns_sock *s, struct dns_msg *msg)
 {
-    uint8_t *buf = q->pkt_buf;
-    size_t len = q->pkt_len;
+    uint8_t *buf = s->rx_buf;
+    size_t len = s->rx_len;
 
     // tcp - skip length prefix
-    if (q->is_tcp) {
+    if (s->is_tcp) {
         buf += 2;
         len -= 2;
     }
 
-    log_debug("pkt_len=%zu msg_len=%zu is_tcp=%d", q->pkt_len, len, q->is_tcp);
+    log_debug("pkt_len=%zu msg_len=%zu is_tcp=%d", s->rx_len, len, s->is_tcp);
 
-    return dns_msg_decode(&ns->msg, buf, len);
+    return dns_msg_decode(msg, buf, len);
 }
 
-static int enc_dnspkt(struct dns_ns *ns, struct dns_query *q)
+static inline bool dns_sock_pending(struct dns_sock *s)
 {
-    uint8_t *wbuf = q->pkt_buf;
-    size_t wlen = sizeof(q->pkt_buf);
+    return s->tx_len > 0;
+}
+
+static inline void dns_sock_flush(struct dns_sock *s)
+{
+    s->rx_off = 0;
+    s->rx_len = 0;
+}
+
+static struct dns_query *find_query(struct dns_ns *ns, uint16_t tid)
+{
+    struct dns_result *res = ns->res;
+
+    if (res->need_ip4) {
+        struct dns_query *q = &ns->v4_query;
+        if (q->tid == tid) return q;
+    }
+
+    if (res->need_ip6) {
+        struct dns_query *q = &ns->v6_query;
+        if (q->tid == tid) return q;
+    }
+
+    return NULL;
+}
+
+static int dec_dnshdr(struct dns_sock *s, struct dns_hdr *hdr)
+{
+    uint8_t *buf = s->rx_buf;
+    size_t len = s->rx_len;
+
+    if (s->is_tcp) {
+        buf += 2;
+        len -= 2;
+    }
+    return parse_dns_header(buf, len, hdr) ? DNS_EBADHDR : 0;
+}
+
+static int enc_dnspkt(struct dns_sock *s, struct dns_msg *msg)
+{
+    uint8_t *buf = s->tx_buf;
+    size_t space = sizeof(s->tx_buf);
 
     // tcp - reserve space for prefix
-    if (q->is_tcp) {
-        wbuf += 2;
-        wlen -= 2;
+    if (s->is_tcp) {
+        buf += 2;
+        space -= 2;
     }
 
     // encode dns message
-    ssize_t len = dns_msg_encode(&ns->msg, wbuf, wlen);
+    ssize_t len = dns_msg_encode(msg, buf, space);
     if (len <= 0) return log_error_rf("DNS msg failed with");
-    q->pkt_len = len;
+    s->tx_len = len;
 
-    // tcp - encode length prefix
-    if (q->is_tcp) {
-        enc_u16(q->pkt_buf, len);
-        q->pkt_len += 2;
+    // tcp - encode prefix
+    if (s->is_tcp) {
+        s->tx_buf[0] = len >> 8;
+        s->tx_buf[1] = len;
+        s->tx_len += 2;
     }
 
-    log_debug("pkt_len=%zu msg_len=%zu is_tcp=%d", q->pkt_len, len, q->is_tcp);
+    log_debug("pkt_len=%zu msg_len=%zu is_tcp=%d", s->tx_len, len, s->is_tcp);
 
-    return 0;
-}
-
-// check msg is valid response
-static int chk_dnsmsg(struct dns_ns *ns, struct dns_query *q)
-{
-    struct dns_msg *msg = &ns->msg;
-    struct dns_hdr *hdr = &msg->hdr;
-    int is_rsp = hdr->flags & DNS_FLAGS_QR ? 1 : 0;
-    int rcode = hdr->flags & DNS_FLAGS_RCODE;
-
-    log_debug("id:0x%04x qr:%d opcode:%s rcode:%s qd:%zu an:%zu qname=%.*s %s %s",
-        hdr->id, hdr->flags & DNS_FLAGS_QR ? 1 : 0,
-        opcode_tostr((hdr->flags & DNS_FLAGS_OPCODE) >> 11),
-        is_rsp ? rcode_tostr(rcode) : "?", 
-        msg->num_qd, msg->an_recs.rr_count,
-        SLICE(ns->name),
-        dns_class_tostr(q->qclass),
-        dns_type_tostr(q->qtype));
-
-    // check qr flag
-    if (!is_rsp) {
-        return log_error_rf("Unexpected msg ID: 0x%04x Flags: 0x%04x Len %zu",
-           hdr->id, hdr->flags, q->pkt_len);
-    }
-
-    // check transaction id - TID
-    if (hdr->id != q->tid) {
-        return log_error_rf("rsp ID 0x%04x does not match query ID 0x%04x", 
-            hdr->id, q->tid);
-    }
-
-    // check result code - RCODE
-    if (rcode != DNS_RCODE_NOERROR) {
-        return log_error_rc(rcode,
-            "rsp for query id:0x%04x %s %s failed with error %s", 
-            hdr->id, dns_class_tostr(q->qclass), dns_type_tostr(q->qtype), 
-            rcode_tostr(rcode));
-    }
-
-    // validate question
-    if (msg->num_qd != 1) return log_error_rf("recv-resp ID 0x%04x missing question", hdr->id);
-    struct dns_quest *quest = &msg->qd_recs[0];
-    struct str_slice name = ns->name;
-    if (slice_endswith(name, '.')) name.len--;
-    if (!slice_eqstri(name, quest->qname)) return log_error_rf("recv-resp ID 0x%04x qname mismatch", hdr->id);
-    if (quest->qclass != q->qclass) return log_error_rf("recv-resp ID 0x%04x qclass mismatch", hdr->id);
-    if (quest->qtype != q->qtype) return log_error_rf("recv-resp ID 0x%04x qqtype mismatch", hdr->id);
-
-    // got okay resp
     return 0;
 }
 
 // setup request
-static int set_dnsmsg(struct dns_ns *ns, struct dns_query *q)
+static int set_dnsreq(struct dns_ns *ns, struct dns_query *q)
 {
     struct dns_msg *msg = &ns->msg;
     struct dns_hdr *hdr = &msg->hdr;
     struct str_slice name = ns->name;
 
     q->tid = gen_tid();
+    q->qname = ns->name;
+    q->qclass = DNS_CLASS_IN;
     dns_msg_init(msg, q->tid, DNS_FLAGS_RD);
     int rc = dns_add_qdn(msg, name.ptr, name.len, q->qtype, q->qclass);
     if (rc) return rc;
 
-    log_debug("id:0x%04x qr:%d opcode:%s rd:%d qd:%zu qname=%.*s %s %s",
-        hdr->id, hdr->flags & DNS_FLAGS_QR ? 1 : 0,
-        opcode_tostr((hdr->flags & DNS_FLAGS_OPCODE) >> 11),
-        hdr->flags & DNS_FLAGS_RD ? 1 : 0,
-        msg->num_qd, SLICE(name),
-        dns_class_tostr(q->qclass),
-        dns_type_tostr(q->qtype));
+    log_debug("qclass:%s qtype:%s id:0x%04x opcode:%s rd:%d qd:%zu",
+        dns_class_tostr(q->qclass), dns_type_tostr(q->qtype),
+        hdr->id, opcode_tostr((hdr->flags & DNS_FLAGS_OPCODE) >> 11),
+        hdr->flags & DNS_FLAGS_RD ? 1 : 0, msg->num_qd);
 
     return 0;
 }
 
-static int ns_add_ans(struct dns_ns *ns)  
+static int add_dnsans(struct dns_ns *ns)  
 {
     struct dns_msg *msg = &ns->msg;
     struct dns_sect *ans = &msg->an_recs;
@@ -967,200 +976,200 @@ static int ns_add_ans(struct dns_ns *ns)
         case DNS_TYPE_A:
             idx = res_add_ip(res, DNS_IPV4, rr->rdata.a);
             if (idx != -1) {
-                cache_put(cache, DNS_IPV4, ns->name, &res->addrs[idx], rr->ttl);
                 ns->have_ip4 = 1;
+                cache_put(cache, DNS_IPV4, ns->name, &res->addrs[idx], rr->ttl);
             }
             break;
         case DNS_TYPE_AAAA: 
             idx = res_add_ip(res, DNS_IPV6, rr->rdata.aaaa);
             if (idx != -1) {
-                cache_put(cache, DNS_IPV6, ns->name, &res->addrs[idx], rr->ttl);
                 ns->have_ip6 = 1;
+                cache_put(cache, DNS_IPV6, ns->name, &res->addrs[idx], rr->ttl);
             }
             break;
         }
     }
 
-    log_debug("addr=%s type=%s ans=%d ip4=%d ip6=%d",
-        dns_sockaddr_tostr(ns->addr), dns_socktype_tostr(ns->addr),
-        ns->have_ans, ns->have_ip4, ns->have_ip6);
+    log_debug("addr=%s ans=%d ip4=%d ip6=%d", ADDR_STR(ns->addr), ns->have_ans, ns->have_ip4, ns->have_ip6);
 
     return 0;
 }
 
-static int do_resp(struct dns_ns *ns, struct dns_query *q)
-{
-    int rc;
-
-    if ((rc = dec_dnspkt(ns, q))) return rc;
-    if ((rc = chk_dnsmsg(ns, q))) return rc;
-    if ((rc = ns_add_ans(ns))) return rc;
-
-    q->state = DNS_DONE;
-    return 0;
-}
-
-static int do_send(struct dns_query *q)
-{
-   int rc = snd_dnspkt(q);
-   if (rc != 0) return rc == DNS_EAGAIN ? 0 : rc;
-   q->state = DNS_RECV;
-
-   return 0;
-}
-
-static int do_recv(struct dns_ns *ns, struct dns_query *q)
-{
-    int rc = rcv_dnspkt(q);
-    if (rc != 0) return rc == DNS_EAGAIN ? 0 : rc;
-    return do_resp(ns, q);
-}
-
-static int do_query(struct dns_ns *ns, struct dns_query *q)
-{
-    int rc;
-
-    if ((rc = set_dnsmsg(ns, q))) return rc;
-    if ((rc = enc_dnspkt(ns, q))) return rc;
-    if ((rc = do_send(q))) return rc;
-
-    return 0;
-}
-
-static int do_conn(struct dns_ns *ns, struct dns_query *q)
-{
-    int rc = chk_connect(q);
-    if (rc) return rc;
-
-    q->state = DNS_SEND;
-    return do_query(ns, q);
-}
-
-static int do_connect(struct dns_query *q, struct dns_sockaddr *addr)
+static int do_connect(struct dns_sock *s, int type, struct dns_sockaddr *addr)
 {
     // socket
-    int sock_type = addr->sock_type | SOCK_NONBLOCK | SOCK_CLOEXEC;
-    q->fd = socket(addr->sa.sa_family, sock_type, 0);
-    if (q->fd == -1) return log_errno_rf("create_socket(%u) failed", addr->sock_type);
-    q->is_tcp = sock_type & SOCK_STREAM;
+    int sock_type = type == DNS_UDP ? SOCK_DGRAM : SOCK_STREAM;
+    sock_type |= SOCK_NONBLOCK | SOCK_CLOEXEC;
+    s->fd = socket(addr->sa.sa_family, sock_type, 0);
+    if (s->fd == -1) return log_errno_rf("create_socket(%u) failed", sock_type);
+    s->is_open = 1;
+    s->is_tcp = type == DNS_TCP;
+
+    if (!addr) return 0;
 
     // connect
-    int next_state = DNS_SEND;
-    int rc = connect(q->fd, &addr->sa, addr->len);
+    int rc = connect(s->fd, &addr->sa, addr->len);
     if (rc == -1) {
-        if (errno != EINPROGRESS) {
-            query_close(q);
-            return log_errno_rf("connect(%d) failed", addr->sock_type);
-        }
-        next_state = DNS_CONN;
+        if (errno != EINPROGRESS) return log_errno_rf("connect(%s) failed", ADDR_STR(addr));
+        s->in_progress = 1;
     }
 
-    q->state = next_state;
+    s->is_connect = 1;
 
     return 0;
 }
 
-static void try_query(struct dns_ns *ns, uint16_t qtype)
+static int try_query(struct dns_ns *ns, uint16_t qtype)
 {
     struct dns_query *q = get_query(ns, qtype);
-    if (!q || q->state != DNS_SEND) return;
+    if (!q) return DNS_IDLE;
 
-    int rc = do_query(ns, q);
-    if (rc) {
-        q->last_rc = rc;
-        q->state = DNS_DONE;
+    log_debug("state=%d qtype=%s", q->state, dns_type_tostr(qtype));
+
+    switch(q->state) {
+    case DNS_IDLE:
+        if (dns_sock_pending(&ns->sock)) break;
+        ns->active++;
+        q->qtype = qtype;
+        q->state = DNS_SEND;
+        q->last_rc = set_dnsreq(ns, q);
+        if (q->last_rc) break;
+        q->last_rc = enc_dnspkt(&ns->sock, &ns->msg);
+        if (q->last_rc) break;
+        // fall thru
+    case DNS_SEND: 
+        q->last_rc = snd_dnspkt(&ns->sock);
+        if (!q->last_rc) q->state = DNS_RECV;
+        break;
+    case DNS_RECV: 
+        break;
+    case DNS_DONE: 
+        break;
+    }
+
+    if (q->last_rc && q->last_rc != DNS_EAGAIN) {
         ns->active--;
-    }
-}
-
-static void try_connect(struct dns_ns *ns, uint16_t qtype)
-{
-    struct dns_query *q = get_query(ns, qtype);
-    if (!q || q->state != DNS_IDLE) return;
-
-    q->qtype = qtype;
-    q->qclass = DNS_CLASS_IN;
-
-    int rc = do_connect(q, ns->addr);
-
-    log_debug("rc=%d state=%d fd=%d addr=%s type=%s qclass=%s qtype=%s",
-        rc, q->state, q->fd,
-        dns_sockaddr_tostr(ns->addr), dns_socktype_tostr(ns->addr),
-        dns_class_tostr(q->qclass), dns_type_tostr(q->qtype));
-
-    if (rc) {
-        q->last_rc = rc;
         q->state = DNS_DONE;
-        return;
     }
-    ns->active++;
+
+    return q->state;
 }
 
-static void close_all(struct dns_ns *ns)
+// check question section matches what we sent
+static bool chk_dnsqd(struct dns_query *query, struct dns_msg *rsp)
 {
-    query_close(&ns->v4_query);
-    query_close(&ns->v6_query);
+    if (rsp->num_qd != 1) return false;
+
+    struct dns_quest *quest = &rsp->qd_recs[0];
+    struct str_slice qname = query->qname;
+    if (slice_endswith(qname, '.')) qname.len--;
+
+    if (!slice_eqstri(qname, quest->qname)) false;
+    if (query->qclass != quest->qclass) return false;
+    if (query->qtype != quest->qtype) return false;
+
+    return true;
 }
 
-static void resp_all(struct dns_ns *ns, struct pollfd fds[static 2])
+// check rcode, body
+static int chk_dnsrsp(struct dns_ns *ns, struct dns_hdr *hdr, struct dns_query *q)
 {
-    for (int i = 0; i < 2; i++) {
-        if (fds[i].fd < 0) continue;
-        uint16_t qtype = i == 0 ? DNS_TYPE_A : DNS_TYPE_AAAA;
-        struct dns_query *q = get_query(ns, qtype);
-        if (!q) continue;
-        int rc = -1;
-        switch(q->state) {
-        case DNS_CONN: rc = do_conn(ns, q); break;
-        case DNS_SEND: rc = do_send(q); break;
-        case DNS_RECV: rc = do_recv(ns, q); break;
-        }
-        if (rc || q->state == DNS_DONE) {
-            q->last_rc = rc;
-            ns->active--;
-            fds[i].fd = -1;
-        }
-        else { 
-            int events = q->state == DNS_RECV ? POLLIN : POLLOUT;
-            fds[i].events = events;
-        }
+    ns->active--;
+    q->state = DNS_DONE; 
+    q->last_rc = hdr->flags & DNS_FLAGS_RCODE;
+
+    log_debug("qclass:%s qtype:%s id:0x%04x opcode:%s rcode:%s qd:%d an:%d",
+        dns_class_tostr(q->qclass), dns_type_tostr(q->qtype),
+        hdr->id, opcode_tostr((hdr->flags & DNS_FLAGS_OPCODE) >> 11),
+        rcode_tostr(q->last_rc), hdr->qd_count, hdr->an_count);
+
+    // check result code - RCODE
+    if (q->last_rc) return q->last_rc;
+    if (dec_dnsmsg(&ns->sock, &ns->msg)) return DNS_EBADMSG;
+    if (!chk_dnsqd(q, &ns->msg)) return DNS_EQUEST;
+
+    // got okay resp
+    return 0;
+}
+
+static int chk_dnspkt(struct dns_ns *ns)
+{
+    struct dns_hdr hdr;
+    struct dns_query *q;
+
+    if (dec_dnshdr(&ns->sock, &hdr)) return DNS_EBADHDR;
+    if (!(hdr.flags & DNS_FLAGS_QR)) return DNS_ENOTRSP;
+    if (!(q = find_query(ns, hdr.id))) return DNS_ETID;
+
+    return chk_dnsrsp(ns, &hdr, q);
+}
+
+static int do_resp(struct dns_ns *ns)
+{
+    int rc;
+
+    if ((rc = rcv_dnspkt(&ns->sock))) return rc;
+    if ((rc = chk_dnspkt(ns))) return rc;
+    if ((rc = add_dnsans(ns))) return rc;
+
+    return 0;
+}
+
+static void recv_resp(struct dns_ns *ns, struct pollfd *pfd)
+{
+    int rc = do_resp(ns);
+
+    if (rc == DNS_EAGAIN) return;
+    if (rc == DNS_ERR || (rc == DNS_EBADHDR && ns->sock.is_tcp)) {
+        // fail socket
+        ns->active = 0;
+        pfd->fd = -1;
     }
+
+    dns_sock_flush(&ns->sock);
 }
 
-static void setup_fds(struct dns_ns *ns, struct pollfd fds[static 2])
+static void send_query(struct dns_ns *ns, struct pollfd *pfd)
 {
-    for (int i = 0; i < 2; i++) {
-        uint16_t qtype = i == 0 ? DNS_TYPE_A : DNS_TYPE_AAAA;
-        struct dns_query *q = get_query(ns, qtype);
-        if (!q) {
-            fds[i].fd = -1;
-            continue;
-        }
-        int events;
-        switch(q->state) {
-        case DNS_IDLE: events = 0; break;
-        case DNS_CONN: events = POLLOUT; break;
-        case DNS_SEND: events = POLLOUT; break;
-        case DNS_RECV: events = POLLIN;  break;
-        case DNS_DONE: events = 0; break;
-        default: events = 0;
-        }
+    struct dns_sock *sock = &ns->sock;
 
-        fds[i].fd = q->fd;
-        fds[i].events = events;
+    if (sock->in_progress) {
+        // connect finished
+        sock->in_progress = 0;
+        ns->active--;
+        int rc = check_error(sock);
+        if (rc) return;
     }
+
+    int do_ip4 = try_query(ns, DNS_TYPE_A);
+    int do_ip6 = try_query(ns, DNS_TYPE_AAAA);
+
+    int events = 0;
+    if (do_ip4 == DNS_SEND || do_ip6 == DNS_SEND) events |= POLLOUT;
+    if (do_ip4 == DNS_RECV || do_ip6 == DNS_RECV) events |= POLLIN;
+
+    pfd->fd = sock->fd;
+    pfd->events = events;
 }
 
-static void query_all(struct dns_ns *ns)
+static bool connect_now(struct dns_ns *ns, struct pollfd *pfd)
 {
-    try_query(ns, DNS_TYPE_A);
-    try_query(ns, DNS_TYPE_AAAA);
-}
+    int type = ns->use_tcp ? DNS_TCP : DNS_UDP;
+    struct dns_sock *sock = &ns->sock;
+    int rc = do_connect(sock, type, ns->addr);
 
-static void connect_all(struct dns_ns *ns)
-{
-    try_connect(ns, DNS_TYPE_A);
-    try_connect(ns, DNS_TYPE_AAAA);
+    log_debug("rc=%d addr=%s type=%s", rc, ADDR_STR(ns->addr), TYPE_STR(type));
+    if (rc) return false;
+
+    if (sock->in_progress) {
+        // wait for connect
+        ns->active++;
+        pfd->fd = sock->fd;
+        pfd->events = POLLOUT;
+        return false;
+    }
+
+    return true;
 }
 
 static int get_rcode(struct dns_ns *ns, int qtype)
@@ -1221,34 +1230,36 @@ static int try_nameserver(struct str_slice name,
 
     struct dns_ns ns = {
         .name = name,
-        .res =  res,
         .addr = addr,
+        .res =  res,
         .timeout_ms = timeout_secs * 1000
     };
 
-    connect_all(&ns);
-    query_all(&ns);
+    struct pollfd fd;
+    if (connect_now(&ns, &fd)) {
+        send_query(&ns, &fd);
+    }
 
-    struct pollfd fds[2];
-    setup_fds(&ns, fds);
     int64_t deadline_ms = get_deadline_ms(&ns);
     int rc = DNS_OK;
 
     while (ns.active) {
         int ms = get_rem_ms(deadline_ms);
-        rc = poll(fds, ARR_LEN(fds), ms);
+        rc = poll(&fd, 1, ms);
         if (rc <= 0) {
             if (rc == 0) rc = DNS_ETIMEOUT;
             if (errno == EINTR) {
                 if (!glob_sig || !glob_sig->run) break;
                 continue;
             }
-            if (rc < 1) log_errno("poll failed");
+            log_errno("poll failed");
             break;
         }
-        resp_all(&ns, fds);
+        if (fd.events == POLLOUT) send_query(&ns, &fd);
+        if (fd.events == POLLIN)  recv_resp(&ns, &fd);
     }
-    close_all(&ns);
+
+    sock_close(&ns.sock);
 
     rc = ns_getrc(&ns, rc);
     log_debug("rc=%d", rc);
