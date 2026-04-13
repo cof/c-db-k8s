@@ -98,7 +98,8 @@ void log_argv(const char *what, int argc, char *argv[]);
  * log_errno_rc(...)        : log error msg + errno - return code
  * log_errno_rn(...)        : log error msg + errno - return null
  * -
- * log_ec_rf(ec, ..,)       : log error msg wth ec as errno - return fail
+ * log_ec(ec, ...)          : log error msg with ec as errno
+ * log_ec_rf(ec, ..,)       : log error msg with ec as errno - return fail
  * log_debug(fmt, ...)      : simple wrapper around fprintf(stderr, fmt, ...)
  * fatal_error(...)         : log fatal error msg and exit
  * fatal_errno(...)         : log fatal error msg and errno and exit
@@ -173,6 +174,11 @@ void log_argv(const char *what, int argc, char *argv[]);
 #define log_errno(...) \
     if (log_level >= LOG_ERROR) { \
         _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, NULL, __VA_ARGS__); \
+    }
+
+#define log_ec(ec, ...) \
+    if (log_level >= LOG_ERROR) { \
+        _log_msg(__FILE__, __LINE__, __func__, ec, LOG_ERROR, NULL, __VA_ARGS__); \
     }
 
 #define log_errno_rf(...) ({ \
