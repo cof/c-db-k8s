@@ -251,7 +251,7 @@ size_t ip6_str_decode(const char *str, size_t len, uint8_t dst[static 16])
 }
 
 // convert ip4-addr to str
-size_t ip4_str_encode(uint8_t addr[static 4], char *str, size_t len)
+size_t ip4_str_encode(const uint8_t addr[static 4], char *str, size_t len)
 {
     if (len < IP4_ADDR_STRLEN) return 0;
 
@@ -266,7 +266,7 @@ size_t ip4_str_encode(uint8_t addr[static 4], char *str, size_t len)
 }
 
 // convert ip6-addr to str
-size_t ip6_str_encode(uint8_t addr[static 16], int flags, char *str, size_t len)
+size_t ip6_str_encode(const uint8_t addr[static 16], int flags, char *str, size_t len)
 {
     size_t need_len = IP6_ADDR_STRLEN;
     if (flags & IP6_STR_ADDBRACK) need_len += 2;

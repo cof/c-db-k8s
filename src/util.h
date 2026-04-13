@@ -399,8 +399,8 @@ static inline char *uint8_tostr(uint8_t val, char *str, size_t len)
 
 size_t ip4_str_decode(const char *str, size_t len, uint8_t dst[static 4]);
 size_t ip6_str_decode(const char *str, size_t len, uint8_t dst[static 16]);
-size_t ip4_str_encode(uint8_t addr[static 4], char *str, size_t len);
-size_t ip6_str_encode(uint8_t addr[static 16], int flags, char *str, size_t len);
+size_t ip4_str_encode(const uint8_t addr[static 4], char *str, size_t len);
+size_t ip6_str_encode(const uint8_t addr[static 16], int flags, char *str, size_t len);
 
 /*
  * Codec - Simple encoders/decoders
