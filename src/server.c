@@ -248,7 +248,7 @@ static void do_client_send(struct simple_client *client)
 
     if (events) {
         // need an epoll update
-        int rc = poll_ctrl(client->parent, &client->sock, events);
+        rc = poll_ctrl(client->parent, &client->sock, events);
         if (rc) return;
         client->sock.wait_write = events & EPOLLOUT ? 1 : 0;
     }
