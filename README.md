@@ -199,10 +199,10 @@ Client's simply connect to the server and send plain-text commands to modify the
 
 **Features**
 
+- cmd-line allows port selection, database mode and logging levels
 - telnet style CLI
-- DB backend can use mmap to provide crash proof database file
-- scales easily well beyond 100k+ connections using an mmap DB and event-driven I/O
-- cmd-line args to change logging levels
+- DB backend can use  crash proof database file (mmap)
+- easily scales well beyond 100k+ connections using an mmap DB and event-driven I/O
 
 **Design**
 
@@ -212,9 +212,9 @@ Client's simply connect to the server and send plain-text commands to modify the
 - SOCK API uses DNS-RESOLV as a getaddrinfo replacement
 - SOCK API uses RWBUF api to read and write lines to sockets
 - DB API used to update key/value store
-- DB backend support both an in memory store or mmap database file
+- DB backend can support either in memory store or mmap database file
+- LOG api used to capture errors and logs them to stderr
 - listens by default using wildcard [::]:6379
-- cmd-line supports --help
 
 **Example usage**
 
@@ -245,19 +245,18 @@ Client simply reads and writes lines betwen stdio and server socket.
 
 **Features**
 
-- cmd-line supports --help and selecting erver address and port
+- cmd-line allows server address/port selection and logging levels
 - Supports normal stdin/stdout or pipes
 
 **Design**
 
 - single-threaded application written in C with no 3rd party libs
-- Uses a TCP wrapper or socket bridge between stdio/socket
-- Uses a 4 way pipe to exchange lines between stdio/socket
+- Uses a 4 way TCP wrapper pipe to exchange lines between stdio/socket
 - Reads lines from stdin and writes then to socket
 - Reads lines from socket  and writes then to stdout
 - Uses SOCK api to create socket and manage stdin,stdout fds
 - Uses poll() to monitor fd activity (stdin,stdout,socket)
-- Captures all error and logs them to stderr
+- LOG api used to capture errors and logs them to stderr
 
 **Example usage**
 
