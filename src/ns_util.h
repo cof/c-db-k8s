@@ -34,12 +34,6 @@
 #define NETNS_DIR "/var/run/netns"
 #define HOST_NETNS_PATH "/proc/self/ns/net"
 
-// macro to run a system cmd and return if error
-#define RUN_CMD(x, ...) do { \
-    int rc = run_cmd(x,  ##__VA_ARGS__) ; \
-    if (rc != 0) return rc; \
-} while(0);
-
 // macro to run a func and and return if error
 #define RUN(x) do { \
     int rc = (x); \
@@ -49,14 +43,11 @@
 /*
  * Misc - gen purpose helper funcs
  * -------------------------------
- * run_cmd(fmt, ...)       : printf a cmd and call system to run it
  * shutdown_pid(pid, wait) : terminate a child process
  * exec_args_parse : convert cmd-line exec_args str into argv array
  * gen_id(buf, len, name)  : generate an id str based on hash of name
  * gen_path(dir, name)     : generate a path string 
  */
-int run_cmd(const char *fmt, ...)
-    __attribute__((format(printf, 1, 2)));
 void shutdown_pid(int pid, int wait);
 char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc);
 char *gen_id(char *buf, int len, const char *name);

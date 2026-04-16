@@ -65,46 +65,6 @@
 #include "log.h"
 #include "ns_util.h"
 
-// system run cmd wrapper
-int run_cmd(const char *fmt, ...)
-{
-    va_list args;
-    char *cmd_str;
-    int rc;
-
-    // create cmd str
-    va_start(args, fmt);
-    rc = vasprintf(&cmd_str, fmt, args);
-    va_end(args);
-
-    if (rc < 0) return log_errno_rf("vsnprintf failed");
-    log_debug("%s", cmd_str);
-
-    rc = system(cmd_str);
-    if (rc == -1) {
-        // system() failed ?
-        log_errno("system(%s) failed", cmd_str);
-    }
-    else if (!WIFEXITED(rc)) {
-        // cmd was interrupted by signal 
-        log_error("cmd (%s) interrupted", cmd_str);
-        rc = -1;
-    }
-    else if (WEXITSTATUS(rc) != 0) {
-        // cmd non-zero exit code
-        log_error("cmd (%s) exited %d", cmd_str, WEXITSTATUS(rc));
-        rc = -1;
-    }
-    else {
-        rc = 0;
-    }
-
-    free(cmd_str);
-
-    // all done
-    return rc; 
-}
-
 // terminate child process pid, wait usecs
 void shutdown_pid(int pid, int wait)
 {
@@ -673,19 +633,28 @@ int mount_netns(const char *netns_path)
 // create a new veth device
 int veth_add(const char *veth, const char *peer)
 {
-    return run_cmd("ip link add %s type veth peer name %s 2>/dev/null", veth, peer);
+    char tmp[128];
+    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+
+    return run_cmd(&buf, RUN_NULL, "ip link add %s type veth peer name %s", veth, peer);
 }
 
 // delete veth device
 int veth_del(const char *veth)
 {
-    return run_cmd("ip link del %s 2>/dev/null", veth);
+    char tmp[128];
+    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+
+    return run_cmd(&buf, RUN_NULL, "ip link del %s", veth);
 }
 
 // set netns for veth
 int veth_setns(const char *veth, const char *netns)
 {
-    return run_cmd("ip link set %s netns %s", veth, netns);
+    char tmp[128];
+    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+
+    return run_cmd(&buf, 0, "ip link set %s netns %s", veth, netns);
 }
 
 // generate id-str for veth 
@@ -712,13 +681,16 @@ int veth_gen_idstr(const char *name,
 // create and setup a veth for container netns
 int veth_setup(const char *cont_name, const char *netns)
 {
+    char tmp[128];
+    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+
     char veth[IFNAMSIZ];
     char peer[IFNAMSIZ];
 
     RUN(veth_gen_idstr(cont_name, veth, sizeof(veth), peer, sizeof(peer)));
 
-    RUN_CMD("ip link set %s netns %s", peer, netns);
-    RUN_CMD("ip link set %s up", veth);
+    if (run_cmd(&buf, 0, "ip link set %s netns %s", peer, netns)) return -1;
+    if (run_cmd(&buf, 0, "ip link set %s up", veth)) return -1;
 
     log_info("+", "Created veth %s", veth);
 
@@ -731,9 +703,7 @@ int veth_setup(const char *cont_name, const char *netns)
 int set_identity(const char *name)
 {
     int rc = sethostname(name, strlen(name));
-    if (rc == -1) {
-        return log_errno_rf("sethostname %s failed", name);
-    }
+    if (rc == -1) return log_errno_rf("sethostname %s failed", name);
 
     return 0;
 }
@@ -806,10 +776,13 @@ int set_proc(void)
 // child process - bring up container network - lo, eth0 and ip addr
 int create_network(const char *veth_name, const char *ip_addr)
 {
-    RUN_CMD("ip link set %s name eth0", veth_name); 
-    RUN_CMD("ip addr add %s dev eth0", ip_addr);
-    RUN_CMD("ip link set lo up");
-    RUN_CMD("ip link set eth0 up");
+    char tmp[128];
+    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+
+    if (run_cmd(&buf, 0, "ip link set %s name eth0", veth_name)) return -1;
+    if (run_cmd(&buf, 0, "ip addr add %s dev eth0", ip_addr)) return -1;
+    if (run_cmd(&buf, 0, "ip link set lo up")) return -1;
+    if (run_cmd(&buf, 0, "ip link set eth0 up")) return -1;
 
     return 0;
 }

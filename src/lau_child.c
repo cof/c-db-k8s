@@ -162,13 +162,16 @@ int lau_child_set_veth(struct lau_child *child, const char *name, const char *pr
  */
 int lau_child_net_setup(struct lau_child *child)
 {
+    char tmp[128];
+    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+
     log_debug("lau setup-network (name=%s ipaddr=%s" , child->name, child->ip_addr);
 
     // TODO move this lot into ns_util.c
-    RUN_CMD("nsenter -t %d -n ip link set %s name eth0", child->pid, child->veth_name);
-    RUN_CMD("nsenter -t %d -n ip addr add %s/24 dev eth0", child->pid, child->ip_addr);
-    RUN_CMD("nsenter -t %d -n ip link set lo up", child->pid);
-    RUN_CMD("nsenter -t %d -n ip link set eth0 up", child->pid);
+    if (run_cmd(&buf, 0, "nsenter -t %d -n ip link set %s name eth0", child->pid, child->veth_name)) return -1;
+    if (run_cmd(&buf, 0, "nsenter -t %d -n ip addr add %s/24 dev eth0", child->pid, child->ip_addr)) return -1;
+    if (run_cmd(&buf, 0, "nsenter -t %d -n ip link set lo up", child->pid)) return -1;
+    if (run_cmd(&buf, 0, "nsenter -t %d -n ip link set eth0 up", child->pid)) return -1;
 
     child->need_network = 0;
 
@@ -181,16 +184,12 @@ int lau_child_prep(struct lau_child *child)
     int fds[2];
 
     // create go sync pipe
-    if (pipe(fds) == -1)  {
-        return log_errno_rf("create go-pipe for %s failed", child->name);
-    }
+    if (pipe(fds) == -1) return log_errno_rf("create go-pipe for %s failed", child->name);
     child->go_read_fd = fds[0];
     child->go_write_fd = fds[1];
 
     // create ready sync pipe
-    if (pipe(fds) == -1) {
-        return log_errno_rf("create ready_pipe for %s failed", child->name);
-    }
+    if (pipe(fds) == -1) return log_errno_rf("create ready_pipe for %s failed", child->name);
     child->ready_read_fd = fds[0];
     child->ready_write_fd = fds[1];
 
@@ -209,9 +208,7 @@ int lau_child_prep(struct lau_child *child)
 
     // setup clone flags
     child->clone_flags = SIGCHLD | CLONE_NEWUTS | CLONE_NEWPID | CLONE_NEWNS;
-    if (child->need_network) {
-        child->clone_flags |= CLONE_NEWNET;
-    }
+    if (child->need_network) child->clone_flags |= CLONE_NEWNET;
 
     return 0;
 }
