@@ -508,12 +508,13 @@ struct cmd_opt opts[] = {
     { "--port",      "port to listen on",     SERV_PORT_STR, 1  },
     { "--database",  "Path to database file", 0, 1  },
     { "--log-line",  "log request and response lines",  0, 0  },
-    { "--log-level", "logging level ",        STR(APP_LOGLEVEL), 1  },
+    { "--log-level", "logging level ",        STR(LOG_INFO), 1  },
     { "--argv",      "Dump argv to stdout",   0, 0  },
     { NULL }
 };
 
 static const char *examples[] = {
+    "--log-level 4",
     "--hostname 127.0.0.1 --port 6379 --database mydb.bin",
     NULL
 };
