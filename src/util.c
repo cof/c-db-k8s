@@ -20,11 +20,107 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 #include <stdarg.h>
 #include <getopt.h>
 
+// for run_cmd
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <linux/capability.h>
+#include <fcntl.h>
+
 #include "log.h"
 #include "util.h"
+
+
+static bool raise_ambient_caps(void)
+{
+    struct __user_cap_header_struct hdr = { _LINUX_CAPABILITY_VERSION_3, 0 };
+    struct __user_cap_data_struct data[2];
+   
+    // get process caps
+    if (syscall(SYS_capget, &hdr, data) < 0) return false;
+
+    // mirror permitted to inheritable
+    data[0].inheritable = data[0].permitted;
+    data[1].inheritable = data[1].permitted;
+    if (syscall(SYS_capset, &hdr, data) < 0) return false;
+
+    // raise Ambient
+    if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_NET_ADMIN, 0, 0) < 0) return false;
+    if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_NET_RAW, 0, 0)  < 0) return false;
+
+    return true;
+}
+
+int run_cmd(struct strbuf *buf, int flags, const char *fmt, ...)
+{
+    size_t avail = strbuf_avail(buf);
+    char *cmd_str = strbuf_start(buf);
+
+    va_list args;
+    va_start(args, fmt);
+    int rc = vsnprintf(cmd_str, avail, fmt, args);
+    va_end(args);
+
+    if (rc < 0) return log_errno_rf("snprintf failed");
+    if ((size_t) rc >= avail) return log_error_rf("snprintf: no space");
+    log_debug("%s", cmd_str);
+
+    char *cmd_args[RUN_MAXARG];
+    size_t cmd_idx = 0;
+    struct str_slice str = slice_make_cstr(cmd_str);
+    while (str.len) {
+        if (cmd_idx >= ARR_LEN(cmd_args)) return log_error_rf("cmd_args: no space");
+        struct str_slice arg = slice_splitch(&str, ' ');
+        arg.ptr[arg.len] = '\0';
+        cmd_args[cmd_idx++] = arg.ptr;
+    }
+    cmd_args[cmd_idx] = NULL;
+    if (cmd_idx == 0) return -1;
+
+    // fork child to run cmd
+    pid_t pid = fork();
+    if (pid == 0) {
+        if (flags & RUN_CAPS) raise_ambient_caps();
+        if (flags & RUN_NULL) {
+            int fd = open("/dev/null", O_WRONLY);
+            if (fd != -1) {
+                dup2(fd, STDERR_FILENO);
+                close(fd);
+            }
+        }
+        execvp(cmd_args[0], cmd_args);
+        _exit(127);
+    }
+
+    // parent
+    int status;
+    rc = waitpid(pid, &status, 0);
+    if (rc != -1) rc = status;
+
+    if (rc == -1) {
+        // system() failed ?
+        log_errno("system(%s) failed", cmd_str);
+    }
+    else if (!WIFEXITED(rc)) {
+        // cmd was interrupted by signal 
+        log_error("cmd (%s) interrupted", cmd_str);
+        rc = -1;
+    }
+    else if (WEXITSTATUS(rc) != 0) {
+        // cmd non-zero exit code
+        rc = WEXITSTATUS(rc);
+    }
+    else {
+        rc = 0;
+    }
+
+    return rc;
+}
 
 // signal handling
 static struct simple_sig *glob_sig = NULL;
@@ -357,7 +453,6 @@ char *slice_strdup(const struct str_slice str)
     return copy;
 }
 
-
 // generic setters
 int str_setval(char **str, const char *name, const char *val_str)
 {
@@ -473,22 +568,47 @@ int cmd_argv_next(struct cmd_argv *parse)
     return parse->opt->code ? parse->opt->code : parse->opt_idx;
 }
 
+static inline int opts_width(const struct cmd_opt opts[])
+{
+    int max_width  = 0;
+
+    for (int i = 0; opts[i].name; i++)  {
+        int len = strlen(opts[i].name);
+        if (len > max_width) max_width = len;
+    }
+
+    return max_width;
+}
+
+static inline int modes_width(const struct cmd_mode modes[])
+{
+    size_t max_width  = 0;
+
+    for (int i = 0; modes[i].name; i++)  {
+        size_t len = strlen(modes[i].name);
+        if (len > max_width) max_width = len;
+    }
+
+    return max_width;
+}
+
 // print program usage
 void prog_usage(const char *prog_name, const struct cmd_opt opts[], const char *examples[])
 {
     const char *name = get_basename(prog_name) ?: "<null>";
-    int w = 15;
+    int w = opts_width(opts);
 
     printf("Usage: %s [OPTIONS]\n\n", name);
-    printf("Options:\n");
+    puts("Options:\n");
 
     for (int i = 0; opts[i].name; i++)  {
-        printf(" %-*s %s", w, opts[i].name, opts[i].desc);
-        if (opts[i].def_str) {
-            printf(" (default=%s)", opts[i].def_str);
-        }
+        const struct cmd_opt *opt = &opts[i];
+        printf(" %-*s %s", w, opt->name, opt->desc);
+        if (opt->def_str) printf(" (default=%s)", opt->def_str);
         printf("\n");
     }
+
+    if (!examples || !examples[0]) return;
 
     printf("\nExamples:\n");
     for (int i = 0; examples[i]; i++)  {
@@ -507,15 +627,15 @@ struct cmd_mode *cmd_mode_find(char *mode, struct cmd_mode modes[])
 }
 
 // print mode usage
-void mode_usage(const char *prog_name, struct cmd_mode modes[], const char *examples[])
+void mode_usage(const char *prog_name, const struct cmd_mode modes[], const char *examples[])
 {
     const char *name = get_basename(prog_name) ?: "<null>";
-    int w = 15;
+    int w = modes_width(modes);
 
     printf("Usage: %s [MODE] [OPTIONS]\n\n", name);
 
     // list modes
-    printf("MODE:\n");
+    puts("Modes:\n");
     for (size_t i = 0; modes[i].name; i++) {
         printf("  %-*s %s\n", w, modes[i].name, modes[i].desc);
     }
@@ -523,17 +643,22 @@ void mode_usage(const char *prog_name, struct cmd_mode modes[], const char *exam
 
     // list options
     for (size_t i = 0; modes[i].name; i++) {
-        printf("%s Options:\n", modes[i].name);
-        struct cmd_opt *opts = modes[i].opts;
+        printf("%s options:\n\n", modes[i].name);
+        const struct cmd_opt *opts = modes[i].opts;
+        w = opts_width(opts);
         for (size_t j = 0; opts[j].name; j++) {
-            struct cmd_opt *opt = &opts[j];
-            printf("  %-*s %s\n", w, opt->name, opt->desc);
+            const struct cmd_opt *opt = &opts[j];
+            printf("  %-*s %s", w, opt->name, opt->desc);
+            if (opt->def_str) printf(" (default=%s)", opt->def_str);
+            puts("");
         }
-        printf("\n");
+        puts("");
     }
 
+    if (!examples || !examples[0]) return;
+
     // list examples
-    printf("Examples:\n");
+    printf("Examples:\n\n");
     for (int i = 0; examples[i]; i++)  {
         printf("  %s %s\n", name, examples[i]);
     }

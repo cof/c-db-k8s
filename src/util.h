@@ -72,6 +72,7 @@ static inline size_t min(size_t x, size_t y)
     return x < y ? x : y;
 }
 
+
 /* signal handler API 
  * -----------------
  * Simple single hander API for apps featuring
@@ -497,6 +498,7 @@ struct strbuf {
  * strbuf_putcm(buf, ch, mem,len)   : append ch + mem
  * strbuf_puticm(buf, ch, mem, len) : append ch + mem if used else mem
  * strbuf_puts(buf, str)            : append str
+ * run_cmd(buf, flags, fmt, ...)    : run a system cmd
  */
 #define STRBUF_INIT(_mem, _len) { \
     (uint8_t *) _mem, \
@@ -504,11 +506,13 @@ struct strbuf {
     (uint8_t *) _mem + _len \
 }
 
-static inline void strbuf_init(struct strbuf *buf, void *mem, size_t len)
+static inline struct strbuf *strbuf_init(struct strbuf *buf, void *mem, size_t len)
 {
     buf->mem = mem;
     buf->mem = mem;
     buf->end = buf->mem + len;
+
+    return buf;
 }
 
 static inline void strbuf_reset(struct strbuf *buf)
@@ -592,6 +596,12 @@ static inline size_t strbuf_puts(struct strbuf *buf, const char *str)
 {
     return str ? strbuf_putm(buf, str, strlen(str)) : 0;
 }
+
+#define RUN_MAXARG 32
+#define RUN_CAPS 0x1
+#define RUN_NULL 0x2
+int run_cmd(struct strbuf *buf, int flags, const char *fmt, ...) \
+    __attribute__((format(printf, 3, 4)));
 
 /*
  * String slice API 
@@ -966,6 +976,6 @@ struct cmd_mode {
 
 struct cmd_mode *cmd_mode_find(char *mode, struct cmd_mode modes[]);
 void prog_usage(const char *prog_name, const struct cmd_opt opts[], const char *examples[]);
-void mode_usage(const char *prog_name, struct cmd_mode modes[], const char *examples[]);
+void mode_usage(const char *prog_name, const struct cmd_mode modes[], const char *examples[]);
 
 #endif
