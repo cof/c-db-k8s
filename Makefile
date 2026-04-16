@@ -759,7 +759,7 @@ test-server: server
 	$(Q)echo "[+] Running $@"; \
 	./server $(CMD_ARGS) 1> $(SRV_LOGFILE) 2>&1 & SRV_PID=$$!; \
 	$(call WAIT_PIDUP,$$SRV_PID,server); \
-	$(call WAIT_CONNUP,$(TEST_ADDR),$(TEST_PORT),$$SRV_PID); \
+	$(call WAIT_CONNUP,$(TEST_ADDR),$(TEST_PORT),1, $$SRV_PID); \
 	total=0; errors=0; \
 	$(call CHK_SRVCMD,SET foo bar,OK); \
 	$(call CHK_SRVCMD,GET foo,bar); \
@@ -780,7 +780,7 @@ test-client: client
 	$(Q)echo "[+] Running $@"; \
 	awk -f ./$(SIMPLE_SERVER) -v Port="$(TEST_PORT)" -v RespFile="$(TEST_RSPFILE)" 1>$(RES_REQFILE) 2>&1 & SRV_PID=$$!; \
 	$(call WAIT_PIDUP,$$SRV_PID,simple-server); \
-	$(call WAIT_CONNUP,$(TEST_ADDR),$(TEST_PORT),$$SRV_PID); \
+	$(call WAIT_CONNUP,$(TEST_ADDR),$(TEST_PORT),1, $$SRV_PID); \
 	echo " => send cmd-file to client"; \
 	cat $(TEST_REQFILE) | timeout 2s ./client $(CMD_ARGS) >$(CLI_LOGFILE) 2>&1; \
 	sed -e 's/^> //' -e '/^\[+]/d' $(CLI_LOGFILE) > $(RES_RSPFILE); \
