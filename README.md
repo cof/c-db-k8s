@@ -1,17 +1,11 @@
 # db-k8s
 
-Run a database (DB) client and server application inside containers.
+Run a database client and server application inside containers.
 
 There are 2 parts to this project. 
 
-- **Container**  Containerized DB Client/Server with Custom Launcher
-- **Kubernetes**  Deploy DB client/server inside k8s pods
-
-## Design Notes
-
-- Application code written in C with no 3rd party libs
-- Uses custom API's (UTIL,LOG,RWBUF,SOCK)
-- Makefile has large test-suite for launcher and k8s testing
+- **Container**  Run client/server applications inside containers using a custom Launcher
+- **Kubernetes**  Deploy client/server applications inside k8s pods
 
 ## Prerequisites
 
@@ -33,17 +27,47 @@ There are 2 parts to this project.
 
 ## 1. Container
 
-Runs a database (DB) client and server inside containers using custom launcher.
+Runs a database client and server applications inside containers using a custom launcher.
 
 - **launcher** A Linux container runtime management tool
 - **server**  key-value DB server supporting cli SET,GET,DEL operations
 - **client**  telnet-style DB client using a 4-way TCP-wrapper pipe
 
+## Design
+
+- All application code written in C with no 3rd party libs
+- Custom APIs : UTIL, LOG, RWBUF, DNS-PROTO, DNS-RESOLV, SOCK, DB
+- UTIL  : strings/signal/cmd-line handling api
+- LOG   : levels-based logging subsystem (FATAL, ERROR, INFO, DEBUG).
+- RWBUF : memory buffer api
+- DNS-PROTO  : rfc1035 compliant codec
+- DNS-RESOLV : DNS subsystem (getaddrinfo replacement)
+- SOCK : socket layer api suporting non-blocking client/servers/buffering
+- DB :  key/value store api supporting a pure memory or mmap database file
+- Makefile has large test-suite for testing
+
+### DNS-RESOLV
+
+DNS-RESOLV is a full custom DNS subsystem
+
+- getaddrinfo replacement
+- port name resolution using /etc/service
+- hostname resolution using /etc/hosts 
+- resolver configuration using /etc/resolv.conf 
+- nameserver mangement supportng attempts/timeout/ndots/search
+- Hyrbid UDP and TCP support
+- Parallel AAAA and A query support
+- TC handling for UDP fall back to TCP
+- ESDN0 supporting UDP packet sizes > 512 bytes
+- Uses DNS-PROTO a rfc1035 compliant codec
+- DNS cache with TTL support
+- non-blocking I/O using poll
+
 ## 1.1 Launcher
 
 A custom linux container launcher for running applications inside isolated namespaces.
 
-**Supported features**
+**Features**
 
 - Create and manages its own network namespaces
 - Creates an isolated filesystem for each container
@@ -82,16 +106,28 @@ A custom linux container launcher for running applications inside isolated names
 **Example usage**
 
 	$ make test-lau
+	[Installing files]
+	install -D -m 755 server bin/db/server
+	install -D -m 755 client bin/client/client
+	install -D -m 755 launcher bin
+	[+] Creating VM-DISK: vmdir/myalpine.qcow2
+	[+] Installing VM: test-lau
+	[+] Started VM: test-lau
 	[+] Waiting for VM test-lau to reach SSH
-	 => VM is UP at 192.168.122.63.
+	 ... still waiting (1/30)
+	 ... still waiting (2/30)
+	 ... still waiting (3/30)
+	 ... still waiting (4/30)
+	 ... still waiting (5/30)
+	 ... still waiting (6/30)
+	 ... still waiting (7/30)
+	 ... still waiting (8/30)
+	 => VM is UP at 192.168.122.199.
 	[+] Running test-lau
-	 => Copying bin to alpine@192.168.122.63:/home/alpine
-	 => Sending cmds to  ...
-	[+] Created network namespace: db-ns
-	[+] Created network namespace: client-ns
-	[+] Created veth pair: veth-client <-> veth-db
+	 => Copying bin to alpine@192.168.122.199:/home/alpine
+	 => Sending cmds to test-lau ...
 	[+] Database listening on [::]:6379
-	[+] Client connected from 10.0.0.2:49280
+	[+] Client connected from 10.0.0.2:39704
 	[+] Connectivity test: OK
 	> SET foo bar
 	OK
@@ -100,10 +136,8 @@ A custom linux container launcher for running applications inside isolated names
 	> DEL foo
 	OK
 	> QUIT
-	[+] server-close 10.0.0.2:49280
 	OK
 	[+] Connection closed by server
-	[+] Container 'client' exit ok (pid=2504 why=exit 0)
 	[+] server PID:1 shutting down: got signal 15 (Terminated) from UID:0 PID:0 
 	 => Fetching logs
 	 => TEST tests/test_req.txt [ PASS ]
@@ -155,30 +189,31 @@ A custom linux container launcher for running applications inside isolated names
 
 ### 1.2 Server
 
-A database (DB) server than supports a telnet-style cli to accesss a key/value store.  
-Client's simply connect to server  and send commands to modify key/value store.
+A database (DB) server than supports a telnet-style CLI to access a key/value store.  
+Client's simply connect to the server and send plain-text commands to modify the store.
 
 **Supported Commands:**
 
-- SET key value - store a key value
-- GET key       - retrive a key value
+- SET key value - store a value for given key (e.g set username joe)
+- GET key       - retrieve value for given  key
 - DEL key       - delete key/value from store
 - QUIT          - close connection
 
-**Supported featues**
+**Features**
 
-- telnet style cli SET|GET|DEL  cmds
-- DB backend use mmap to provide crash proof database file
-- Uses Multiplexing and non-blocking I/O for all read/writes
+- telnet style CLI
+- DB backend can use mmap to provide crash proof database file
 - scales easily well beyond 100k+ connections using an mmap DB and event-driven I/O
+- cmd-line args to change logging levels
 
 **Design**
 
 - single-threaded applicaton written in C with no 3rd party libs
 - Uses epoll (level triggered) to monitor all socket events
 - Uses SOCK-API to create non-blocking dual-stack (IPv4|6) sockets
-- Uses RWBUG api to read and write lines to sockets
-- Uses DB backend api to update key,value store
+- SOCK API uses DNS-RESOLV as a getaddrinfo replacement
+- SOCK API uses RWBUF api to read and write lines to sockets
+- DB API used to update key/value store
 - DB backend support both an in memory store or mmap database file
 - listens by default using wildcard [::]:6379
 - cmd-line supports --help
@@ -192,14 +227,17 @@ Client's simply connect to server  and send commands to modify key/value store.
 	Usage: server [OPTIONS]
 
 	Options:
-	 --help          This help
-	 --hostname      hostname to listen on
-	 --port          port to listen on (default=6379)
-	 --database      Path to database file
-	 --log           log request/response
-	 --argv          Dump argv to stdout
+     
+	 --help      This help
+	 --hostname  hostname to listen on
+	 --port      port to listen on (default=6379)
+	 --database  Path to database file
+	 --log-line  log request and response lines
+	 --log-level logging level  (default=3)
+	 --argv      Dump argv to stdout
 
 	Examples:
+	  server --log-level 4
 	  server --hostname 127.0.0.1 --port 6379 --database mydb.bin
 
 ### 1.3 Client
@@ -207,10 +245,10 @@ Client's simply connect to server  and send commands to modify key/value store.
 A telnet client that connect to a server address.  
 Client simply reads and writes lines betwen stdio and server socket.
 
-**Supported featues**
+**Features**
 
 - cmd-line supports --help and selecting erver address and port
-- Supports pipe or normal stdin,stdout
+- Supports normal stdin/stdout or pipes
 
 **Design**
 
@@ -240,20 +278,25 @@ Client simply reads and writes lines betwen stdio and server socket.
 
 	$ ./client --help
 	Usage: client [OPTIONS]
-
+     
 	Options:
-	 --help          This help
-	 --hostname      hostname to connect to
-	 --port          port to listen on (default=6379)
-	 --log           log request/response
-	 --argv          Dump argv to stdout
+     
+	 --help      This help
+	 --hostname  hostname to connect to
+	 --port      port to listen on (default=6379)
+	 --log-line  log request and response lines
+	 --log-level logging level (default=3)
+	 --argv      Dump argv to stdout
 
 	Examples:
+	  client --hostname db-service
 	  client --hostname localhost --port 6379
+	  client --hostname localhost --log-line
+
 
 ## 2. Kubernetes
 
-Deploy the the database client and server on Kubernetes.
+Deploy the client and server applications on Kubernetes.
     
 For first run simply do
 
@@ -323,11 +366,11 @@ To check the pods are up:
     client-app-644b4d99d-tg9xs   1/1     Running   0          4m2s
     client-app-644b4d99d-zzl27   1/1     Running   0          3m40s
 
-## Testing the Project
+## 3. Testing
 
-Testing cmds, launcher and k8s requires a large test-suite.
+Testing client/server/launcher and k8s requires a large test-suite.
 
-The test targets are listed below.
+The makefile has the following test targets.
 
 - **make test**  run basic tests
 - **make test-full** run all tests (test-cmds,test-lau,test-k8s)   
