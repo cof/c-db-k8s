@@ -1839,55 +1839,14 @@ int dns_get_flag(const char *str)
     return 0;
 }
 
-// decode ip-addr str
-static uint32_t ipstr_decode(struct str_slice str, uint8_t dst[static 16])
+const char *dns_sc_tostr(int sc)
 {
-    if (ip4_str_decode(str.ptr, str.len, dst)) return DNS_TYPE_A;
-    if (ip6_str_decode(str.ptr, str.len, dst)) return DNS_TYPE_AAAA;
-    return DNS_TYPE_CNAME;
+    switch(sc) {
+    case DNS_MSG_AN: return "Answer";
+    case DNS_MSG_NS: return "Authority";
+    case DNS_MSG_AR: return "Additional";
+    default: return int_tostr(sc);
+    }
 }
 
-/*
- * Figure out the record
- * =====================
- *  addr =  ip4addr|ip6addr|regname [<ttl>] [class=IN|CS|CH|HS]
- */
-int dns_rr_load(struct dns_rr *rec, int sc, const char *src)
-{
-    // get name
-    struct str_slice rr_str = slice_make_cstr(src);
-    struct str_slice name = slice_splitch(&rr_str, ' ');
-    slice_trim(&name);
 
-    if (name.len > DNS_NAME_MAXSTR) {
-        return log_error_rf("%s <addr> len %zu bigger than max %d", 
-            dec_code_tostr(sc), name.len, DNS_NAME_MAXSTR);
-    }
-
-    // decode ip4|ip6|name
-    uint8_t ip_addr[16];
-    rec->type = ipstr_decode(name, ip_addr);
-    rec->class = DNS_CLASS_IN;
-    
-    // look for remaining attrs (e.g 3600 CH)
-    while (rr_str.len) {
-        struct str_slice attr = slice_splitch(&rr_str, ' ');
-        slice_trim(&attr);
-        // covert slice to cptr
-        char name[20];
-        size_t len = min(attr.len, sizeof(name) - 1);
-        memcpy(name, attr.ptr, len);
-        name[len] = '\0';
-        // lookup code
-        int dns_class = dns_get_class(name);
-        if (dns_class != 0) {
-            rec->class = dns_class;
-        }
-        else if (slice_isnumeric(attr)) {
-            rec->ttl = atol(attr.ptr);
-        }
-    }
-
-    // all done
-    return 0;
-}

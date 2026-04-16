@@ -340,6 +340,6 @@ struct dns_rr *dns_msg_get_rec(struct dns_msg *msg);
 int dns_get_type(const char *str);
 int dns_get_class(const char *str);
 int dns_get_flag(const char *str);
-int dns_rr_load(struct dns_rr *rr, int sc, const char *str);
+const char *dns_sc_tostr(int sc);
 
 #endif
