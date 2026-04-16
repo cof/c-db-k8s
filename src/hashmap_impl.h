@@ -32,8 +32,8 @@ static inline uint32_t MAP_FN(resize)(MAP_TYPE *m, uint32_t capacity)
     if (m->is_fixed) return 0;
 
     // calc new capacity
-	uint32_t nbits = MAP_FN(calc_bits)(capacity - 1);
-	if (nbits <  2) nbits = 2;
+    uint32_t nbits = MAP_FN(calc_bits)(capacity - 1);
+    if (nbits <  2) nbits = 2;
     capacity = 1 << nbits;
 
     // alloc memory
