@@ -35,14 +35,15 @@ Runs client and server applications inside containers using a custom launcher.
 ## Design
 
 - All application code written in C with no 3rd party libs
-- Custom APIs : UTIL, LOG, RWBUF, DNS-PROTO, DNS-RESOLV, SOCK, DB
+- Custom APIs : UTIL, LOG, RWBUF, HASHMAP, DNS-PROTO, DNS-RESOLV, SOCK, DB
 - UTIL  : strings/signal/cmd-line handling api
-- LOG   : levels-based logging subsystem (FATAL, ERROR, INFO, DEBUG).
-- RWBUF : memory buffer api
+- LOG   : levels-based logging subsystem (FATAL, ERROR, INFO, DEBUG)
+- HASHMAP : type-safe api uses C11 generics,X-Macros,Fibonacci hashing,open addressing
+- RWBUF   : memory buffer api
 - DNS-PROTO  : rfc1035 compliant codec
 - DNS-RESOLV : DNS subsystem (getaddrinfo replacement)
 - SOCK : socket layer api suporting non-blocking client/servers/buffering
-- DB :  key/value store api supporting a pure memory or mmap database file
+- DB   : key/value store api supporting a pure memory or mmap database file
 
 ### DNS-RESOLV
 
