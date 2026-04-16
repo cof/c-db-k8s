@@ -1,6 +1,6 @@
 # db-k8s
 
-Run a database client and server application inside containers.
+Run database client and server applications inside containers.
 
 There are 2 parts to this project. 
 
@@ -24,10 +24,9 @@ There are 2 parts to this project.
 - **make test-full** Run all tests (cmds,launcher,k8s)
 - **make spotless**: wipe complied binaries, VMS, k8s pods
 
-
 ## 1. Container
 
-Runs a database client and server applications inside containers using a custom launcher.
+Runs client and server applications inside containers using a custom launcher.
 
 - **launcher** A Linux container runtime management tool
 - **server**  key-value DB server supporting cli SET,GET,DEL operations
@@ -44,7 +43,6 @@ Runs a database client and server applications inside containers using a custom 
 - DNS-RESOLV : DNS subsystem (getaddrinfo replacement)
 - SOCK : socket layer api suporting non-blocking client/servers/buffering
 - DB :  key/value store api supporting a pure memory or mmap database file
-- Makefile has large test-suite for testing
 
 ### DNS-RESOLV
 
@@ -57,7 +55,7 @@ DNS-RESOLV is a full custom DNS subsystem
 - nameserver mangement supportng attempts/timeout/ndots/search
 - Hyrbid UDP and TCP support
 - Parallel AAAA and A query support
-- TC handling for UDP fall back to TCP
+- Truncation (TC) support for UDP fall back to TCP
 - ESDN0 supporting UDP packet sizes > 512 bytes
 - Uses DNS-PROTO a rfc1035 compliant codec
 - DNS cache with TTL support
@@ -342,12 +340,15 @@ This will:
     ✅ test-k8s complete.
 
 
-**Supported features**
+**Features**
 
- - make deploy   : fully automated k8s pod provisioning 
- - make test-k8s : fully automated test suite
- - make list-pod|list-net|show-log
- - All requested features where implemented (k8s folder)
+- Database deployment: StatefulSet, PersistentVolumeClaim, DNS Service, Limits
+- Client deployment: configurable replicas, DNS connections, readiness probe
+- Network policy enforcement : client pods can only reach database
+- Observability: client logs reqs/rsps, server logs connections
+- Automated provisioning: make deploy
+- Automated test-suite: make test-k8s 
+- Status checks: make list-pod|list-net|show-log
 
 **Example usage**
 
