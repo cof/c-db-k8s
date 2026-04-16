@@ -112,10 +112,9 @@ static void my_pipe_readwrite(struct my_pipe *src, struct my_pipe *dst,
 static void my_pipe_drain(struct my_pipe *conn, struct pollfd *fds)
 {
     int rc = sock_send(conn->send_sock);
-    if (rc < 0) {
-        // write error
-        fds[conn->poll_out].fd = -1;
-    }
+
+    // disable poll if write error
+    if (rc < 0) fds[conn->poll_out].fd = -1;
 
     // enable writes if backlog has data
     fds[conn->poll_out].events = sock_sendbuf_used(conn->send_sock) ? POLLOUT : 0;
@@ -166,7 +165,7 @@ static struct cmd_opt opts[] = {
     { "--help",      "This help", 0, 0 },
     { "--hostname",  "hostname to connect to", 0, 1 },
     { "--port",      "port to listen on", SERV_PORT_STR, 1 },
-    { "--log-line",  "log req|rsp lines", 0, 0  },
+    { "--log-line",  "log request and response lines", 0, 0  },
     { "--log-level", "logging level", STR(APP_LOGLEVEL), 1  },
     { "--argv",      "Dump argv to stdout",  0,  0 },
     { NULL }
@@ -183,7 +182,7 @@ int main(int argc, char *argv[])
     const char *port = SERV_PORT_STR;
     int log_line = 0;
 
-    log_init(NULL, APP_LOGLEVEL);
+    log_init(NULL, LOG_INFO);
 
     // process cmd-line options
     int rc;
@@ -201,12 +200,9 @@ int main(int argc, char *argv[])
     if (rc != OPT_EOF) return -1;
     if (!hostname) fatal_error("Missing hostname");
 
-    // signals
     struct simple_sig sig;
-    rc = setup_signals(&sig);
-    if (rc) fatal_error("setup signals");
-    rc = dns_init(0,0, &sig);
-    if (rc) fatal_error("setup resolver");
+    if (setup_signals(&sig)) fatal_error("setup signals");
+    if (dns_init(0,0, &sig)) fatal_error("setup resolver");
 
     // server connect
     struct my_pipe serv = MY_PIPE_INIT(serv, -1, -1);
@@ -232,6 +228,7 @@ int main(int argc, char *argv[])
     serv.poll_out = set_fd(serv.send_sock, 3, fds, 0);
 
     while (sig.run) {
+
         // block until event or signal
         rc = poll(fds, ARR_LEN(fds), -1);
         if (rc == -1) {
@@ -241,20 +238,14 @@ int main(int argc, char *argv[])
         }
 
         // handle server events
-        if (fds[3].revents & POLLOUT) {
-            // backlog
-            my_pipe_drain(&serv, fds);
-        }
+        if (fds[3].revents & POLLOUT) my_pipe_drain(&serv, fds);
         if (fds[2].revents & (POLLIN | POLLHUP | POLLERR)) {
             // recv server -> send user
             my_pipe_readwrite(&serv, &user, fds, "server", log_rsp);
         }
 
         // handle user events
-        if (fds[1].revents & POLLOUT) {
-            // backlog
-            my_pipe_drain(&user, fds);
-        }
+        if (fds[1].revents & POLLOUT) my_pipe_drain(&user, fds);
         if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
             // recv user -> send server
             my_pipe_readwrite(&user, &serv, fds, "user", log_req);

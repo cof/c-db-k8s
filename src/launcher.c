@@ -691,9 +691,7 @@ int lau_init(struct lau_ctx *lau)
     lau->use_seccomp = USE_SECCOMP;
 
     lau->cur_dir = getcwd(NULL, 0);
-    if (!lau->cur_dir)  {
-        return log_errno_rf("get_cwd failed");
-    }
+    if (!lau->cur_dir) return log_errno_rf("get_cwd failed");
 
     // setup default dirs
     lau->base_dir = gen_path(lau->cur_dir, BASE_DIR);
@@ -756,7 +754,6 @@ static struct lau_ctx *lau_create(void)
 
     lau = malloc(sizeof(*lau));
     if (!lau) return log_errno_rn("malloc lau-state failed");
-
     memset(lau, 0, sizeof(*lau));
 
     // init all fds to -1
@@ -785,12 +782,11 @@ int main(int argc, char *argv[])
 {
     int ec = -1;
 
-    log_init(NULL, APP_LOGLEVEL);
+    log_init(NULL, LOG_INFO);
 
     // create state
     struct lau_ctx *lau = lau_create();
     if (!lau) fatal_error("Failed to create launcher state");
-
     if (lau_init(lau) != 0) goto done;
     if (lau_parse_argv(lau, argc, argv) != 0) goto done;
     if (lau_apply_cfg(lau) != 0) goto done;

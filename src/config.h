@@ -2,7 +2,6 @@
 #define _CONFIG_H_
 
 // common config
-#define APP_LOGLEVEL LOG_INFO
 #define SERV_PORT_STR "6379"
 #define MAX_LINE 256
 

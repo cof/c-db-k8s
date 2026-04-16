@@ -507,7 +507,7 @@ struct cmd_opt opts[] = {
     { "--hostname",  "hostname to listen on", 0,    1  },
     { "--port",      "port to listen on",     SERV_PORT_STR, 1  },
     { "--database",  "Path to database file", 0, 1  },
-    { "--log-line",  "log req|rsp lines",     0, 0  },
+    { "--log-line",  "log request and response lines",  0, 0  },
     { "--log-level", "logging level ",        STR(APP_LOGLEVEL), 1  },
     { "--argv",      "Dump argv to stdout",   0, 0  },
     { NULL }
@@ -565,34 +565,23 @@ static void server_destroy(struct simple_server *server)
     server_free(server);
 }
 
-static int server_init(struct simple_server *server)
-{
-    memset(server, 0, sizeof(*server));
-    server->sock.fd = -1;
-    server->epoll_fd = -1;
-
-    server->sock.is_server = 1;
-    list_init(&server->clients);
-
-    server->pid = getpid();
-
-    // set defaults
-    server->port = strdup(SERV_PORT_STR);
-    if (!server->port) {
-        return log_errno_rf("strdup %s", SERV_PORT_STR);
-    }
-
-    return 0;
-}
-
 static struct simple_server *server_create(void)
 {
     struct simple_server *server;
 
     server = malloc(sizeof(*server));
-    if (!server) {
-        return log_errno_rn("Malloc failed for server state");
-    }
+    if (!server) return log_errno_rn("Malloc failed for server state");
+
+    memset(server, 0, sizeof(*server));
+    server->sock.fd = -1;
+    server->epoll_fd = -1;
+    server->sock.is_server = 1;
+    list_init(&server->clients);
+    server->pid = getpid();
+
+    // set defaults
+    server->port = strdup(SERV_PORT_STR);
+    if (!server->port) return log_errno_rn("strdup %s", SERV_PORT_STR);
 
     return server;
 }
@@ -602,24 +591,21 @@ int main(int argc, char *argv[])
     struct simple_server *serv = NULL;
     int ec = EXIT_FAILURE;
 
-    log_init(NULL, APP_LOGLEVEL);
+    log_init(NULL, LOG_INFO);
 
     if (!(serv = server_create())) { ec = 1;  goto done; }
-    if (server_init(serv))         { ec = 2;  goto done; }
+    if (server_argv(serv, argc, argv)) { ec = 2; goto done; }
     if (setup_signals(&serv->sig)) { ec = 3 ; goto done; }
-    if (server_argv(serv, argc, argv)) { ec = 4; goto done; }
-    if (dns_init(0, 0, &serv->sig))  { ec = 5; goto done; }
-    if (setup_database(serv))  { ec = 6; goto done; }
-    if (setup_listener(serv))  { ec = 7; goto done; }
-    if (server_run(serv) != 0) { ec = 8; goto done; }
+    if (dns_init(0, 0, &serv->sig))  { ec = 4; goto done; }
+    if (setup_database(serv))  { ec = 5; goto done; }
+    if (setup_listener(serv))  { ec = 6; goto done; }
+    if (server_run(serv) != 0) { ec = 7; goto done; }
 
     // all done
     ec = 0;
 
 done:
-    if (serv) {
-        server_destroy(serv);
-    }
+    if (serv) server_destroy(serv);
 
     return ec;
 }

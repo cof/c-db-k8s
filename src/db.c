@@ -110,9 +110,7 @@ static int hash_del(struct str_slice key)
 
     while (*pp) {
         // get hash or mmap entry
-        struct db_rec *rec = db_file
-            ? mkptr(db_mmap_ptr, *pp)
-            : mkmem(*pp);
+        struct db_rec *rec = db_file ? mkptr(db_mmap_ptr, *pp) : mkmem(*pp);
         if (!slice_cmpmem(key, rec->data, key.len)) {
             // unchain
             *pp = rec->next; 
@@ -136,9 +134,7 @@ static struct db_rec *hash_search(int idx, struct str_slice key)
 
     while (db_link) {
         // get hash or mmap entry
-        struct db_rec *rec = db_file    
-            ? mkptr(db_mmap_ptr, db_link)
-            : mkmem(db_link);
+        struct db_rec *rec = db_file ? mkptr(db_mmap_ptr, db_link) : mkmem(db_link);
         if (!slice_cmpmem(key, rec->data, key.len)) return rec;
         db_link = rec->next;
     }
@@ -161,9 +157,7 @@ static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
 
     while (*pp) {
         // get hash or mmap entry
-        struct db_rec *rec = db_file
-            ? mkptr(db_mmap_ptr, *pp)
-            : mkmem(*pp);
+        struct db_rec *rec = db_file ? mkptr(db_mmap_ptr, *pp) : mkmem(*pp);
         // does record match key
         if (!slice_cmpmem(key, rec->data, key.len)) {
             // replace existing entry
@@ -171,9 +165,7 @@ static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
             if (!new_rec) return NULL;
             // chain
             new_rec->next = rec->next;
-            *pp = db_file 
-                ? mkoffset(db_mmap_ptr, new_rec)
-                : umkmem(new_rec);
+            *pp = db_file ? mkoffset(db_mmap_ptr, new_rec) : umkmem(new_rec);
             // all done
             del_rec(rec);
             return new_rec;
@@ -187,9 +179,7 @@ static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
 
     // chain
     new_rec->next = db_buckets[idx];
-    db_buckets[idx] = db_file
-        ? mkoffset(db_mmap_ptr, new_rec)
-        : umkmem(new_rec);
+    db_buckets[idx] = db_file ? mkoffset(db_mmap_ptr, new_rec) : umkmem(new_rec);
 
     return new_rec;
 }
@@ -214,7 +204,7 @@ static int file_check(void)
         while (db_link) {
             rec_size = sizeof(*rec);
             if (db_link + rec_size > db_size) {
-                return log_error_rf("Truncated rec-hdr at offset %lu", db_link);
+                return log_error_rf("truncated rec-hdr at offset %lu", db_link);
             }
             rec = mkptr(db_mmap_ptr, db_link);
             rec_size += rec->key_len + rec->val_len;
@@ -232,19 +222,17 @@ static int file_check(void)
 // create a mmap database file
 static int file_init(const char *file)
 {
-    // create file
+    // create new file
     int new_file = 1;
-    int fd = open(file, O_RDWR | O_CREAT | O_EXCL, DB_FILE_MODE);
+    int flags = O_RDWR | O_CREAT | O_EXCL;
+    int fd = open(file, flags, DB_FILE_MODE);
+
+    // check if file exists
     if (fd == -1) {
-        // open file if it exists
-        if (errno != EEXIST) {
-            return log_errno_rf("open db-file %s failed", file);
-        }
+        if (errno != EEXIST) return log_errno_rf("open db-file %s failed", file);
         // open existing file
         fd = open(file, O_RDWR, 0);
-        if (fd == -1) {
-            return log_errno_rf("open db-file %s failed", file);
-        }
+        if (fd == -1) return log_errno_rf("open db-file %s failed", file);
         new_file = 0;
     }
 
@@ -271,13 +259,11 @@ static int file_init(const char *file)
         }
     }
 
-    void *mmap_ptr = mmap(NULL, file_size,
-        PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0
-    );
+    int prot = PROT_READ | PROT_WRITE;
+    flags = MAP_SHARED;
+    void *mmap_ptr = mmap(NULL, file_size, prot, flags, fd, 0);
     close(fd);
-    if (mmap_ptr == MAP_FAILED) {
-        return log_errno_rf("mmap stack %zu failed", file_size);
-    }
+    if (mmap_ptr == MAP_FAILED) return log_errno_rf("mmap stack %zu failed", file_size);
 
     // setup db file
     db_file = 1;
@@ -286,6 +272,7 @@ static int file_init(const char *file)
     db_hdr     = mkptr(db_mmap_ptr, 0);
     db_buckets = mkptr(db_mmap_ptr, sizeof(*db_hdr));
 
+    int rc = 0;
     if (new_file) {
         db_hdr->magic = htobe32(DB_MAGIC);
         db_hdr->version = 1;
@@ -294,11 +281,10 @@ static int file_init(const char *file)
         memset(db_buckets, 0, table_size);
     }
     else {
-        int rc = file_check();
-        if (rc) return rc;
+       rc = file_check();
     }
 
-    return 0;
+    return rc;
 }
 
 // free hash table memory
@@ -323,10 +309,7 @@ static void hash_deinit(void)
 static int hash_init(void)
 {
     db_buckets = calloc(DB_NUM_BUCKETS, sizeof(uintptr_t));
-
-    if (!db_buckets) {
-        return log_errno_rf("calloc buckets %d failed", DB_NUM_BUCKETS);
-    }
+    if (!db_buckets) return log_errno_rf("calloc buckets %d failed", DB_NUM_BUCKETS);
 
     return 0;
 }
@@ -336,12 +319,8 @@ int db_init(const char *file)
 {
     if (init_done) return DB_REINIT;
 
-    int rc = file
-        ? file_init(file)
-        : hash_init();
-
+    int rc = file ? file_init(file) : hash_init();
     if (rc) return rc;
-
     init_done = 1;
 
     return 0;
@@ -349,9 +328,7 @@ int db_init(const char *file)
 
 void db_deinit()
 {
-    if (!db_file) {
-        hash_deinit();
-    }
+    if (!db_file) hash_deinit();
 }
 
 int db_set(struct str_slice key, struct str_slice val)
@@ -367,10 +344,8 @@ struct str_slice db_get(struct str_slice key)
 {
     struct db_rec *rec = hash_find(key);
 
-    if (!rec) {
-        // not found
-        return slice_make(NULL, 0);
-    }
+    // not found ?
+    if (!rec) return slice_make(NULL, 0);
 
     return slice_make(rec->data + rec->key_len, rec->val_len);
 }
