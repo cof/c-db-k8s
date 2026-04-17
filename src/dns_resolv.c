@@ -974,6 +974,8 @@ static int set_dnsreq(struct dns_ns *ns, struct dns_query *q)
     q->tid = gen_tid();
     q->qname = ns->name;
     q->qclass = DNS_CLASS_IN;
+
+    dns_msg_reset(msg);
     dns_msg_init(msg, q->tid, DNS_FLAGS_RD);
     int rc = dns_add_qdn(msg, name.ptr, name.len, q->qtype, q->qclass);
     if (rc) return rc;
@@ -996,6 +998,7 @@ static int set_dnsreq(struct dns_ns *ns, struct dns_query *q)
     return 0;
 }
 
+// add dns answers to result
 static int add_dnsans(struct dns_ns *ns)  
 {
     struct dns_msg *msg = &ns->msg;

@@ -192,6 +192,23 @@ char *itoa(int val, char *buf, size_t len)
     return str; 
 }
 
+char *u32toa(uint32_t val, char *buf, size_t len)
+{
+    if (!buf || len == 0) return buf;
+
+    // start at buffer end - no reverse needed
+    char *str = &buf[len -1];
+    *str = '\0';
+    if (val == 0) *--str = '0';
+
+    while (val) {
+        *--str = (val % 10) + '0';
+        val /= 10;
+    }
+
+    return str; 
+}
+
 // convert int-val to string - uses wrap-around buffer list
 char *int_tostr(int val) 
 {
@@ -202,6 +219,17 @@ char *int_tostr(int val)
     idx = (idx + 1) & 15;
 
     return itoa(val, str, sizeof(bufs[0][0]));
+}
+
+char *u32_tostr(uint32_t val) 
+{
+    static char bufs[16][10];
+    static int idx;
+
+    char *str = bufs[idx];
+    idx = (idx + 1) & 15;
+
+    return u32toa(val, str, sizeof(bufs[0][0]));
 }
 
 // generate a string using a snprintf to buffer

@@ -159,33 +159,33 @@ static const char *dec_code_tostr(int code)
     return int_tostr(code);
 }
 
-const char *dns_class_tostr(int ec)
+const char *dns_class_tostr(int code)
 {
-    if (ec == 1) return "IN";
-    if (ec == 3) return "CH";
-    if (ec == 4) return "HS";
-    if (ec == 254) return "NONE";
-    if (ec == 255) return "*";
+    if (code == 1) return "IN";
+    if (code == 3) return "CH";
+    if (code == 4) return "HS";
+    if (code == 254) return "NONE";
+    if (code == 255) return "*";
 
-    return int_tostr(ec);
+    return int_tostr(code);
 };
 
-const char *dns_type_tostr(int ec)
+const char *dns_type_tostr(int code)
 {
-    if (ec == 1)  return "A";
-    if (ec == 2)  return "NS";
-    if (ec == 5)  return "CNAME";
-    if (ec == 6)  return "SOA";
-    if (ec == 12) return "PTR";
-    if (ec == 15) return "MX";
-    if (ec == 16) return "TXT";
-    if (ec == 28) return "AAAA";
-    if (ec == 33) return "SRV";
-    if (ec == 41) return "OPT";
-    if (ec == 252) return "AXFR";
-    if (ec == 255)  return "ANY";
+    if (code == 1)  return "A";
+    if (code == 2)  return "NS";
+    if (code == 5)  return "CNAME";
+    if (code == 6)  return "SOA";
+    if (code == 12) return "PTR";
+    if (code == 15) return "MX";
+    if (code == 16) return "TXT";
+    if (code == 28) return "AAAA";
+    if (code == 33) return "SRV";
+    if (code == 41) return "OPT";
+    if (code == 252) return "AXFR";
+    if (code == 255)  return "ANY";
 
-    return int_tostr(ec);
+    return int_tostr(code);
 }
 
 static const char *opcode_strs[] = {
@@ -446,118 +446,99 @@ int dns_qd_tostr(struct dns_qd *quest, char *buf, size_t buf_len)
 }
 
 // print dns_rr to string - return bytes written or error
-int dns_rr_tostr(struct dns_rr *rr, int sc, char *buf, size_t buf_len)
+int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len)
 {
-    // ensure no hidden fields
-    const char *name = str_def(rr->name, "<null>");
-    const char *class_str = dns_class_tostr(rr->class);
-    const char *type_str = dns_type_tostr(rr->type);
+    struct strbuf tmp;
+    struct strbuf *buf = strbuf_init(&tmp, mem, len);
 
-    char *wptr = buf;
-    char *wend = wptr + buf_len;
-
-    // hdr
-    int rc = snprintf(wptr, wend - wptr, "  %s %s %s ", name, class_str, type_str);
-    if (rc < 0) return log_errno_rf("snprintf failed for %s", dec_code_tostr(sc));
-    wptr += rc;
+    // name,class,type
+    strbuf_putm(buf, STR_LIT("  "));
+    strbuf_puts(buf, str_def(rr->name, "<null>"));
+    strbuf_putcs(buf, ' ', dns_class_tostr(rr->class));
+    strbuf_putcs(buf, ' ', dns_type_tostr(rr->type));
+    strbuf_putm(buf, STR_LIT(" "));
 
     // rdata
     switch(rr->type) {
     case DNS_TYPE_A: // IP4 address
-        if (!ip4_str_encode(rr->rdata.a, wptr, wend - wptr)) {
-            log_errno("ip4_str_encode failed");
-            break;
-        }
-        wptr += strlen(wptr);
+        len = ip4_str_encode(rr->rdata.a, strbuf_pos(buf), strbuf_avail(buf));
+        strbuf_mksp(buf, len);
         break;
-    case DNS_TYPE_NS: // Authoritative Name Server
-        rc = snprintf(wptr, wend - wptr, "%s", rr->rdata.ns_name);
-        if (rc < 0) return log_errno_rf("snprintf failed");
-        wptr += rc;
+    case DNS_TYPE_NS:
+        strbuf_puts(buf, rr->rdata.ns_name);
         break;
-    case DNS_TYPE_CNAME: // Canonical Name (Alias)
-        rc = snprintf(wptr, wend - wptr, "%s", rr->rdata.cname);
-        if (rc < 0) return log_errno_rf("snprintf failed");
-        wptr += rc;
+    case DNS_TYPE_CNAME:
+        strbuf_puts(buf, rr->rdata.cname);
         break;
-    case DNS_TYPE_SOA: // Start of Authority
+    case DNS_TYPE_SOA: 
         // name + name + 5 integers
-        rc = snprintf(wptr, wend - wptr, 
-            "MNAME=%s RNAME=%s %u %u %u %u %u",
-            rr->rdata.soa.mname,
-            rr->rdata.soa.rname,
-            rr->rdata.soa.serial,
-            rr->rdata.soa.refresh,
-            rr->rdata.soa.retry,
-            rr->rdata.soa.expire,
-            rr->rdata.soa.min_ttl);
-        if (rc < 0) return log_errno_rf("snprintf failed");
-        wptr += rc;
+        strbuf_putm(buf, STR_LIT("MNAME="));
+        strbuf_puts(buf, rr->rdata.soa.mname);
+        strbuf_putcm(buf, ' ', STR_LIT("RNAME="));
+        strbuf_puts(buf, rr->rdata.soa.rname);
+        strbuf_putcn(buf, ' ', rr->rdata.soa.serial);
+        strbuf_putcn(buf, ' ', rr->rdata.soa.refresh);
+        strbuf_putcn(buf, ' ', rr->rdata.soa.retry);
+        strbuf_putcn(buf, ' ', rr->rdata.soa.expire);
+        strbuf_putcn(buf, ' ', rr->rdata.soa.min_ttl);
         break;
-    case DNS_TYPE_PTR: // Domain Name Pointer (Reverse DNS)
-        rc = snprintf(wptr, wend - wptr, "%s", rr->rdata.ptr_name);
-        if (rc < 0) return log_errno_rf("snprintf failed");
-        wptr += rc;
+    case DNS_TYPE_PTR: 
+        strbuf_puts(buf, rr->rdata.ptr_name); 
         break;
-    case DNS_TYPE_HINFO: // Host Information
-        rc = snprintf(wptr, wend - wptr,
-            "cpu=%s os=%s", 
-            rr->rdata.hinfo.cpu_str,
-            rr->rdata.hinfo.os_str);
-        if (rc < 0) return log_errno_rf("snprintf failed");
-        wptr += rc;
+    case DNS_TYPE_HINFO:
+        strbuf_putm(buf, STR_LIT("cpu="));
+        strbuf_puts(buf, rr->rdata.hinfo.cpu_str);
+        strbuf_putcm(buf,' ', STR_LIT("os="));
+        strbuf_puts(buf, rr->rdata.hinfo.os_str);
         break;
     case DNS_TYPE_MX: // Mail Exchange 
-        rc = snprintf(wptr, wend - wptr, 
-            "Pref %d MX %s", rr->rdata.mx.pref, rr->rdata.mx.name);
-        if (rc < 0) return log_errno_rf("snprintf failed");
-        wptr += rc;
+        strbuf_putm(buf, STR_LIT("Pref="));
+        strbuf_putn(buf, rr->rdata.mx.pref);
+        strbuf_putcs(buf, ' ', rr->rdata.mx.name);
         break;
     case DNS_TYPE_TXT:
         for (int i = 0; i < rr->rdata.txt.num_str; i++) {
             char *str = rr->rdata.txt.str[i];
-            rc = snprintf(wptr, wend - wptr, "%s", str);
-            if (rc < 0) return log_errno_rf("snprintf failed");
-            wptr += rc;
+            strbuf_putm(buf, STR_LIT(" txt="));
+            strbuf_puts(buf, str);
         }
         break;
     case DNS_TYPE_AAAA:// IPv6 Address
-        if (!ip6_str_encode(rr->rdata.aaaa, 0, wptr, wend - wptr)) {
-            log_errno("ip6_str_encode failed");
-            break;
-        }
-        wptr += strlen(wptr);
+        len = ip6_str_encode(rr->rdata.aaaa, 0, strbuf_pos(buf), strbuf_avail(buf));
+        strbuf_mksp(buf, len);
         break;
     case DNS_TYPE_SRV:
-        rc = snprintf(wptr, wend - wptr, 
-            "Priority %d Weight %d Port %d SRV %s", 
-            rr->rdata.srv.prior, 
-            rr->rdata.srv.weight, 
-            rr->rdata.srv.port,
-            rr->rdata.srv.name);
-        if (rc < 0) return log_errno_rf("snprintf failed");
-        wptr += rc;
+        strbuf_putm(buf, STR_LIT("Priority"));
+        strbuf_putcn(buf, ' ', rr->rdata.srv.prior);
+        strbuf_putcm(buf, ' ', STR_LIT("Weight"));
+        strbuf_putcn(buf, ' ', rr->rdata.srv.weight);
+        strbuf_putcm(buf, ' ', STR_LIT("Port"));
+        strbuf_putcn(buf, ' ', rr->rdata.srv.port);
+        strbuf_putcm(buf, ' ', STR_LIT("Srv"));
+        strbuf_putcs(buf, ' ', rr->rdata.srv.name);
         break;
-    case DNS_TYPE_OPT:  // EDNS0 Options (RFC 6891)
-        rc = snprintf(wptr, wend - wptr, 
-            "udp-size %d Ext-RCODE:%d EDNS0:%d DNSEC-OK:%d",
-            rr->rdata.opt.udp_size, 
-            rr->rdata.opt.ext_rcode, 
-            rr->rdata.opt.edns_ver,
-            rr->rdata.opt.do_bit);
-        if (rc < 0) return log_errno_rf("snprintf failed");
-        wptr += rc;
+    case DNS_TYPE_OPT: // EDNS0
+        strbuf_putm(buf, STR_LIT("udp-size:"));
+        strbuf_putcn(buf, ' ', rr->rdata.opt.udp_size);
+        strbuf_putcm(buf, ' ', STR_LIT("Ext-RCODE:"));
+        strbuf_putcn(buf, ' ', rr->rdata.opt.ext_rcode);
+        strbuf_putcm(buf, ' ', STR_LIT("EDNS0:"));
+        strbuf_putcn(buf, ' ', rr->rdata.opt.edns_ver);
+        strbuf_putcm(buf, ' ', STR_LIT("DNSEC-OK:"));
+        strbuf_putcn(buf, ' ', rr->rdata.opt.do_bit);
         break;
     default:
         break;
     }
 
+    strbuf_endz(buf);
+
     // bytes written
-    return wptr - buf;
+    return strbuf_used(buf);
 }
 
 // add dns section as string to buffer
-int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len)
+static int dns_sect_tostr(struct dns_sect *sect, char *buf, size_t buf_len)
 {
     size_t nw = 0;
         
@@ -566,7 +547,7 @@ int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len)
             if (nw == buf_len) return DNS_FAIL;
             buf[nw++] = '\n';
         }
-        int rc = dns_rr_tostr(&sect->base[i], sc, buf + nw, buf_len - nw);
+        int rc = dns_rr_tostr(&sect->base[i], buf + nw, buf_len - nw);
         if (rc < 0) return rc;
         nw += rc;
     }
@@ -575,23 +556,23 @@ int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len)
 }
 
 // add all dns sections as string to buffer
-int dns_msg_sects_tostr(struct dns_msg *msg, char *buf, size_t len)
+int dns_sects_tostr(struct dns_msg *msg, char *buf, size_t len)
 {
     struct dns_sect sect;
     int rc, nw = 0;
 
     sect_init(&sect, msg->an, ARR_LEN(msg->an), &msg->an_len);
-    rc = dns_sect_tostr(&sect, DNS_AN, buf, len);
+    rc = dns_sect_tostr(&sect, buf, len);
     if (rc < 0) return rc;
     nw += nw;
 
     sect_init(&sect, msg->ns, ARR_LEN(msg->ns), &msg->ns_len);
-    rc = dns_sect_tostr(&sect, DNS_NS, buf, len);
+    rc = dns_sect_tostr(&sect, buf, len);
     if (rc < 0) return rc;
     nw += nw;
 
     sect_init(&sect, msg->ar, ARR_LEN(msg->ar), &msg->ar_len);
-    rc = dns_sect_tostr(&sect, DNS_AR, buf, len);
+    rc = dns_sect_tostr(&sect, buf, len);
     if (rc < 0) return rc;
     nw += nw;
 
@@ -1665,7 +1646,7 @@ ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len)
 }
 
 
-// add dns_rr to a DNS msg section
+// add dns_rr to a DNS section
 static int dns_sect_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dns_rr *src_rr)
 {
     if (!src_rr) return 0;
@@ -1793,9 +1774,8 @@ int dns_add_rr(struct dns_msg *msg, int sc, struct dns_rr *rr)
 }
 
 // get first dns resource record
-struct dns_rr *dns_msg_get_rec(struct dns_msg *msg)
+struct dns_rr *dns_msg_get_rr(struct dns_msg *msg)
 {
-    if (dns_msg_cnt_rec(msg) != 1) return NULL;
     if (msg->an_len) return &msg->an[0];
     if (msg->ns_len) return &msg->ns[0];
     if (msg->ar_len) return &msg->ar[0];

@@ -123,7 +123,9 @@ int setup_signals(struct simple_sig *sig);
  * str_isnumeric(str, len)    : true if str is numeric
  * str_tou32(str, len)        : convert str to uint32_t
  * itoa(val, buf, len)        : print ascii repr of int to string buffer
+ * u32toa(val, buf, len)      : print ascii repr of uint32_t to string buffer
  * int_tostr(val)             : convert int-val to string
+ * u32_tostr(val)             : convert u32 to string
  * uint8_toa(buf, val)        : a fast 8-bit value to ascii encoder
  * uint16_toa(buf, val)       : a fast 16-bit value to ascii encoder
  * uint16_toax(buf, val)      : a fast 16-bit value to hex encoder
@@ -310,7 +312,9 @@ static inline uint32_t str_tou32(const char *str, size_t len)
 }
 
 char *itoa(int val, char *buf, size_t len);
+char *u32toa(uint32_t val, char *buf, size_t len);
 char *int_tostr(int val);
+char *u32_tostr(uint32_t val);
 
 // a fast 8-bit value to ascii encoder
 static inline char *uint8_toa(char *wptr, uint8_t val)
@@ -491,6 +495,7 @@ struct strbuf {
  * strbuf_avail(buf)    : return space remaining
  * strbuf_used(buf)     : return space used
  * strbuf_mksp(buf,len) : return ptr if space else null
+ * strbuf_endz(buf)     : set ptr pos to nul char
  * -
  * strbuf_putm(buf,  mem, len)      : append mem
  * strbuf_putmc(buf, mem, len, ch)  : append mem + ch
@@ -498,6 +503,8 @@ struct strbuf {
  * strbuf_putcm(buf, ch, mem,len)   : append ch + mem
  * strbuf_puticm(buf, ch, mem, len) : append ch + mem if used else mem
  * strbuf_puts(buf, str)            : append str
+ * strbuf_putn(buf, num)            : append number
+ * strbuf_putcn(buf, num)           : append ch + number
  * run_cmd(buf, flags, fmt, ...)    : run a system cmd
  */
 #define STRBUF_INIT(_mem, _len) { \
@@ -509,7 +516,7 @@ struct strbuf {
 static inline struct strbuf *strbuf_init(struct strbuf *buf, void *mem, size_t len)
 {
     buf->mem = mem;
-    buf->mem = mem;
+    buf->ptr = buf->mem;
     buf->end = buf->mem + len;
 
     return buf;
@@ -545,13 +552,17 @@ static inline int strbuf_end(struct strbuf *buf)
     return buf->ptr >= buf->end;
 }
 
-
 static inline uint8_t *strbuf_mksp(struct strbuf *buf, size_t len)
 {
     if (len > strbuf_avail(buf)) return NULL;
     uint8_t *ptr = buf->ptr;
     buf->ptr += len;
     return ptr;
+}
+
+static inline void strbuf_endz(struct strbuf *buf)
+{
+    if (buf->ptr < buf->end) *buf->ptr = '\0';
 }
 
 static inline size_t strbuf_putm(struct strbuf *buf, const char *mem, size_t len)
@@ -595,6 +606,24 @@ static inline size_t strbuf_puticm(struct strbuf *buf, int ch, const char *mem, 
 static inline size_t strbuf_puts(struct strbuf *buf, const char *str)
 {
     return str ? strbuf_putm(buf, str, strlen(str)) : 0;
+}
+
+static inline size_t strbuf_putcs(struct strbuf *buf, int ch, const char *str)
+{
+    return str ? strbuf_putcm(buf, ch, str, strlen(str)) : 0;
+}
+
+static inline size_t strbuf_putn(struct strbuf *buf, uint32_t num)
+{
+    return strbuf_puts(buf, u32_tostr(num));
+}
+
+static inline size_t strbuf_putcn(struct strbuf *buf, int ch, uint32_t num)
+{
+    uint8_t *wptr = strbuf_mksp(buf, 1);
+    if (!wptr) return 0;
+    *wptr = ch;
+    return 1 + strbuf_putn(buf, num);
 }
 
 #define RUN_MAXARG 32

@@ -42,7 +42,7 @@
  *  struct dns_sockaddr addrs[16];
  *  int flags = DNS_IPV4|DNS_TCP;
  *
- *  int nr = dns_resolve(flags, "example.com", "80", addr, 16);
+ *  int nr = dns_resolv(flags, "example.com", "80", addr, 16);
  *  for (int i = 0; i < nr; i++) {
  *      struct dns_sockaddr *addr = &addrs[i];
  *      fd = socket(addr->sa.sa_family, addr->sock_type, 0);

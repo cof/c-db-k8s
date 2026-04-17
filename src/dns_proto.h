@@ -2,54 +2,85 @@
  * A DNS message codec API
  * -----------------------
  * A DNS codec API for reading and writing DNS messages featuring
+ *
  * - Structure-composable: built for inline embedding, object compostion & memory locality
- * - full rfc1035 codec support for encoding/decoding wire-format DNS messages.
+ * - full rfc1035 support for encoding/decoding wire-format DNS messages.
  * - provides a DNS message structure for easy message generation
  * - Human-readable formatting of decoded DNS messages
- * - Validation service of PDUS with dns section error reporting
+ * - Validation-service of DNS pkts with DNS section error reporting
  *
- * Example Usage:
- * --------------
+ * The dns_msg structure is defined as follows:
  *
- *  // create a query msg
- *  char buf[BUFSIZ];
+ *   struct dns_msg {
+ *       struct dns_hdr hdr; 
+ *       char names[DNS_MAX_PDUSIZE];
+ *       int names_len;
+ *       uint16_t qd_len;
+ *       uint16_t an_len;
+ *       uint16_t ns_len;
+ *       uint16_t ar_len;
+ *       struct dns_qd qd[DNS_MAX_QD];
+ *       struct dns_rr an[DNS_MAX_RR];
+ *       struct dns_rr ns[DNS_MAX_RR];
+ *       struct dns_rr ar[DNS_MAX_RR];
+ *   };
+ *
+ * Example:
+ *
+ *  char buf[1280];
  *  struct dns_msg msg;
+ *
+ *  / set hdr,add question
+ *  dns_msg_reset(&msg);
  *  dns_msg_init(&msg, 0x1234, DNS_FLAGS_RD);
- *  int rc = dns_add_qd(&msg, "example.com", DNS_TYPE_A, DNS_CLASS_IN);
+ *  rc = dns_add_qd(&msg, "example.com", DNS_TYPE_A, DNS_CLASS_IN);
+ *
+ *  // encode/decode 
  *  ssize_t pkt_len = dns_msg_encode(&msg, buf, sizeof(buf));
- *  // buffer now has wire-format dns query
+ *  rc = dns_msg_decode(msg, buf, pkt_len);
  *
- * DNS message
- * -----------
- * API uses a dns message structure to allow users easily set or get fields.
+ *  // iterate over answers
+ *  for (int i = 0; i < msg->an_len; i++) {
+ *      struct dns_rr *rr = &msg->an[i];
+ *      rc = dns_rr_tostr(rr, buf, sizeof(buf));
+ *      printf("%s\n", buf); 
+ *  }
  *
- *  struct dns_msg 
- *   - hdr (id, flags, qd_count, an_count, ns_count, ar_count)
- *   - qd_recs - question section 
- *   - an_recs - answer section 
- *   - ns_recs - authority section
- *   - ar_recs - additional section
+ *  // validate
+ *  char emsg[4096];
+ *  rc =  dns_validate(buf, pkt_len, emsg, sizeof(ems));
+ *  printf("dns_pkt len=%zu\n%s", pkl_len, emsg);
  *
- * User can use helper functions to set fields or set them directly.
- *
- * Basic API
- * ----------
- * dns_hdr_decode(hdr, buf, len) : decode buffer into dns header
- * dns_msg_reset(msg) : reset fields to 0
- * dns_msg_decode(msg, buf, len) : decode buffer into a DNS message
- * dns_msg_encode(msg, buf, len) : encode DNS message into buffer
- * dns_validate(pkt_buf, pkt_len, emsg, emsg_len) : check pkt valid and print desc to esmg
- *
- * Helpers
- * --------
- * dns_msg_add_qdn(msg, qname, len, qtype, qclass): add to qd section 
- * dns_msg_add_qd(msg, qname, qtype, qclass) : add to qd section - no qname len 
- * dns_add_rr(msg, sect, rr) : add rr to a section an|ns|ar
- * dns_msg_sects_tostr(msg,buf,len) : print sections to str buffer
+ * API
+ * ---
+ * dns_hdr_reset(hdr)            : decode DNS header from buffer
+ * dns_hdr_init(hdr, id, flags)  : set id, flags
+ * dns_hdr_decode(hdr, buf, len) : decode DNS header from buffer
+ * dns_msg_reset(msg)            : reset hdr/len fields to 0
+ * dns_msg_init(msg, id, flags)  : set hdr-id, hdr-flags
  * -
- * dns_msg_get_rec(msg) : get first rec if available
- * dns_msg_cnt_rec(mg) - count total records in msg
- * dns_rr_load(rr, sc, str) - load text form of rr into rr
+ * dns_add_qdl(msg, qname, len, qtype, qclass) : add to qd to msg
+ * dns_add_qd(msg, qname, qtype, qclass)       : add to qd section - no qname len 
+ * dns_add_rr(msg, sc, rr)                     : add rr to an|ns|ar section
+ * dns_msg_cnt_rr(mg)  : count total resouce records in msg
+ * dns_msg_get_rr(msg) : get first resource record if available
+ * -
+ * dns_msg_decode(msg, buf, len) : decode DNS message from buffer
+ * dns_msg_encode(msg, buf, len) : encode DNS message to buffer
+ * dns_validate(pkt, len, emsg, emsg_len) : check pkt valid and print desc to esmg
+ * -
+ * dnss_qd_tostr(qd, buf, len)    : print qd to buffer
+ * dns_sects_tostr(msg, buf, len) : print sections to buffer
+ * dns_rr_tostr(rr, buf, len) : print record to str buffer
+ * - 
+ * rcode_tostr(rcode)     : convert rcode to str
+ * opcode_tostr(opcode)   : convert opcode to str
+ * dns_class_tostr(class) :
+ * dns_type_tostr(type)   :
+ * dns_get_type(str)      :
+ * dns_get_class(str)     :
+ * dns_get_flag(str)      : convert flags code to str
+ * dns_sc_tostr(sc)       : convert MSG_AN|MSG_NS|MSG_AR to str
  *
  * References
  * ----------
@@ -138,29 +169,34 @@ struct dns_hdr {
     uint16_t ar_count;  // Number of Additional RR
 };
 
+// reset hdr fields
+static inline void dns_hdr_reset(struct dns_hdr *hdr)
+{
+    hdr->id = 0;
+    hdr->flags = 0;
+    hdr->qd_count = 0;
+    hdr->an_count = 0;
+    hdr->ns_count = 0;
+    hdr->ar_count = 0;
+}
+
+static inline void dns_hdr_init(struct dns_hdr *hdr, uint16_t id, uint16_t flags)
+{
+    hdr->id = id;
+    hdr->flags = flags;
+}
+
 int dns_hdr_decode(struct dns_hdr *hdr, const uint8_t *buf, size_t len);
 
-
-/*  
-  A DNS message api
- */
-const char *rcode_tostr(int rcode);
-const char *opcode_tostr(int opcode);
-const char *dns_class_tostr(int ec);
-const char *dns_type_tostr(int ec);
-
-// DNS question data (QD)
+// Question Data (QD)
 struct dns_qd {
     const char *qname;
     uint16_t qtype;
     uint16_t qclass;
 };
 
-// convert dns msg section to readable string
-int dns_qd_tostr(struct dns_qd *qd, char *buf, size_t buf_len);
 
-// DNS resource record (RR)
-// ------------------------
+// Resource Record (RR)
 struct dns_rr {
     const char *name;
     uint16_t type;
@@ -212,48 +248,7 @@ struct dns_rr {
     } rdata;
 };
 
-int dns_rr_tostr(struct dns_rr *rr, int sc, char *buf, size_t buf_len);
-
-/*
- * DNS msg
- * -------
- * msg is a stucture defined as follows:
- *
- *  DNS msg - struct dns_msg 
- *   - hdr     - dns header
- *   - qd_recs - Question section 
- *   - an_recs - Answer section 
- *   - ns_recs - Authority section
- *   - ar_recs - Additional section
- *
- * Header 
- * ------
- *
- * Question Section:
- * -----------------
- *    qd_count  - number of question entires
- *    qd_recs   - array of struct dns_qd
- *    struct dns_qd 
- *    - qname 
- *    - qtype 
- *    - qclas
- *
- * Answser|Authority|Additional Sections:
- * --------------------------------------
- *  struct dns_rr
- *  - num_rec  - number of dns_rr
- *  - rec[32]  - fixed array of struct dns_rr
- *
- * dns_rr - used to set|get resource record
- * ----------------------------------------
- * struct dns_rr
- *  - name
- *  - type
- *  - class
- *  - ttl, 
- *  - rdlen
- *  - a union type to store RDATA
- */
+// DNS message state
 struct dns_msg {
     struct dns_hdr hdr; 
     // names store
@@ -271,15 +266,9 @@ struct dns_msg {
 
 static inline struct dns_msg *dns_msg_reset(struct dns_msg *msg)
 {
-    // reset hdr
-    msg->hdr.id = 0;
-    msg->hdr.flags = 0;
-    msg->hdr.qd_count = 0;
-    msg->hdr.an_count = 0;
-    msg->hdr.ns_count = 0;
-    msg->hdr.ar_count = 0;
+    dns_hdr_reset(&msg->hdr);
 
-    // reset len
+    // reset len fields
     msg->names_len = 0;
     msg->qd_len = 0;
     msg->an_len = 0;
@@ -289,23 +278,8 @@ static inline struct dns_msg *dns_msg_reset(struct dns_msg *msg)
     return msg;
 }
 
-// decode/encode a DNS message
-int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len);
-ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len);
-int dns_validate(const void *buf, size_t len, char *emsg, size_t emsg_len);
-
-// helper functions
-int dns_msg_sects_tostr(struct dns_msg *msg,  char *buf, size_t len);
-
-static inline void dns_hdr_init(struct dns_hdr *hdr, uint16_t id, uint16_t flags)
-{
-    hdr->id = id;
-    hdr->flags = flags;
-}
-
 static inline void dns_msg_init(struct dns_msg *msg, uint16_t id, uint16_t flags)
 {
-    dns_msg_reset(msg);
     msg->hdr.id = id;
     msg->hdr.flags = flags;
 }
@@ -321,11 +295,9 @@ static inline int dns_add_qd(struct dns_msg *msg, const char *qname, uint16_t qt
 #define DNS_MSG_AN 1
 #define DNS_MSG_NS 2
 #define DNS_MSG_AR 3
-
 int dns_add_rr(struct dns_msg *msg, int sc, struct dns_rr *rr);
 
-
-static inline int dns_msg_cnt_rec(struct dns_msg *msg)
+static inline int dns_msg_cnt_rr(struct dns_msg *msg)
 {
     int nrec = 0;
 
@@ -336,7 +308,24 @@ static inline int dns_msg_cnt_rec(struct dns_msg *msg)
     return nrec;
 }
 
-struct dns_rr *dns_msg_get_rec(struct dns_msg *msg);
+// get first resource record if available
+struct dns_rr *dns_msg_get_rr(struct dns_msg *msg);
+
+// decode/encode/validate a DNS message
+int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len);
+ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len);
+int dns_validate(const void *buf, size_t len, char *emsg, size_t emsg_len);
+
+// string repr
+int dns_qd_tostr(struct dns_qd *qd, char *buf, size_t buf_len);
+int dns_sects_tostr(struct dns_msg *msg,  char *buf, size_t len);
+int dns_rr_tostr(struct dns_rr *rr, char *buf, size_t buf_len);
+
+const char *rcode_tostr(int rcode);
+const char *opcode_tostr(int opcode);
+const char *dns_class_tostr(int ec);
+const char *dns_type_tostr(int ec);
+
 int dns_get_type(const char *str);
 int dns_get_class(const char *str);
 int dns_get_flag(const char *str);
