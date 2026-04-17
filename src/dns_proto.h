@@ -62,8 +62,8 @@
  * dns_add_qdl(msg, qname, len, qtype, qclass) : add to qd to msg
  * dns_add_qd(msg, qname, qtype, qclass)       : add to qd section - no qname len 
  * dns_add_rr(msg, sc, rr)                     : add rr to an|ns|ar section
- * dns_msg_cnt_rr(mg)  : count total resouce records in msg
- * dns_msg_get_rr(msg) : get first resource record if available
+ * dns_cnt_rr(mg)  : count total resouce records in msg
+ * dns_get_rr(msg) : get first resource record if available
  * -
  * dns_msg_decode(msg, buf, len) : decode DNS message from buffer
  * dns_msg_encode(msg, buf, len) : encode DNS message to buffer
@@ -297,9 +297,9 @@ static inline int dns_add_qd(struct dns_msg *msg, const char *qname, uint16_t qt
 #define DNS_MSG_AR 3
 int dns_add_rr(struct dns_msg *msg, int sc, struct dns_rr *rr);
 
-static inline int dns_msg_cnt_rr(struct dns_msg *msg)
+static inline uint32_t dns_cnt_rr(struct dns_msg *msg)
 {
-    int nrec = 0;
+    uint32_t nrec = 0;
 
     nrec += msg->an_len;
     nrec += msg->ns_len;
@@ -309,7 +309,7 @@ static inline int dns_msg_cnt_rr(struct dns_msg *msg)
 }
 
 // get first resource record if available
-struct dns_rr *dns_msg_get_rr(struct dns_msg *msg);
+struct dns_rr *dns_get_rr(struct dns_msg *msg);
 
 // decode/encode/validate a DNS message
 int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len);

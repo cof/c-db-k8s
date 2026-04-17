@@ -448,6 +448,8 @@ int dns_qd_tostr(struct dns_qd *quest, char *buf, size_t buf_len)
 // print dns_rr to string - return bytes written or error
 int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len)
 {
+    if (!rr) return 0;
+
     struct strbuf tmp;
     struct strbuf *buf = strbuf_init(&tmp, mem, len);
 
@@ -1774,7 +1776,7 @@ int dns_add_rr(struct dns_msg *msg, int sc, struct dns_rr *rr)
 }
 
 // get first dns resource record
-struct dns_rr *dns_msg_get_rr(struct dns_msg *msg)
+struct dns_rr *dns_get_rr(struct dns_msg *msg)
 {
     if (msg->an_len) return &msg->an[0];
     if (msg->ns_len) return &msg->ns[0];
