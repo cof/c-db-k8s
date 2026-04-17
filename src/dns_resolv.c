@@ -1,16 +1,31 @@
 /*
- * DNS-RESOLV - a DNS resolver API
- * -------------------------------
+ * DNS-RESOLV - a DNS resolver subsystem
+ * -------------------------------------
  * See dns_resolv.h for API description.
+ *
+ * - getaddrinfo replacement
+ * - port name resolution using /etc/service
+ * - hostname resolution using /etc/hosts
+ * - resolver configuration using /etc/resolv.conf
+ * - nameserver mangement supportng attempts/timeout/ndots/search
+ * - UDP and TCP support
+ * - Parallel A and AAAA query support
+ * - Truncation (TC) support for UDP fall back to TCP
+ * - ESDN0 supporting UDP packet sizes > 512 bytes
+ * - Uses DNS-PROTO a rfc1035 compliant codec
+ * - DNS cache with TTL support
+ * - non-blocking I/O using poll
  *
  * TODO
  * - Happy Eyeballs 
- * - EDNS0 
  * - CNAME
  *
  * API sections
  * ------------
- * dns_resolv - resolve hostname/port to array of add 
+ * dns_init(hosts_size, cache_size, sig) : load services/hosts/resolv.conf
+ * dns_resolv(flags, hostname, port, max_addr, addrs) : resolve hostname/port to array of addr
+ * dns_sockaddr_tostr(addr) : convert sock-addr to text form
+ * dns_socktype_tostr(addr) : convert sock-type to text form
  *
  * Refs
  * -----
