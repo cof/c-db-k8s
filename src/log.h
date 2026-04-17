@@ -1,32 +1,39 @@
 /*
  * LOG - the logger API
  * --------------------
- * Simple logger API that can report informaton and detailed error msesages.
+ * A logger API that can report informaton and detailed error msesages.
+ *
+ * Just call log_init() to set the log-level and use macros to log messages.
+ *
+ * Examples:
+ *
+ *  log_init(NULL, LOG_INFO);
+ *  LOG_INFO("+", "server %s is up", server->name);
+ *  log_debug("Running cmd %d", state->id);
  *
  * Overview
  * --------
- * Basic idea is you use logger to report information to users, log what a process
- * is doing and report useful error messages if something fails.
- *
+ * Basic idea is you use logger to report information to users, log what a 
+ * process is doing and report useful error messages if something fails.
+ * 
  * There are 4 basic log types:
  *
- *  info  - "[who] fmt-str" 
- *  debug - "[DEBUG] file:line func: fmt-str
- *  error - "[ERROR] file:line (func): fmt-str"
- *  fatal - "[FATAL] file:line (func): fmt-str
+ *  FATAL - "[FATAL] file:line (func): fmt-str
+ *  ERROR - "[ERROR] file:line (func): fmt-str"
+ *  INFO  - "[who] fmt-str" 
+ *  DEBUG - "[DEBUG] file:line func: fmt-str
  *
- * Logger use fmt-str to allow complete control of whats logged.
+ * Logger use printf fmt-str to allow complete control of whats logged.
  *
  * e.g
  *  log_info("+", "The service is up");
  *  log_info("INFO", "did %s","something");
  *
- * Logger also has error macros that report the file, line and func
- * where an error has occured allowing users to easily trace problems in
- * the code base.
+ * Logger has macros that report the FILE, LINE and FUNC where an error has 
+ * occured allowing users to easily trace problems in the code base.
  *
- * Logger also has a range of macros that can be used to both log a msg
- * and return from a function all in one line.  
+ * Logger also has a range of macros that can be used to both log a message
+ * and return from a function all in one line.
  *
  * These macros using the following suffix patterns:
  *
@@ -35,9 +42,8 @@
  *  _rn - return null
  *  _rz - return zero
  *
- * This together with error reporting provides for a clear and simple form of 
- * exception handling where code can in one line both report an error and return
- * back to the caller all in one line.
+ * This macros provide for a clear and simple form of exception handling where
+ * code can both log a error and return back to the caller all on one line.
  *
  * e.g.
  *
@@ -63,7 +69,7 @@ extern int log_level;
 /*
  * functions : direct functions
  * -----------------------------
- * log_init(dst,level) : setup up logger
+ * log_init(dst, level) : setup up logger
  * _log_msg(file, line, func, what, ec, what, whatstr, fmt, ...) : log msg - "[what] file:line (func): fmt-str":
  * log_argv(what, argc, argv) : log_info cmd-line - useful for debuing pod exec issues
  */
