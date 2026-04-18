@@ -8,12 +8,15 @@ struct list_elem {
 };
 
 #define list_entry(ptr, type, member) containerof(ptr, type, member)
-#define list_empty(list) ((list)->next == (list))
+#define list_isempty(list) ((list)->next == (list))
 #define list_inuse(elem) ((elem)->next != NULL)
 
 #define list_first_entry(ptr, type, field) list_entry((ptr)->next, type, field)
 #define list_next_entry(ptr, field) list_entry((ptr)->field.next, __typeof__(*ptr), field)
 #define list_prev_entry(ptr, field) list_entry((ptr)->field.prev, __typeof__(*ptr), field) 
+
+#define list_first(head, entry, field) \
+    list_isempty(head) ? NULL : list_first_entry(head, entry, field) 
 
 // iterate over a list (cannot be modifed)
 #define list_fornext(head, elem) \
@@ -34,18 +37,17 @@ struct list_elem {
         (elem) = (prev), (prev) = (elem)->prev)
 
 // iterate over list entries (cannot be modifed)
-#define list_fornext_entry(entry, head, field) \
-    for ((entry) = list_first_entry(head, entry, field); \
+#define list_fornext_entry(head, entry, field) \
+    for ((entry) = list_first_entry(head, __typeof__(*entry), field); \
         &(entry)->field != (head); \
         (entry) = list_next_entry(entry, field))
 
 // iterate over list entries (can be modifed)
-#define list_fornext_entry_safe(entry, next, head, field) \
+#define list_fornext_entry_safe(head, entry, next, field) \
     for ((entry) = list_first_entry(head, __typeof__(*entry), field), \
         (next) = list_next_entry(entry, field); \
         &(entry)->field != (head); \
         (entry) = (next), (next) = list_next_entry(next, field))
-
 
 // init list elem to point to itself
 static inline void list_init(struct list_elem *elem)

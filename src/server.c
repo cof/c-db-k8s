@@ -545,7 +545,7 @@ static void server_free(struct simple_server *server)
 {
     struct simple_client *client, *next;
 
-    list_fornext_entry_safe(client, next, &server->clients, node) {
+    list_fornext_entry_safe(&server->clients, client, next, node) {
         list_remove(&client->node);
         client_destroy(client, 0);
     }
