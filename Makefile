@@ -240,6 +240,9 @@ $(INSTALL_DONE): $(CMDS) | $(BUILD_DIR)
 # VM for testing launcher
 # #######################
 VM_NAME = test-lau
+VM_USER := alpine
+VM_HOME := /home/$(VM_USER)
+VM_BIN_DIR := /home/$(VM_USER)/bin
 include scripts/build_vm.mk
 build-vm: vm-create
 

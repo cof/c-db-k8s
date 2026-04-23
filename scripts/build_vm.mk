@@ -2,11 +2,19 @@
 # VM Provisioning Module
 # ======================
 #
-# A makefile fragment to create a VM
+# A makefile fragment for creating a VM. 
+# Include it setting one or more of the following vars:
+#
+# VM_NAME     : name for virtsh and hostname (default alpine-vm)
+# VM_RESIZE   : qemu-img resize plus (default 100M)
+# VM_RAM      : virt-install --ram (default 512)
+# VM_CPUS     : virt-install --vcpus (default 1)
+# VM_GRAPHICS : virt-install --graphics (default none)
 #
 # Targets
 # --------
 #  vm-create  : create/start vm
+#  vm-start   : start-vm
 #  vm-list    : show VM domain info (dominfo, domifaddr)
 #  vm-config  : show VM config
 #  vm-clean   : delete VM
@@ -41,6 +49,12 @@
 # whats our location
 SCRIPT_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
 
+VM_NAME ?= alpine-vm
+VM_RESIZE ?= 100M
+VM_RAM ?= 512
+VM_CPUS ?= 1
+VM_GRAPHICS ?= none
+
 # alpine linux image file
 # -----------------------
 OS_VARIANT= alpinelinux3.21
@@ -55,12 +69,8 @@ REL_URL = $(MIRROR)/$(REL_DIR)/$(REL_FILE)
 
 # our vm
 # ------
-VM_NAME ?= alpine-vm
-VM_FILE := myalpine.qcow2
+VM_FILE := $(VM_NAME).qcow2
 VM_DIR  := vmdir
-VM_USER := alpine
-VM_HOME := /home/$(VM_USER)
-VM_BIN_DIR := /home/$(VM_USER)/bin
 
 # where we store downloads
 # ------------------------
@@ -117,7 +127,7 @@ $(VM_DISK): | $(VM_CACHE_FILE) $(VM_DIR)
 	$(Q)echo "[+] Creating VM-DISK: $@"
 	$(Q)cp $(VM_CACHE_FILE) $@
 	$(Q)chmod 644 $@
-	$(Q)qemu-img resize -q $@  +100M
+	$(Q)qemu-img resize -q $@ +$(VM_RESIZE)
 	$(Q)chmod 444 $@
 
 .PHONY: vm-config
@@ -149,13 +159,13 @@ vm-install: $(VM_DISK) $(VM_USER_DATA)
 	$(Q)virt-install --quiet --noautoconsole --noreboot \
 	--name $(VM_NAME) \
 	--virt-type kvm \
-	--ram 512 \
-	--vcpus 1 \
+	--ram $(VM_RAM) \
+	--vcpus $(VM_CPUS) \
 	--disk path=$(VM_DISK),format=qcow2,bus=virtio \
 	--network network=default,model=virtio \
 	--cloud-init user-data=$(VM_USER_DATA) \
 	--os-variant $(OS_VARIANT) \
-	--graphics vnc \
+	--graphics $(VM_GRAPHICS) \
 	--rng /dev/urandom \
 	--import
 	$(Q)echo "[+] Started VM: $(VM_NAME)"
