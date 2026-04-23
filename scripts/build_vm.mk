@@ -93,7 +93,9 @@ $(VM_USER_DATA): $(USER_DATA_TEMPLATE) | $(BUILD_DIR)
 		echo "Error: No public key found in ~/.ssh/id_rsa.pub"; \
 		exit 1; \
 	fi
-	$(Q)sed "s|{{SSH_PUBLIC_KEY}}|$(VM_SSH_PUBKEY)|g" $< > $@
+	$(Q)sed -e "s|{{VM_NAME}}|$(VM_NAME)|g" \
+	        -e "s|{{SSH_PUBLIC_KEY}}|$(VM_SSH_PUBKEY)|g" \
+	        $< > $@
 
 $(VM_CACHE_DIR):
 	$(Q)mkdir -p $@

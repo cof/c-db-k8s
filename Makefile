@@ -55,6 +55,7 @@ SRC_DIR = src
 BIN_DIR = bin
 SCRIPTS_DIR = scripts
 CMDS = server client launcher
+MAKEFLAGS += --no-print-directory
 
 # build tools
 # -----------
@@ -86,7 +87,6 @@ DEBUG_CFLAGS  := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
 CFLAGS  = -O2 $(COMMON_CFLAGS) $(EXTRA_CFLAGS)
 LDFLAGS = --static
 
-MAKEFLAGS += --no-print-directory
 
 # ###########################
 # CMDS server|client|launcher

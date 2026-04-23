@@ -1,5 +1,5 @@
 #cloud-config
-hostname: launcher
+hostname: {{VM_NAME}}
 datasource_list: [ NoCloud ]
 
 packages:
