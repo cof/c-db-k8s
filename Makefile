@@ -65,7 +65,7 @@ LD = gcc
 CTAGS = ctags
 K3D = k3d
 
-include verbose.mk
+include scripts/verbose.mk
 
 
 # compiler flags
@@ -240,9 +240,8 @@ $(INSTALL_DONE): $(CMDS) | $(BUILD_DIR)
 # VM for testing launcher
 # #######################
 VM_NAME = test-lau
-include build_vm.mk
+include scripts/build_vm.mk
 build-vm: vm-create
-
 
 # ###########################
 # Kubernetes Deployment

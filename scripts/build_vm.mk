@@ -38,6 +38,9 @@
 # - virsh        : vm managment
 # 
 
+# whats our location
+SCRIPT_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
+
 # alpine linux image file
 # -----------------------
 OS_VARIANT= alpinelinux3.21
@@ -79,9 +82,13 @@ VM_SSH_KEYFILE := ~/.ssh/id_rsa
 VM_PUB_KEYFILE := $(VM_SSH_KEYFILE).pub
 VM_SSH_PUBKEY  := $(shell cat $(VM_PUB_KEYFILE) 2>/dev/null || echo "NO_KEY_FOUND")
 
+# user-data template file
+# -----------------------
+USER_DATA_TEMPLATE := $(SCRIPT_DIR)user-data.yaml
+
 # create cloud-init user-data
 # ---------------------------
-$(VM_USER_DATA): tests/user-data.yaml | $(BUILD_DIR)
+$(VM_USER_DATA): $(USER_DATA_TEMPLATE) | $(BUILD_DIR)
 	$(Q)if [ "$(VM_SSH_PUBKEY)" = "NO_KEY_FOUND" ]; then \
 		echo "Error: No public key found in ~/.ssh/id_rsa.pub"; \
 		exit 1; \
