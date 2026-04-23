@@ -1,25 +1,41 @@
 # ======================
 # VM Provisioning Module
 # ======================
+#
 # A makefile fragment to create a VM
 #
-# - downloads an alpine VM disk image using wget
-# - resizes disk image using qemu-img
-# - uses a cloud-config user-data.yaml template file to configure VM
-# - injects SSH public key into cloud-config file for passwordless VM access
-# - runs to virt-install to create VM
-# - uses virsh to manage VM
-# - VM can be accessed via ssh key or alpine:alpine or console root:alpine 
-# - ssh directly to VM with ssh alpine@VM_NAME if nsswitch.conf allows it 
-# - Add libvirt_guest to hosts line in /etc/nsswitch.conf e.g "hosts: files libvirt_guest"
+# Targets
+# --------
+#  vm-create  : create/start vm
+#  vm-list    : show VM domain info (dominfo, domifaddr)
+#  vm-config  : show VM config
+#  vm-clean   : delete VM
 #
-# Dependencies: wget, qemu-img, virt-install , virsh
-#
-# Example:
+# Example
 # -------
 # VM_NAME = test-vm
 # include build_vm.mk
 # build-vm: vm-create
+#    @echo "VM $(VM_NAME) is ready."
+# 
+# Design
+# ------
+# - Downloads an alpine VM disk image using wget
+# - Resizes disk image using qemu-img
+# - Uses a cloud-config user-data.yaml template file to configure VM
+# - Injects SSH public key into cloud-config file for passwordless VM access
+# - Runs to virt-install to create VM
+# - Uses virsh to manage VM
+# - VM can be accessed via ssh key or alpine:alpine or console root:alpine 
+# - ssh directly to VM with ssh alpine@VM_NAME if nsswitch.conf allows it 
+# - Add libvirt_guest to hosts line in /etc/nsswitch.conf e.g "hosts: files libvirt_guest"
+#
+# Dependencies
+# ------------
+# - wget         : download disk image
+# - qemu-img     : resize disk image
+# - virt-install : create vm
+# - virsh        : vm managment
 # 
 
 # alpine linux image file

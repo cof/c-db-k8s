@@ -65,23 +65,7 @@ LD = gcc
 CTAGS = ctags
 K3D = k3d
 
-# verbosity - aka Kbuild/HAProxy style
-# -----------------------------------
-V ?= 0
-Q = @
-ifeq ($V,1)
-Q=
-endif
-
-ifeq ($(V),1)
-cmd_TAR = $(TAR)
-cmd_CC  = $(CC)
-cmd_LD  = $(CC)
-else
-cmd_TAR  = $(Q)echo "  TAR   $@";$(TAR)
-cmd_CC   = $(Q)echo "  CC    $@";$(CC)
-cmd_LD   = $(Q)echo "  LD    $@";$(CC)
-endif
+include verbose.mk
 
 
 # compiler flags
