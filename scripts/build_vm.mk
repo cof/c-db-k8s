@@ -59,6 +59,13 @@ VM_CPUS ?= 1
 VM_CONSOLE ?= pty,target_type=serial
 VM_GRAPHICS ?= none
 
+# helpers
+VM_GET_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
+VM_USER := alpine
+VM_HOME := /home/$(VM_USER)
+VM_BIN_DIR := /home/$(VM_USER)/bin
+
+
 # alpine linux image file
 # -----------------------
 OS_VARIANT= alpinelinux3.21
@@ -95,6 +102,16 @@ VM_DONE      = $(BUILD_DIR)/.vm_done
 VM_SSH_KEYFILE := ~/.ssh/id_rsa
 VM_PUB_KEYFILE := $(VM_SSH_KEYFILE).pub
 VM_SSH_PUBKEY  := $(shell cat $(VM_PUB_KEYFILE) 2>/dev/null || echo "NO_KEY_FOUND")
+
+# allow ssh be run without user input
+VM_SSH_OPTS = \
+	-o StrictHostKeyChecking=no \
+	-o UserKnownHostsFile=/dev/null \
+	-o LogLevel=ERROR \
+	-o IdentitiesOnly=yes -i $(VM_SSH_KEYFILE)
+ifeq ($(V),1)
+  VM_SSH_OPTS += -v
+endif
 
 # user-data template file
 # -----------------------

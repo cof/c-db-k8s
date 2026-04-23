@@ -241,9 +241,6 @@ $(INSTALL_DONE): $(CMDS) | $(BUILD_DIR)
 # VM for testing launcher
 # #######################
 VM_NAME = test-lau
-VM_USER := alpine
-VM_HOME := /home/$(VM_USER)
-VM_BIN_DIR := /home/$(VM_USER)/bin
 include scripts/build_vm.mk
 build-vm: vm-create
 
@@ -461,19 +458,6 @@ LAU_RESFILE = $(BUILD_DIR)/test_lau.rsp
 LAU_BIN := $(VM_BIN_DIR)/launcher
 LAU_CMD := doas $(LAU_BIN) --base-dir $(VM_HOME)/$(VM_NAME) --src-dir $(VM_BIN_DIR)
 
-# 1=vm-name
-VM_GET_IP = virsh -q domifaddr $(VM_NAME) --source lease | awk '{print $$4}' | cut -d/ -f1
-
-# allow ssh be run without user input
-SSH_OPTS = \
-	-o StrictHostKeyChecking=no \
-	-o UserKnownHostsFile=/dev/null \
-	-o LogLevel=ERROR \
-	-o IdentitiesOnly=yes -i $(VM_SSH_KEYFILE)
-ifeq ($(V),1)
-  SSH_OPTS += -v
-endif
-
 # 1=cmd-file
 define SEND_CMDS
 	( \
@@ -632,9 +616,9 @@ test-lau: $(INSTALL_DONE) build-vm
 	if [ -z "$$VM_IP" ]; then echo "[ERROR] No VM ip address"; exit 1; fi; \
 	VM_SSH_ADDR="$(VM_USER)@$$VM_IP"; \
 	echo " => Copying $(BIN_DIR) to $$VM_SSH_ADDR:$(VM_HOME)"; \
-	scp -q $(SSH_OPTS) -r $(BIN_DIR) $$VM_SSH_ADDR:$(VM_HOME); \
+	scp -q $(VM_SSH_OPTS) -r $(BIN_DIR) $$VM_SSH_ADDR:$(VM_HOME); \
 	echo " => Sending cmds to $(VM_NAME) ..."; \
-	$(call SEND_CMDS,$(TEST_REQFILE)) | ssh -tt $(SSH_OPTS) $$VM_SSH_ADDR "$(LAU_CMD)" 2>&1 | tr -d '\r' | tee $(LAU_LOGFILE); \
+	$(call SEND_CMDS,$(TEST_REQFILE)) | ssh -tt $(VM_SSH_OPTS) $$VM_SSH_ADDR "$(LAU_CMD)" 2>&1 | tr -d '\r' | tee $(LAU_LOGFILE); \
 	echo " => Fetching logs"; \
 	sed -n 's/^> //; /GET \|SET \|DEL \|QUIT/p' $(LAU_LOGFILE) >$(RES_REQFILE); \
 	sed -n '/^[A-Za-z0-9]/p' $(LAU_LOGFILE) >$(RES_RSPFILE); \
