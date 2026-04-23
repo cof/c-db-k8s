@@ -36,6 +36,7 @@ Runs client and server applications inside containers using a custom launcher.
 
 - All application code written in C with no 3rd party libs
 - Custom APIs : UTIL, LOG, RWBUF, HASHMAP, DNS-PROTO, DNS-RESOLV, SOCK, DB
+- VM Provisioning : fully automated VM provisioning via build_vm.mk
 - UTIL  : strings/signal/cmd-line handling api
 - LOG   : levels-based logging subsystem (FATAL, ERROR, INFO, DEBUG)
 - HASHMAP : type-safe api uses C11 generics,X-Macros,Fibonacci hashing,open addressing
@@ -61,6 +62,19 @@ DNS-RESOLV is a full custom DNS subsystem
 - Uses DNS-PROTO a rfc1035 compliant codec
 - DNS cache with TTL support
 - non-blocking I/O using poll
+
+### VM Provisioning
+
+- A container launcher that modifies its host namespaces **needs a VM** to safely test
+- Makefile uses build_vm.mk to provision a VM called `test-lau` based on Alpine Linux
+- Simply run make test-lau to download, create, install and run VM
+- Uses cloud-config user-data.yaml template file to configure VM
+- Injects SSH public key (id_rsa.pub) into user-data.yaml file
+- VM can be access via ssh key or alpine:alpine or console root:alpine
+- alpine user is setup as sudo user (using doas)
+- make test-lau simply installs client,server,launcher into VM and runs launcher
+- ssh directly to VM with ssh alpine@test-lau if nsswitch.conf allows it
+- Add libvirt_guest to hosts line in /etc/nsswitch.conf e.g "hosts: files libvirt_guest"
 
 ## 1.1 Launcher
 
@@ -91,16 +105,6 @@ A custom linux container launcher for running applications inside isolated names
 
 **Testing**
 
-- A launcher that modifies its host namespaces **needs** a VM to safely test
-- Makefile supports provisioning a test VM called test-lau based on Alpine Linux 
-- Simply run make test-lau to download, create, install and run VM
-- Uses cloud-config user-data.yaml template file to configure VM
-- Embeds users public key (id_rsa.pub) into user-data.yaml file
-- VM can be access via ssh key or alpine:alpine or console root:alpine
-- alpine user is setup as sudo user (using doas)
-- make test-lau simply installs client,server,launcher into VM and runs launcher
-- You can ssh directly to VM with ssh alpine@test-lau if nsswitch.conf allows it
-- Just edit /etc/nsswitch.conf and add libvirt_guest to hosts line e.g "hosts: files libvirt_guest" 
 
 **Example usage**
 
