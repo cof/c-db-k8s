@@ -3,14 +3,22 @@
 # ======================
 #
 # A makefile fragment for creating a VM. 
-# Include it setting one or more of the following vars:
 #
-# VM_NAME     : name for virtsh and hostname (default alpine-vm)
-# VM_RESIZE   : qemu-img resize plus (default 100M)
-# VM_RAM      : virt-install --ram (default 512)
-# VM_CPUS     : virt-install --vcpus (default 1)
-# VM_GRAPHICS : virt-install --graphics (default none)
-# VM_CONSOLE  : virt-install --console (default pty,target_type=serial)
+# Simply include this file setting any of the following variables:
+#
+#  VM_NAME     : name for virtsh and hostname (default alpine-vm)
+#  VM_RESIZE   : qemu-img resize plus (default 100M)
+#  VM_RAM      : virt-install --ram (default 512)
+#  VM_CPUS     : virt-install --vcpus (default 1)
+#  VM_GRAPHICS : virt-install --graphics (default none)
+#  VM_CONSOLE  : virt-install --console (default pty,target_type=serial)
+#
+# Example
+# -------
+#  VM_NAME = test-vm
+#  include scripts/build_vm.mk
+#  build-vm: vm-create
+#      @echo "VM $(VM_NAME) is ready."
 #
 # Targets
 # -------
@@ -20,13 +28,6 @@
 # vm-config  : show VM config
 # vm-clean   : delete VM
 #
-# Example
-# -------
-# VM_NAME = test-vm
-# include build_vm.mk
-# build-vm: vm-create
-#    @echo "VM $(VM_NAME) is ready."
-# 
 # Design
 # ------
 # - Downloads an alpine VM disk image using wget
@@ -44,12 +45,13 @@
 # - wget         : download disk image
 # - qemu-img     : resize disk image
 # - virt-install : create vm
-# - virsh        : vm managment
+# - virsh        : vm management
 # 
 
 # whats our location
 SCRIPT_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
 
+# defaults
 VM_NAME ?= alpine-vm
 VM_RESIZE ?= 100M
 VM_RAM ?= 512

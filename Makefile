@@ -5,7 +5,8 @@
 #
 #  make test-full
 #
-# Important targets
+# Targets
+# -------
 # 
 #  all         : build cmds (client|server|launcher)
 #  install     : put all cmds into bin folder
