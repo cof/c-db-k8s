@@ -10,14 +10,15 @@
 # VM_RAM      : virt-install --ram (default 512)
 # VM_CPUS     : virt-install --vcpus (default 1)
 # VM_GRAPHICS : virt-install --graphics (default none)
+# VM_CONSOLE  : virt-install --console (default pty,target_type=serial)
 #
 # Targets
-# --------
-#  vm-create  : create/start vm
-#  vm-start   : start-vm
-#  vm-list    : show VM domain info (dominfo, domifaddr)
-#  vm-config  : show VM config
-#  vm-clean   : delete VM
+# -------
+# vm-create  : create/start vm
+# vm-start   : start-vm
+# vm-list    : show VM domain info (dominfo, domifaddr)
+# vm-config  : show VM config
+# vm-clean   : delete VM
 #
 # Example
 # -------
@@ -53,6 +54,7 @@ VM_NAME ?= alpine-vm
 VM_RESIZE ?= 100M
 VM_RAM ?= 512
 VM_CPUS ?= 1
+VM_CONSOLE ?= pty,target_type=serial
 VM_GRAPHICS ?= none
 
 # alpine linux image file
@@ -161,11 +163,12 @@ vm-install: $(VM_DISK) $(VM_USER_DATA)
 	--virt-type kvm \
 	--ram $(VM_RAM) \
 	--vcpus $(VM_CPUS) \
+	--graphics $(VM_GRAPHICS) \
+	--console $(VM_CONSOLE) \
 	--disk path=$(VM_DISK),format=qcow2,bus=virtio \
 	--network network=default,model=virtio \
 	--cloud-init user-data=$(VM_USER_DATA) \
 	--os-variant $(OS_VARIANT) \
-	--graphics $(VM_GRAPHICS) \
 	--rng /dev/urandom \
 	--import
 	$(Q)echo "[+] Started VM: $(VM_NAME)"
