@@ -97,7 +97,7 @@
 // resolver flags
 #define DNS_TCP      (1 << 0)  // resolve port for SOCK_STREAM type
 #define DNS_UDP      (1 << 1)  // resolve port for SOCK_DGRAM type
-#define DNS_IPV4     (1 << 2)  // resolve hostname to AF_INET (IPv4) address 
+#define DNS_IPV4     (1 << 2)  // resolve hostname to AF_INET (IPv4) address
 #define DNS_IPV6     (1 << 3)  // resolve hostname to AF_INET6 (IPv6) address
 #define DNS_PASSIVE  (1 << 4)  // set IP address that can be used with bind()
 #define DNS_NUMPORT  (1 << 5)  // numeric port; do not resolve via /etc/services

@@ -156,7 +156,7 @@ int create_network(const char *veth_name, const char *ip_addr);
  * clear_all_caps : wipe existing capabilities
  * drop_sudo : drop sudo right
  * drop_new_privs : drop right to new privileges
- * apply_seccomp : apply syscall security filters 
+ * apply_seccomp : apply syscall security filters
  */
 int drop_bounding_set(const char *name);
 int clear_all_caps(const char *name);

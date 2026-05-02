@@ -286,7 +286,7 @@ static inline int str_endswith(const char *str, size_t len, int ch)
 static inline int str_isnumeric(const char *str, size_t len)
 {
     if (!len) return 0;
-   
+
     const char *end = str + len;
 
     while (str < end) {
@@ -682,7 +682,7 @@ struct str_slice {
  * slice_countch(str,ch)  : count number of ch in slice
  * slice_tou32(str)         : convert str-slice to uint32_t
  * slice_ltrim(str)         : left trim leading whitespace
- * slice_rtrim(str)         : right trim trailing whitespace   
+ * slice_rtrim(str)         : right trim trailing whitespace
  * slice_trim(str)          : trim left and right whitespace
  * slice_toupper(str)       : upper case str
  * slice_tolower(str)       : lowwer case str
@@ -788,7 +788,7 @@ static inline struct str_slice *slice_chop(struct str_slice *str, int ch)
 static inline struct str_slice slice_rsplit(struct str_slice *src, int ch)
 {
     struct str_slice dst;
-  
+
     dst.ptr = memrchr(src->ptr, ch, src->len);
 
     if (dst.ptr) {

@@ -42,9 +42,9 @@ struct lau_child {
     char netns_name[IFNAMSIZ]; // network namespace name
     char veth_name[IFNAMSIZ];  // container eth0 link
     // used by overlay FS
-    char *lowerdir;   
-    char *upperdir;   
-    char *workdir;   
+    char *lowerdir;
+    char *upperdir;
+    char *workdir;
     int netns_fd;
     // parent sync child
     int go_read_fd;    // child reads
@@ -53,12 +53,12 @@ struct lau_child {
     int ready_read_fd; // parent reads
     int ready_write_fd; // child writes
     // stack - created by mmap
-    void *stack; 
+    void *stack;
     size_t stack_size;
-    pid_t pid;  
+    pid_t pid;
     int clone_flags;
     int status; // waitpid
-    // security 
+    // security
     uid_t uid;
     uid_t gid;
     // flags - bit fields
@@ -72,7 +72,7 @@ struct lau_child {
     unsigned int overlay_mounted  : 1; // overlay FS active
     unsigned int cmd_mounted      : 1; // cmd file was mounted
     unsigned int drop_sudo        : 1; // setuid|setgid
-    unsigned int drop_caps        : 1; // drop capabilities 
+    unsigned int drop_caps        : 1; // drop capabilities
     unsigned int drop_privs   : 1; // prctl PR_SET_NO_NEW_PRIVS
     unsigned int use_seccomp  : 1; // seccomp filter
     // waitpid flags

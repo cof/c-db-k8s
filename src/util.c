@@ -40,7 +40,7 @@ static bool raise_ambient_caps(void)
 {
     struct __user_cap_header_struct hdr = { _LINUX_CAPABILITY_VERSION_3, 0 };
     struct __user_cap_data_struct data[2];
-   
+
     // get process caps
     if (syscall(SYS_capget, &hdr, data) < 0) return false;
 
@@ -107,7 +107,7 @@ int run_cmd(struct strbuf *buf, int flags, const char *fmt, ...)
         log_errno("system(%s) failed", cmd_str);
     }
     else if (!WIFEXITED(rc)) {
-        // cmd was interrupted by signal 
+        // cmd was interrupted by signal
         log_error("cmd (%s) interrupted", cmd_str);
         rc = -1;
     }
@@ -189,7 +189,7 @@ char *itoa(int val, char *buf, size_t len)
         val /= 10;
     }
 
-    return str; 
+    return str;
 }
 
 char *u32toa(uint32_t val, char *buf, size_t len)
@@ -206,11 +206,11 @@ char *u32toa(uint32_t val, char *buf, size_t len)
         val /= 10;
     }
 
-    return str; 
+    return str;
 }
 
 // convert int-val to string - uses wrap-around buffer list
-char *int_tostr(int val) 
+char *int_tostr(int val)
 {
     static char bufs[16][10];
     static int idx;
@@ -221,7 +221,7 @@ char *int_tostr(int val)
     return itoa(val, str, sizeof(bufs[0][0]));
 }
 
-char *u32_tostr(uint32_t val) 
+char *u32_tostr(uint32_t val)
 {
     static char bufs[16][10];
     static int idx;
@@ -282,7 +282,7 @@ size_t ip4_str_decode(const char *str, size_t len, uint8_t dst[static 4])
             acc = 0;
             num_digit = 0;
             break;
-        default: 
+        default:
             // unknown char - stop
             str_end = str;
         }
@@ -346,7 +346,7 @@ size_t ip6_str_decode(const char *str, size_t len, uint8_t dst[static 16])
             // stop
             str_end = str;
             break;
-        default: 
+        default:
             // stop
             str_end = str;
         }
@@ -383,9 +383,9 @@ size_t ip4_str_encode(const uint8_t addr[static 4], char *str, size_t len)
     wptr = uint8_toa(wptr, addr[0]); *wptr++ = '.';
     wptr = uint8_toa(wptr, addr[1]); *wptr++ = '.';
     wptr = uint8_toa(wptr, addr[2]); *wptr++ = '.';
-    wptr = uint8_toa(wptr, addr[3]); 
+    wptr = uint8_toa(wptr, addr[3]);
     *wptr = '\0';
-    
+
     return wptr - str;
 }
 
@@ -431,7 +431,7 @@ size_t ip6_str_encode(const uint8_t addr[static 16], int flags, char *str, size_
     if (zero_len <= 2) zero_pos = -1;
 
     // rfc5952 - IPv4-Mapped or IPv4-Compatible address
-    if ((flags & IP6_STR_NOIPV4) == 0 && zero_pos == 0 && 
+    if ((flags & IP6_STR_NOIPV4) == 0 && zero_pos == 0 &&
         ((zero_len == 10 && addr[10] == 0xff && addr[11] == 0xff) ||
         (zero_len == 12)))
     {
@@ -565,7 +565,7 @@ static int find_opt(const char *name, const struct cmd_opt opts[])
     return -1;
 }
 
-int cmd_argv_next(struct cmd_argv *parse) 
+int cmd_argv_next(struct cmd_argv *parse)
 {
     // skip prog name
     if (parse->argv_idx == 0) parse->argv_idx++;
@@ -585,7 +585,7 @@ int cmd_argv_next(struct cmd_argv *parse)
         if (parse->argv_idx >= parse->argc) {
             return log_error_rc(OPT_MISSVAL, "Option: --%s Missing a value", parse->name);
         }
-        if (parse->argv[parse->argv_idx][0] == '-') { 
+        if (parse->argv[parse->argv_idx][0] == '-') {
             return log_error_rc(OPT_MISSVAL, "Option: --%s Missing value", parse->name);
         }
         // save value

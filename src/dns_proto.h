@@ -223,7 +223,7 @@ struct dns_rr {
             char *os_str;
         } hinfo; // 13
         struct {
-            uint16_t pref;   
+            uint16_t pref;
             char *name;
         } mx; // 15
         struct {

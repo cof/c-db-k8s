@@ -188,7 +188,7 @@ ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[st
  * sock_send_line(sock, line)     : write send-buffer + str-sline + CRLF to fd, buffer remaining
  * -
  * sock_recv(sock)                 : read into recv-buffer from fd
- * sock_recv_line(sock, line, eof) : read line from recv-buffer - return fragment if eof 
+ * sock_recv_line(sock, line, eof) : read line from recv-buffer - return fragment if eof
  * sock_recv_str(sock,str)         : load str-slice with recv-buffer
  * sock_recvbuf_consume(sock, len) : consume len bytes from recv-buffer
  */

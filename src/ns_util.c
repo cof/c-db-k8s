@@ -337,7 +337,7 @@ int copy_file(const char *src, const char *dst)
     if (!S_ISREG(stat_buf.st_mode)) {
         log_errno_rf("copy_file src %s not a file", src);
         goto close_all;
-    }  
+    }
 
     // XXX file size can be 0
     off_t offset = 0;
@@ -481,7 +481,7 @@ int mount_rootfs(const char *rootfs_dir, const char *rootfs_path)
     if (rc != 0) {
         return log_errno_rf("mount bind rootfs %s to %s failed", rootfs_dir, rootfs_path);
     }
-  
+
     // make all further mounts private
     rc = mount(NULL, rootfs_path, NULL, MS_REC | MS_PRIVATE, NULL);
     if (rc) {

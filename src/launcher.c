@@ -509,7 +509,7 @@ static int lau_setup_all(struct lau_ctx *lau)
     log_debug("Launcher setup infrastucture");
 
     RUN(lau_open_host_netns(lau));
-   
+
     // create dirs
     if (lau->need_basedir) {
         RUN(create_path(lau->base_dir, lau->dir_mode));
@@ -810,7 +810,7 @@ int main(int argc, char *argv[])
     // no errors
     ec = 0;
 
-done:  
+done:
     if (lau) lau_destroy(lau);
 
     return ec;

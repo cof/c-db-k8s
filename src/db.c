@@ -190,7 +190,7 @@ static int file_check(void)
     uint64_t db_link, db_offset;
     struct db_rec *rec;
     size_t rec_size;
-   
+
     if (be32toh(db_hdr->magic) != DB_MAGIC) {
         return log_error_rf("db-hdr magic 0x%08x != 0x%08d", db_hdr->magic, DB_MAGIC);
     }
@@ -336,7 +336,7 @@ int db_set(struct str_slice key, struct str_slice val)
     struct db_rec *rec;
 
     rec = hash_put(key, val);
-   
+
     return rec ? 0 : DB_FAIL;
 }
 

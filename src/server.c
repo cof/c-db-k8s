@@ -88,7 +88,7 @@ static int send_rsp(struct simple_client *client, struct str_slice rsp)
 static int cmd_set(struct simple_client *client, struct str_slice args)
 {
     struct str_slice val = slice_copy(args);
-    struct str_slice key = slice_splitch(&val, ' '); 
+    struct str_slice key = slice_splitch(&val, ' ');
     slice_trim(&key);
     slice_trim(&val);
 

@@ -217,7 +217,7 @@ int main(int argc, char *argv[])
 
     const char *log_req = log_line ? "send req" : NULL;
     const char *log_rsp = log_line ? "recv rsp" : NULL;
-       
+
     // setup stdout,stdin for send,recv
     struct my_pipe user = MY_PIPE_INIT(user, STDOUT_FILENO, STDIN_FILENO);
     if (sock_set_mode(user.send_sock, SOCK_FILE | SOCK_NONBLK)) exit(1);

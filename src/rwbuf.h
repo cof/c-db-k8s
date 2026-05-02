@@ -6,7 +6,7 @@
  * - Flexible memory: Support dynamic or user supplied static buffers
  * - Dynamic limits : support for locked or max_size limits
  * - Position independent: size_t read|write offsets for safe memory relocation/resizing
- * - scatter-gather - vectorzed memory tranfers via writev  
+ * - scatter-gather - vectorzed memory tranfers via writev
  * - support for readline with max length enforcement
  *
  * API sections

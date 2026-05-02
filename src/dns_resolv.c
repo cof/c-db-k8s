@@ -460,7 +460,7 @@ static void init_config(struct dns_config *cfg)
         slice_chop(&line, '#');
         slice_trim(&line);
         if (line.len == 0) continue;
-        struct str_slice key = slice_splitset(&line, STR_LIT(" \t")); 
+        struct str_slice key = slice_splitset(&line, STR_LIT(" \t"));
         switch(str_tocfg(key)) {
         case CFG_SERVER:  cfg_add_nameserver(cfg, line); break;
         case CFG_SEARCH:  cfg_add_search(cfg, line); break;
@@ -572,8 +572,8 @@ static void init_hosts(struct dns_hosts *hosts)
         slice_trim(&line);
         if (line.len == 0) continue;
         total++;
-        struct str_slice addr = slice_splitset(&line, STR_LIT(" \t")); 
-        struct str_slice name = slice_splitset(&line, STR_LIT(" \t")); 
+        struct str_slice addr = slice_splitset(&line, STR_LIT(" \t"));
+        struct str_slice name = slice_splitset(&line, STR_LIT(" \t"));
         if (addr.len == 0 || name.len == 0) continue;
         if (hosts_add(hosts, addr, name, line)) num_add++;
     }
@@ -662,8 +662,8 @@ static void init_services(struct dns_services *svcs)
         if (line.len == 0) continue;
         // add service
         total++;
-        struct str_slice name = slice_splitset(&line, STR_LIT(" \t")); 
-        struct str_slice pp = slice_splitset(&line, STR_LIT(" \t")); 
+        struct str_slice name = slice_splitset(&line, STR_LIT(" \t"));
+        struct str_slice pp = slice_splitset(&line, STR_LIT(" \t"));
         if (name.len == 0 || pp.len == 0) continue;
         if (services_add(svcs, name, pp, line)) num_add++;
     }
@@ -999,7 +999,7 @@ static int set_dnsreq(struct dns_ns *ns, struct dns_query *q)
 }
 
 // add dns answers to result
-static int add_dnsans(struct dns_ns *ns) 
+static int add_dnsans(struct dns_ns *ns)
 {
     struct dns_msg *msg = &ns->msg;
     struct dns_cache *cache = &glob_cache;

@@ -45,7 +45,7 @@ static int sock_resolv(uint32_t mode,
 
     if (mode & SOCK_PASSIVE) flags |= DNS_PASSIVE;
     if (mode & SOCK_NUMPORT) flags |= DNS_NUMPORT;
-   
+
     // addr
     if (mode & SOCK_ANY) {
         flags |= DNS_IPV6 | DNS_V4MAPPED | DNS_ALL;
@@ -335,7 +335,7 @@ int sock_set_sndto(struct simple_sock *sock, uint32_t ms)
         .tv_sec = ms / 1000,
         .tv_usec = (ms % 1000) * 1000
     };
-   
+
     int rc = setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     if (rc) return log_errno_rf("set SO_SNDTIMEO on %d failed", sock->fd);
 
@@ -351,7 +351,7 @@ int sock_set_rcvto(struct simple_sock *sock, uint32_t ms)
         .tv_sec = ms / 1000,
         .tv_usec = (ms % 1000) * 1000
     };
-   
+
     int rc = setsockopt(sock->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     if (rc) return log_errno_rf("set SO_RCVTIMEO, on %d failed", sock->fd);
 
@@ -505,7 +505,7 @@ ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[st
         rc = SOCK_DATA;
         write_len -= nw;
         twrite += nw;
-       
+
         // update vectors for next write
         while (niov > 0 && (size_t) nw >= iov->iov_len) {
             nw -= iov->iov_len;

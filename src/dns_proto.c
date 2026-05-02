@@ -17,7 +17,7 @@
  * rfc6891 - Extension Mechanisms for DNS (EDNS(0))
  */
 #include <errno.h>
-#include <arpa/inet.h>  
+#include <arpa/inet.h>
 #include <arpa/inet.h>
 #include <stdarg.h>
 
@@ -54,7 +54,7 @@ struct dns_dec {
     unsigned int load_msg : 1;
     unsigned int got_edns : 1;
     unsigned int dnssec_ok : 1;
-    // EDNS0 Options (RFC 6891) 
+    // EDNS0 Options (RFC 6891)
     size_t udp_size;
     uint8_t ext_rcode;
     uint8_t edns_ver;
@@ -358,7 +358,7 @@ int decode_name(struct dns_dec *dec, char *name, size_t nlen)
     while (pkt_idx < dec->pkt_len) {
         // get label length
         len = dec->pkt_buf[pkt_idx++];
-        // compression pointer - rfc1035 - 4.1.4. Message compression 
+        // compression pointer - rfc1035 - 4.1.4. Message compression
         if ((len & DNS_COMP_PTR) == DNS_COMP_PTR) {
             if (pkt_idx == dec->pkt_len)  return -DNS_EBADJMP;
             if (njmp++ > DNS_MAX_JMP) return -DNS_EMAXJMP;
@@ -379,7 +379,7 @@ int decode_name(struct dns_dec *dec, char *name, size_t nlen)
 
         // null check
         if (len == 0) break;
-   
+
         // copy label
         if (name) {
             memcpy(name, dec->pkt_buf + pkt_idx, len);
@@ -388,7 +388,7 @@ int decode_name(struct dns_dec *dec, char *name, size_t nlen)
         out_len -= len;
         pkt_idx += len;
 
-        // add a dot   
+        // add a dot
         if (!out_len) return -DNS_EOUTLEN;
         if (pkt_idx < dec->pkt_len && dec->pkt_buf[pkt_idx]) {
             // store the dot
@@ -543,7 +543,7 @@ int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len)
 static int dns_sect_tostr(struct dns_sect *sect, char *buf, size_t buf_len)
 {
     size_t nw = 0;
-       
+
     for (int i = 0; i < *sect->count; i++) {
         if (i > 0) {
             if (nw == buf_len) return DNS_FAIL;
@@ -1172,7 +1172,7 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
         int tc = flags & DNS_FLAGS_TC ? 1 : 0;
         int rd = flags & DNS_FLAGS_RD ? 1 : 0;
         int cd = flags & DNS_FLAGS_CD ? 1 : 0;
-        int ad = flags & DNS_FLAGS_AD ? 1 : 0;  
+        int ad = flags & DNS_FLAGS_AD ? 1 : 0;
 
         // add flags
         if (tc) strbuf_puticm(&buf, ' ', STR_LIT("TC:1"));
@@ -1281,7 +1281,7 @@ static uint8_t *encode_name(struct dns_enc *enc, uint8_t *wptr, const char *name
 {
     int offset = wptr - enc->pkt_buf;
     const char *name_end = name ? name + strlen(name) : NULL;
-   
+
     while (name < name_end) {
         // scan for suffix match
         for (size_t i = 0; i < enc->num_suffix; i++) {
