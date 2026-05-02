@@ -15,14 +15,14 @@
  *  QUIT          - close connection
  *
  * Notes:
- * - code is single threaded 
+ * - code is single threaded
  * - code is using dual-stack sockets
  * - code is using epoll for socket fd activity
  * - default listen is [::]:6379
  * - commands are case insensitve
  * - see config.h for current defaults
  */
-#include <netdb.h> 
+#include <netdb.h>
 #include <sys/epoll.h>
 #include <errno.h>
 
@@ -60,7 +60,7 @@ static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uin
 static void client_destroy(struct simple_client *client, int can_log);
 static void client_close(struct simple_client *client, int force);
 
-static int send_prompt(struct simple_client *client) 
+static int send_prompt(struct simple_client *client)
 {
     return sock_write_mem(&client->sock, STR_LIT("> "));
 }
@@ -88,14 +88,14 @@ static int send_rsp(struct simple_client *client, struct str_slice rsp)
 static int cmd_set(struct simple_client *client, struct str_slice args)
 {
     struct str_slice val = slice_copy(args);
-    struct str_slice key = slice_splitch(&val, ' ');  
+    struct str_slice key = slice_splitch(&val, ' '); 
     slice_trim(&key);
     slice_trim(&val);
 
     struct str_slice res;
     if (!key.len || ! val.len)
         res = slice_make(STR_LIT("FAIL"));
-    else if (db_set(key, val)) 
+    else if (db_set(key, val))
         res = slice_make(STR_LIT("FAIL"));
     else
         res = slice_make(STR_LIT("OK"));
@@ -124,7 +124,7 @@ static int cmd_del(struct simple_client *client, struct str_slice key)
         res = slice_make(STR_LIT("FAIL"));
     else if (db_del(key))
         res = slice_make(STR_LIT("FAIL"));
-    else 
+    else
         res = slice_make(STR_LIT("OK"));
 
     return send_rsp(client, res);
@@ -217,7 +217,7 @@ struct simple_client *client_create(int fd, struct sock_addr *addr)
     memset(client, 0, sizeof(*client));
 
     // use config.h settings
-    sock_init(&client->sock, fd, addr, 
+    sock_init(&client->sock, fd, addr,
         MAX_LINE, SOCK_INIT_BUFSIZE, SOCK_MIN_BUFSIZE, SOCK_MAX_BUFSIZE
     );
 
@@ -238,7 +238,7 @@ static void do_client_send(struct simple_client *client)
 
     uint32_t events;
     if (sock_sendbuf_used(&client->sock)) {
-        // partial write 
+        // partial write
         events = client->sock.wait_write ? RDWR_EVENTS : 0;
     }
     else {
@@ -305,7 +305,7 @@ static void client_recv_event(struct simple_client *client, uint32_t events)
 }
 
 // add or remove socket fd from epoll ctrl
-static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uint32_t events) 
+static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uint32_t events)
 {
     struct epoll_event ev = { 0 };
 
@@ -331,7 +331,7 @@ static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uin
     return 0;
 }
 
-// accept incoming client 
+// accept incoming client
 struct simple_client *server_accept(struct simple_server *server)
 {
     struct sock_addr addr;
@@ -353,13 +353,13 @@ struct simple_client *server_accept(struct simple_server *server)
     client->log_line = server->log_line;
 
     // register with epoll - readable events only
-    if (poll_ctrl(server, &client->sock, RD_EVENTS) != 0) { 
+    if (poll_ctrl(server, &client->sock, RD_EVENTS) != 0) {
         // register failed ?
         client_destroy(client, 1);
         return NULL;
     }
 
-    // add to servers client list 
+    // add to servers client list
     list_append(&server->clients, &client->node);
 
     // send welcome banner
@@ -372,7 +372,7 @@ struct simple_client *server_accept(struct simple_server *server)
     return client;
 }
 
-static void do_server_accept(struct simple_server *server) 
+static void do_server_accept(struct simple_server *server)
 {
     // incoming client connections
     int max_accept = 5;
@@ -385,7 +385,7 @@ static void do_server_accept(struct simple_server *server)
     } while(--max_accept);
 }
 
-static void do_server_err(struct simple_server *server) 
+static void do_server_err(struct simple_server *server)
 {
     int error = 0;
     socklen_t errlen = sizeof(error);
@@ -459,9 +459,9 @@ static int server_run(struct simple_server *serv)
     }
 
     if (serv->sig.signo) {
-        log_info("+","server PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
-            serv->pid, 
-            serv->sig.signo, strsignal(serv->sig.signo), 
+        log_info("+","server PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ",
+            serv->pid,
+            serv->sig.signo, strsignal(serv->sig.signo),
             serv->sig.uid,
             serv->sig.pid);
     }

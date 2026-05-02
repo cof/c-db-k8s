@@ -1,4 +1,4 @@
-/* 
+/*
  * NameSpace Util API for containers
  * ---------------------------------
  * An api to manage namepspaces
@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <stdbool.h> 
+#include <stdbool.h>
 #include <string.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -53,12 +53,12 @@
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/sendfile.h>
-#include <sys/syscall.h> 
+#include <sys/syscall.h>
 
 #include <sys/prctl.h>
 #include <linux/capability.h>
 #include <linux/filter.h>
-#include <linux/audit.h> 
+#include <linux/audit.h>
 #include <linux/seccomp.h>
 
 #include "util.h"
@@ -82,7 +82,7 @@ void shutdown_pid(int pid, int wait)
 }
 
 // convert cmd-line exec_args str into argv array
-char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc) 
+char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc)
 {
     wordexp_t p = { 0 };
 
@@ -108,10 +108,10 @@ char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc)
         }
     }
 
-    argv[p.we_wordc + 1] = NULL; 
+    argv[p.we_wordc + 1] = NULL;
     if (argc) *argc = p.we_wordc + 1;
 
-    wordfree(&p); 
+    wordfree(&p);
 
     return argv;
 }
@@ -149,7 +149,7 @@ char *gen_path(const char *dir, const char *name)
 
 // parent|child close its pipe end
 int sync_pipe_close(int *rd_fd, int *wr_fd,
-    const char *who, const char *what, const char *name, 
+    const char *who, const char *what, const char *name,
     pid_t pid)
 {
     if (close_fd(rd_fd) != 0) {
@@ -164,8 +164,8 @@ int sync_pipe_close(int *rd_fd, int *wr_fd,
 }
 
 // parent|child process reads from its pipe end
-int sync_pipe_read(int *fd, 
-    struct simple_sig *sig, 
+int sync_pipe_read(int *fd,
+    struct simple_sig *sig,
     const char *who, const char *what, const char *name,
     pid_t pid)
 {
@@ -197,8 +197,8 @@ int sync_pipe_read(int *fd,
 }
 
 // parent|child process writes to its pipe end
-int sync_pipe_write(int *fd, 
-    struct simple_sig *sig, 
+int sync_pipe_write(int *fd,
+    struct simple_sig *sig,
     const char *who, const char *what, const char *name,
     pid_t pid)
 {
@@ -243,7 +243,7 @@ int create_path_nocopy(char *path, mode_t mode)
     if (!path) return -1;
 
     int len = strlen(path);
-    if (path[len - 1] == '/') path[len - 1] = 0; 
+    if (path[len - 1] == '/') path[len - 1] = 0;
 
     // now traverse the path string
     for (char *p = path + 1; *p; p++) {
@@ -270,7 +270,7 @@ int create_path(const char *path, mode_t mode)
     int rc = create_path_nocopy(tmp, mode);
     free(tmp);
 
-    return rc; 
+    return rc;
 }
 
 int create_path_for_file(const char *file, mode_t mode)
@@ -313,7 +313,7 @@ char *create_subdir(const char *dir, const char *subdir, mode_t mode)
 }
 
 // copy file - uses sendfile() for fast copy
-int copy_file(const char *src, const char *dst) 
+int copy_file(const char *src, const char *dst)
 {
     int rc = -1;
 
@@ -337,7 +337,7 @@ int copy_file(const char *src, const char *dst)
     if (!S_ISREG(stat_buf.st_mode)) {
         log_errno_rf("copy_file src %s not a file", src);
         goto close_all;
-    }   
+    }  
 
     // XXX file size can be 0
     off_t offset = 0;
@@ -378,7 +378,7 @@ int open_host_netns(void)
     return fd;
 }
 
-// set netns back to host network namespace 
+// set netns back to host network namespace
 int restore_host_netns(int netns_fd)
 {
     int rc = setns(netns_fd, CLONE_NEWNET);
@@ -429,10 +429,10 @@ int create_netns_file(const char *netns_path)
     }
 
     if (close(fd) != 0) {
-        // close failed -> rm file and return 
+        // close failed -> rm file and return
         int _errno = errno;
         unlink(netns_path);
-        errno = _errno; 
+        errno = _errno;
         return log_errno_rf("close %s failed", netns_path);
     }
 
@@ -440,14 +440,14 @@ int create_netns_file(const char *netns_path)
 }
 
 // mount an OverlayFS
-int mount_overlay(const char *path, 
-    const char *lowerdir, const char *upperdir, 
+int mount_overlay(const char *path,
+    const char *lowerdir, const char *upperdir,
     const char *workdir,
     const char *who)
 {
     char *opts_str = NULL;
-    int rc = asprintf(&opts_str, 
-        "lowerdir=%s,upperdir=%s,workdir=%s", 
+    int rc = asprintf(&opts_str,
+        "lowerdir=%s,upperdir=%s,workdir=%s",
         lowerdir, upperdir, workdir
     );
     if (rc == -1) {
@@ -481,7 +481,7 @@ int mount_rootfs(const char *rootfs_dir, const char *rootfs_path)
     if (rc != 0) {
         return log_errno_rf("mount bind rootfs %s to %s failed", rootfs_dir, rootfs_path);
     }
-   
+  
     // make all further mounts private
     rc = mount(NULL, rootfs_path, NULL, MS_REC | MS_PRIVATE, NULL);
     if (rc) {
@@ -503,14 +503,14 @@ int mount_cmd(const char *host_path, const char *rootfs_path)
     if (fd == -1) {
         return log_errno_rf("mount_cmd open(%s) failed", rootfs_path);
     }
-    close(fd); 
+    close(fd);
 
     // create a writable bind-mount
     if (mount(host_path, rootfs_path, NULL, MS_BIND, NULL) < 0) {
         // failed - unlink
         int _errno = errno;
         unlink(rootfs_path);
-        errno = _errno; 
+        errno = _errno;
         return log_errno_rf("mount_cmd bind mount %s failed", rootfs_path);
     }
 
@@ -519,9 +519,9 @@ int mount_cmd(const char *host_path, const char *rootfs_path)
         // failed - unmount|unlink
         int _errno = errno;
         log_errno_rf("mount_cmd remount read-only %s failed", rootfs_path);
-        umount2(rootfs_path, MNT_DETACH); 
+        umount2(rootfs_path, MNT_DETACH);
         unlink(rootfs_path);
-        errno = _errno; 
+        errno = _errno;
         return log_errno_rf("mount_cmd bind mount %s failed", rootfs_path);
     }
 
@@ -589,7 +589,7 @@ int mount_netns(const char *netns_path)
     }
 
     // parent process
-    int status; 
+    int status;
     pid_t p = waitpid(pid, &status, 0);
     if (p == -1) {
         // waitpid failed ?
@@ -609,7 +609,7 @@ int mount_netns(const char *netns_path)
         return log_error_rf("failed to bind mount %s", netns_path);
     }
 
-    // reopen netns 
+    // reopen netns
     int netns_fd = open(netns_path, O_RDONLY | O_CLOEXEC);
     if (netns_fd == -1) {
         int _errno = errno;
@@ -657,7 +657,7 @@ int veth_setns(const char *veth, const char *netns)
     return run_cmd(&buf, 0, "ip link set %s netns %s", veth, netns);
 }
 
-// generate id-str for veth 
+// generate id-str for veth
 int veth_gen_idstr(const char *name,
     char *veth, int veth_len,
     char *peer, size_t peer_len)
@@ -713,7 +713,7 @@ int set_identity(const char *name)
  *
  * 7 steps:
  * ========
- * 1 - make mount space private 
+ * 1 - make mount space private
  * 2 - create new mount point
  * 3 - change dir to new mount point
  * 4 - pivot_root to new mount point (stack old_root)
@@ -726,7 +726,7 @@ int set_identity(const char *name)
  */
 int set_rootfs(const char *rootfs)
 {
-    // 1 - make mount space private 
+    // 1 - make mount space private
     int rc = mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL);
     if (rc) return log_errno_rf("private mount failed");
 
@@ -770,7 +770,7 @@ int set_proc(void)
         return log_errno_rf("mount /proc faild");
     }
 
-    return 0; 
+    return 0;
 }
 
 // child process - bring up container network - lo, eth0 and ip addr
@@ -792,10 +792,10 @@ int create_network(const char *veth_name, const char *ip_addr)
 // child - drop all capabilities
 int drop_bounding_set(const char *name)
 {
-    for (int i = 0; i <= 63; i++) { 
+    for (int i = 0; i <= 63; i++) {
         int rc = prctl(PR_CAPBSET_DROP, i, 0, 0, 0);
         if (rc == -1) {
-            if (errno == EINVAL) break; 
+            if (errno == EINVAL) break;
             if (errno == EPERM) {
                 return log_errno_rf("drop-boundin_set failed for container %s", name);
             }
@@ -850,7 +850,7 @@ int drop_new_privs(const char *name)
     return 0;
 }
 
-/* 
+/*
  * Apply syscall security filters
  *
  * TODO add predefined lists
@@ -866,7 +866,7 @@ int apply_seccomp(const char *name)
 
         //  Arch check (Required for security to prevent 32-bit bypass)
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, arch))),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64 , 1, 0), 
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64 , 1, 0),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),
 
         //  Load syscall number

@@ -57,7 +57,7 @@
 #define XSTR(a) #a
 #define STR(a) XSTR(a)
 
-/* min-max API 
+/* min-max API
  * -----------
  * max(x,y) : return max of x and y
  * min(x,y) : return min of x and y
@@ -73,18 +73,18 @@ static inline size_t min(size_t x, size_t y)
 }
 
 
-/* signal handler API 
+/* signal handler API
  * -----------------
  * Simple single hander API for apps featuring
  * - Structure-composable: built for inline embedding, object compostion & memory locality
  * - uses sigaction
- * - catchs  SIGINT|SIGTERM 
+ * - catchs  SIGINT|SIGTERM
  * - ignores SIGPIPE
  * - logs signal, sender uid and pid for app
  * - simple set run to 1 to 0 design
  */
 
-// signal handler state 
+// signal handler state
 struct simple_sig {
     volatile sig_atomic_t run;
     int signo;
@@ -116,8 +116,8 @@ int setup_signals(struct simple_sig *sig);
  * str_tolower(str, len)      : lower case a string
  * str_toupper(str, len)      : upper case a string
  * str_countch(str, len, ch)  : count number of ch in str
- * str_cmpmem(s1,len,s2,len2)  : cmp mem return < 0, 0, > 0 if lt, eq or gt 
- * str_cmpmemi(s1,len,s2,len2) : cmp mem ignore case return < 0, 0, > 0 if lt, eq or gt 
+ * str_cmpmem(s1,len,s2,len2)  : cmp mem return < 0, 0, > 0 if lt, eq or gt
+ * str_cmpmemi(s1,len,s2,len2) : cmp mem ignore case return < 0, 0, > 0 if lt, eq or gt
  * str_startswith(str,len,ch) : true if str begins with ch
  * str_endswith(str,len,ch)   : true if str ends with ch
  * str_isnumeric(str, len)    : true if str is numeric
@@ -137,7 +137,7 @@ static inline const char *ec_tostr(int len, const char *estr[len], int ec, const
     const char *str;
 
     str = ec >= 0 && ec < len
-        ? estr[ec] 
+        ? estr[ec]
         : NULL;
 
     return str ?: def;
@@ -194,12 +194,12 @@ static inline void *str_memcpy(void *dst, const void *src, int len)
     return dptr;
 }
 
-static inline int is_white(int ch) 
+static inline int is_white(int ch)
 {
     return ch == ' ' || ch == '\t' || ch == '\v' || ch == '\r' || ch == '\n' ? 1 : 0;
 }
 
-static inline int is_numeral(int ch) 
+static inline int is_numeral(int ch)
 {
     return ch >= '0' && ch <= '9' ? 1 : 0;
 }
@@ -286,7 +286,7 @@ static inline int str_endswith(const char *str, size_t len, int ch)
 static inline int str_isnumeric(const char *str, size_t len)
 {
     if (!len) return 0;
-    
+   
     const char *end = str + len;
 
     while (str < end) {
@@ -322,19 +322,19 @@ static inline char *uint8_toa(char *wptr, uint8_t val)
     if (val < 10) {
         // 1-digit : 0 - 9
         *wptr++ = val + '0';
-    } 
+    }
     else if (val < 100) {
         // 2-digit : 10 - 99
-        // n / 10 is : (n * 205) >> 11 
-        uint8_t d1 = (val * 205) >> 11; 
+        // n / 10 is : (n * 205) >> 11
+        uint8_t d1 = (val * 205) >> 11;
         uint8_t d2 = val - (d1 * 10);
         *wptr++ = d1 + '0';
         *wptr++ = d2 + '0';
-    } 
+    }
     else {
         // 3-digit : 100 - 255
         // n / 100 is : (n * 164) >> 14
-        uint8_t d1 = (val * 164) >> 14; 
+        uint8_t d1 = (val * 164) >> 14;
         uint8_t rem = val - (d1 * 100);
         // rem / 10 is : (rem * 205) >> 11
         uint8_t d2 = (rem * 205) >> 11;
@@ -348,7 +348,7 @@ static inline char *uint8_toa(char *wptr, uint8_t val)
 }
 
 // a fast 16-bit value to ascii encoder
-static inline char *uint16_toa(char *wptr, uint16_t val) 
+static inline char *uint16_toa(char *wptr, uint16_t val)
 {
     // 16-bits - max 5 digits - 65535
     if (val >= 10000) *wptr++ = (val / 10000) + '0';
@@ -418,7 +418,7 @@ size_t ip6_str_encode(const uint8_t addr[static 16], int flags, char *str, size_
  * dec_u16(buf) : decode a 16-bit value at buf
  */
 
-static inline uint8_t __attribute__((always_inline)) hex_to_nibble(char ch) 
+static inline uint8_t __attribute__((always_inline)) hex_to_nibble(char ch)
 {
     // no multiply, cache hit or branches
     return (ch & 0xf) + (ch >> 6) + ((ch >> 6) << 3);
@@ -489,11 +489,12 @@ struct strbuf {
  * strbuf_init(buf, mem, len) : load buffer with mem and size
  * strbuf_reset(buf)          : rewind buffer ptr to start
  * -
- * strbuf_start(buf)    : return buffer start
- * strbuf_pos(buf)      : return buffer pos
+ * strbuf_start(buf)    : return buffer start pointer
+ * strbuf_ptr(buf)      : return buffer position pointer
  * strbuf_end(buf)      : return 1 if ptr at end else 0
- * strbuf_avail(buf)    : return space remaining
- * strbuf_used(buf)     : return space used
+ * strbuf_len(buf)      : return buffer size
+ * strbuf_rem(buf)      : return space remaining
+ * strbuf_pos(buf)      : return space used
  * strbuf_mksp(buf,len) : return ptr if space else null
  * strbuf_endz(buf)     : set ptr pos to nul char
  * -
@@ -532,17 +533,22 @@ static inline char *strbuf_start(struct strbuf *buf)
     return (char *) buf->mem;
 }
 
-static inline char *strbuf_pos(struct strbuf *buf)
+static inline char *strbuf_ptr(struct strbuf *buf)
 {
     return (char *) buf->ptr;
 }
 
-static inline size_t strbuf_avail(struct strbuf *buf)
+static inline size_t strbuf_len(struct strbuf *buf)
+{
+    return buf->end - buf->mem;
+}
+
+static inline size_t strbuf_rem(struct strbuf *buf)
 {
     return buf->end - buf->ptr;
 }
 
-static inline size_t strbuf_used(struct strbuf *buf)
+static inline size_t strbuf_pos(struct strbuf *buf)
 {
     return buf->ptr - buf->mem;
 }
@@ -554,7 +560,7 @@ static inline int strbuf_end(struct strbuf *buf)
 
 static inline uint8_t *strbuf_mksp(struct strbuf *buf, size_t len)
 {
-    if (len > strbuf_avail(buf)) return NULL;
+    if (len > strbuf_rem(buf)) return NULL;
     uint8_t *ptr = buf->ptr;
     buf->ptr += len;
     return ptr;
@@ -598,8 +604,8 @@ static inline size_t strbuf_putcm(struct strbuf *buf, int c, const char *mem, si
 
 static inline size_t strbuf_puticm(struct strbuf *buf, int ch, const char *mem, size_t len)
 {
-    return strbuf_used(buf)
-        ? strbuf_putcm(buf, ch, mem, len) 
+    return strbuf_pos(buf)
+        ? strbuf_putcm(buf, ch, mem, len)
         : strbuf_putm(buf, mem, len);
 }
 
@@ -633,11 +639,11 @@ int run_cmd(struct strbuf *buf, int flags, const char *fmt, ...) \
     __attribute__((format(printf, 3, 4)));
 
 /*
- * String slice API 
+ * String slice API
  * ----------------
  * A simple structure that stores a ptr + len
  * - Ensures buffer + len alway available
- * - No more strlen() to check 
+ * - No more strlen() to check
  * - Can pass by value a ptr + len
  * - Can return by value a ptr + len
  */
@@ -648,25 +654,25 @@ struct str_slice {
     size_t len;
 };
 
-/* str_slice API 
+/* str_slice API
  * -------------
  * SLICE(str)             : macro to extract the slice len and ptr
  * slice_make(str, len)   : return a slice set with str and len
  * slice_make_cstr(str)   : return a slice set with str
- * slice_copy(str)        : return a copy of str 
+ * slice_copy(str)        : return a copy of str
  * slice_tomem(slice, men, len) : copy slice to mem
  * -
- * slice_cmp(s1, s2)             : cmp slices - return < 0, 0, > 0 if lt, eq or gt 
- * slice_cmpmem(slice, mem, len) : cmp slice to mem - return < 0, 0, > 0 if lt, eq or gt 
+ * slice_cmp(s1, s2)             : cmp slices - return < 0, 0, > 0 if lt, eq or gt
+ * slice_cmpmem(slice, mem, len) : cmp slice to mem - return < 0, 0, > 0 if lt, eq or gt
  * slice_cmpstr(slice, str)      : cmp slice to str - return < 0, 0, > 0 if lt, eq or gt
  * -
  * slice_casecmp(s1, s2)             : cmp slice - ignore case
- * slice_casecmpmem(slice, mem, len) : cmp slice to mem - return < 0, 0, > 0 if lt, eq or gt 
+ * slice_casecmpmem(slice, mem, len) : cmp slice to mem - return < 0, 0, > 0 if lt, eq or gt
  * slice_casecmpstr(slice, str)      : cmp slice to str - return < 0, 0, > 0 if lt, eq or gt
  * -
  * slice_startswith(str,ch)      : true if str begins with ch
  * slice_endswith(str,ch)        : true if str ends with ch
- * slice_isnumeric(str)          : true if slice is numeric 
+ * slice_isnumeric(str)          : true if slice is numeric
  * -
  * slice_unbracket(str, left, right) : strip left and right chars from str
  * slice_chop(str, ch)    : chop str-slice at ch if founc
@@ -676,7 +682,7 @@ struct str_slice {
  * slice_countch(str,ch)  : count number of ch in slice
  * slice_tou32(str)         : convert str-slice to uint32_t
  * slice_ltrim(str)         : left trim leading whitespace
- * slice_rtrim(str)         : right trim trailing whitespace    
+ * slice_rtrim(str)         : right trim trailing whitespace   
  * slice_trim(str)          : trim left and right whitespace
  * slice_toupper(str)       : upper case str
  * slice_tolower(str)       : lowwer case str
@@ -782,7 +788,7 @@ static inline struct str_slice *slice_chop(struct str_slice *str, int ch)
 static inline struct str_slice slice_rsplit(struct str_slice *src, int ch)
 {
     struct str_slice dst;
-   
+  
     dst.ptr = memrchr(src->ptr, ch, src->len);
 
     if (dst.ptr) {
@@ -952,7 +958,7 @@ int uint_setval(uint32_t *uval, const char *name, const char *val_str);
 
 // cmd-line option
 struct cmd_opt {
-    const char *name; 
+    const char *name;
     const char *desc;
     const char *def_str;
     int has_arg;  // 0=none, 1=requried, 2=optional

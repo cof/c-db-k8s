@@ -1,4 +1,4 @@
-/* 
+/*
  * launcher : runtime container launcher
  * Usage    : ./launcher --help
  * Example  : sudo ./launcher
@@ -80,7 +80,7 @@ struct lau_ctx {
     unsigned int use_name_id  : 1; // ???
     unsigned int use_subdirs  : 1; // rootfs
     unsigned int use_overlay  : 1; // lower,upper,work,merged
-    unsigned int mount_cmds   : 1; // mount cmd files instead of copying 
+    unsigned int mount_cmds   : 1; // mount cmd files instead of copying
     unsigned int child_add_ip : 1; // child process sets up network
 };
 
@@ -143,7 +143,7 @@ static int lau_wait_pids(struct lau_ctx *lau)
 
     while (lau->sig.run && lau->num_run > 0) {
         // wait for child status
-        pid_t pid = waitpid(-1, &status, 0); 
+        pid_t pid = waitpid(-1, &status, 0);
         if (pid == 0) continue;
         // check if waitpid failed
         if (pid == -1) {
@@ -164,7 +164,7 @@ static int lau_wait_pids(struct lau_ctx *lau)
             log_info("LOG", "waitpid reaped unknown pid %d", pid);
             continue;
         }
-        // check if child stll running 
+        // check if child stll running
         status = lau_check_reaped(lau, child, status);
         if (status != 0) break;
     }
@@ -179,7 +179,7 @@ static int lau_wait_pids(struct lau_ctx *lau)
 static int lau_child_send_go(struct lau_ctx *lau, struct lau_child *child)
 {
     return sync_pipe_write(
-        &child->go_write_fd, &lau->sig, 
+        &child->go_write_fd, &lau->sig,
         "lau", "send-go", child->name, child->pid
     );
 }
@@ -194,7 +194,7 @@ static int lau_child_wait_ready(struct lau_ctx *lau, struct lau_child *child)
 }
 
 // sequential start - i.e. ensure DB server is up before client
-static int lau_sync_inorder(struct lau_ctx *lau) 
+static int lau_sync_inorder(struct lau_ctx *lau)
 {
     log_debug("Launcher sync %d containers in order", lau->num_proc);
 
@@ -211,7 +211,7 @@ static int lau_sync_inorder(struct lau_ctx *lau)
 }
 
 // parallel start - note clone/fork start order is undefined by OS
-static int lau_sync_parallel(struct lau_ctx *lau) 
+static int lau_sync_parallel(struct lau_ctx *lau)
 {
     log_debug("Launcher sync %d containers in parallel", lau->num_proc);
 
@@ -305,7 +305,7 @@ static int lau_link_veths(struct lau_ctx *lau, struct lau_child *x, struct lau_c
 // check if client must add network when cloned
 static int lau_check_net(struct lau_ctx *lau, struct lau_child *child)
 {
-    if (child->ip_addr && lau->child_add_ip) { 
+    if (child->ip_addr && lau->child_add_ip) {
         // tell child process to add network
         child->need_network = 1;
     }
@@ -337,7 +337,7 @@ static int lau_create_netns(struct lau_ctx *lau, struct lau_child *child)
 // load cmd file from host into container filesystem
 static int lau_load_cmd(struct lau_ctx *lau, struct lau_child *child)
 {
-    log_debug("Launcher load-cmd (name=%s, cmd=%s dst=%s)", 
+    log_debug("Launcher load-cmd (name=%s, cmd=%s dst=%s)",
         child->name, child->cmd_path,  child->exec_path);
 
     int rc = -1;
@@ -385,9 +385,9 @@ static int lau_mount_overlay(struct lau_ctx *lau, struct lau_child *child)
 
     log_debug("lau add-overlay (name=%s)", child->name);
 
-    int rc = mount_overlay(child->rootfs_path, 
-        child->lowerdir ?: lau->rootfs_dir, 
-        child->upperdir, 
+    int rc = mount_overlay(child->rootfs_path,
+        child->lowerdir ?: lau->rootfs_dir,
+        child->upperdir,
         child->workdir,
         child->name
     );
@@ -454,7 +454,7 @@ static int lau_create_storedir(struct lau_ctx *lau, struct lau_child *child)
 
     // create store-dir/child-name
     name = lau->use_name_id
-        ? gen_id(tmp, sizeof(tmp), child->name) 
+        ? gen_id(tmp, sizeof(tmp), child->name)
         : child->name;
 
     child->store_dir = gen_path(lau->store_dir, name);
@@ -478,7 +478,7 @@ static int lau_check_rootfs(struct lau_ctx *lau)
 
     if (!lau->rootfs_dir) return 0;
 
-    /* Do we need to make  rootfs_dir private 
+    /* Do we need to make  rootfs_dir private
     if (mount(lau->rootfs_dir, lau->rootfs_dir, NULL, MS_BIND | MS_REC, NULL) != 0) {
         return log_errno_rf("mount bind %s failed", lau->rootfs_dir);
     }
@@ -509,7 +509,7 @@ static int lau_setup_all(struct lau_ctx *lau)
     log_debug("Launcher setup infrastucture");
 
     RUN(lau_open_host_netns(lau));
-    
+   
     // create dirs
     if (lau->need_basedir) {
         RUN(create_path(lau->base_dir, lau->dir_mode));
@@ -538,7 +538,7 @@ static int lau_setup_all(struct lau_ctx *lau)
 // create a new child for cfg
 static struct lau_child *lau_add_child(struct lau_ctx *lau, struct lau_config *cfg)
 {
-    if (lau->num_proc >= lau->max_proc) { 
+    if (lau->num_proc >= lau->max_proc) {
         return log_error_rn("Add failed. num-proc %d >= max %d", lau->num_proc, lau->max_proc);
     }
 
@@ -600,15 +600,15 @@ static int lau_apply_cfg(struct lau_ctx *lau)
     }
 
     // set sync order
-    lau->sync_all = lau->start_order 
-        ? lau_sync_inorder 
+    lau->sync_all = lau->start_order
+        ? lau_sync_inorder
         : lau_sync_parallel;
 
     // all done
     return 0;
 }
 
-/* cmd-line */ 
+/* cmd-line */
 // TODO use xmacros
 enum {
     opt_help,
@@ -762,19 +762,19 @@ static struct lau_ctx *lau_create(void)
     return lau;
 }
 
-// define containers 
+// define containers
 static struct lau_config db_cfg = {
-    .name = "db", 
-    .cmd_path = "db/server", 
-    .exec_path = "/bin/server", 
+    .name = "db",
+    .cmd_path = "db/server",
+    .exec_path = "/bin/server",
     .ip_addr = "10.0.0.1"
 };
 
 static struct lau_config client_cfg = {
-    .name = "client", 
-    .cmd_path = "client/client", 
-    .exec_path = "/bin/client", 
-    .exec_args = "--hostname 10.0.0.1", 
+    .name = "client",
+    .cmd_path = "client/client",
+    .exec_path = "/bin/client",
+    .exec_args = "--hostname 10.0.0.1",
     .ip_addr = "10.0.0.2"
 };
 
@@ -810,7 +810,7 @@ int main(int argc, char *argv[])
     // no errors
     ec = 0;
 
-done:   
+done:  
     if (lau) lau_destroy(lau);
 
     return ec;

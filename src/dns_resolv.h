@@ -5,7 +5,7 @@
  * Features include non-blocking I/O, parallel queries and static memory use.
  *
  * The aim is for a simple/fast/static memory implementation that does not
- * require a require massive shared library code base that can be easily 
+ * require a require massive shared library code base that can be easily
  * integrated into any application socket I/O frameworks.
  *
  * General idea is you pass the resolver an array of dns_sockaddr and a
@@ -17,7 +17,7 @@
  *
  *   struct dns_sockaddr {
  *       int sock_type; // e.g SOCK_STREAM, SOCK_DGRAM
- *       socklen_t len; // size of encoded addr 
+ *       socklen_t len; // size of encoded addr
  *       union {
  *           struct sockaddr     sa; // 16 bytes (base)
  *           struct sockaddr_in  v4; // 16 bytes
@@ -26,9 +26,9 @@
  *   };
  *
  * Flags is bit-wise mask of the following values:
- * 
+ *
  *  DNS_TCP      : resolve port for SOCK_STREAM type
- *  DNS_UDP      : resolve port for SOCK_DGRAM type 
+ *  DNS_UDP      : resolve port for SOCK_DGRAM type
  *  DNS_IPV4     : resolve hostname to AF_INET (IPv4) address
  *  DNS_IPV6     : resolve hostname to AF_INET6 (IPv6) address
  *  DNS_PASSIVE  : set IP address that can be used with bind()
@@ -97,12 +97,12 @@
 // resolver flags
 #define DNS_TCP      (1 << 0)  // resolve port for SOCK_STREAM type
 #define DNS_UDP      (1 << 1)  // resolve port for SOCK_DGRAM type
-#define DNS_IPV4     (1 << 2)  // resolve hostname to AF_INET (IPv4) address  
+#define DNS_IPV4     (1 << 2)  // resolve hostname to AF_INET (IPv4) address 
 #define DNS_IPV6     (1 << 3)  // resolve hostname to AF_INET6 (IPv6) address
-#define DNS_PASSIVE  (1 << 4)  // set IP address that can be used with bind() 
+#define DNS_PASSIVE  (1 << 4)  // set IP address that can be used with bind()
 #define DNS_NUMPORT  (1 << 5)  // numeric port; do not resolve via /etc/services
 #define DNS_V4MAPPED (1 << 6)  // if DNS_IPV6 is set map all IPv4 address to IPv6
-#define DNS_ALL      (1 << 7)  // if DNS_IPV6|DNS_VMAPPED set keep IPv4 mapped else discard 
+#define DNS_ALL      (1 << 7)  // if DNS_IPV6|DNS_VMAPPED set keep IPv4 mapped else discard
 
 // error codes
 #define DNS_OK        0
@@ -127,7 +127,7 @@
 // address
 struct dns_sockaddr {
     int sock_type; // e.g SOCK_STREAM, SOCK_DGRAM
-    socklen_t len; // size of encoded addr 
+    socklen_t len; // size of encoded addr
     union {
         struct sockaddr     sa; // 16 bytes (base)
         struct sockaddr_in  v4; // 16 bytes
@@ -136,7 +136,7 @@ struct dns_sockaddr {
 };
 
 int dns_init(uint32_t hosts_size, uint32_t cache_size, struct simple_sig *sig);
-int dns_resolv(uint32_t flags, 
+int dns_resolv(uint32_t flags,
     const char *hostname, const char *port,
     int max_addr, struct dns_sockaddr addrs[max_addr]);
 char *dns_sockaddr_tostr(struct dns_sockaddr *addr);

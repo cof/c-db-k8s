@@ -1,7 +1,7 @@
 /*
- * HASHMAP 
+ * HASHMAP
  * ------
- * a hash map api featuring 
+ * a hash map api featuring
  * - C11 generics : type safe map operations
  * - X-Macros  : code generation, traceable code
  * - Fibonacci hashing : fast hashing
@@ -36,7 +36,7 @@
 #include <stdlib.h>
 
 // 32 bit Fibonacci hashing
-static inline uint32_t map_hash32(uint32_t key, int bits) 
+static inline uint32_t map_hash32(uint32_t key, int bits)
 {
     key ^= key >> 16;
     return (key * 2654435761U) >> (32 - bits);
@@ -54,7 +54,7 @@ static inline uint32_t map_hashstr(const char *key, int bits)
     return (hash * 0x9E3779B97F4A7C15ULL) >> (64 - bits);
 }
 
-static inline int map_streq(const char *a, const char *b) 
+static inline int map_streq(const char *a, const char *b)
 {
     if (a == b) return 1;
     if (!a || !b) return 0;

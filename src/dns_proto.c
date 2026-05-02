@@ -17,8 +17,8 @@
  * rfc6891 - Extension Mechanisms for DNS (EDNS(0))
  */
 #include <errno.h>
-#include <arpa/inet.h>   
-#include <arpa/inet.h> 
+#include <arpa/inet.h>  
+#include <arpa/inet.h>
 #include <stdarg.h>
 
 #include "util.h"
@@ -54,7 +54,7 @@ struct dns_dec {
     unsigned int load_msg : 1;
     unsigned int got_edns : 1;
     unsigned int dnssec_ok : 1;
-    // EDNS0 Options (RFC 6891)  
+    // EDNS0 Options (RFC 6891) 
     size_t udp_size;
     uint8_t ext_rcode;
     uint8_t edns_ver;
@@ -138,7 +138,7 @@ static const char *dns_ec_tostr(int ec)
     X(DNS_AAAA,  "AAAA") \
     X(DNS_SRV,   "SRV") \
     X(DNS_OPT,   "OPT") \
-    X(DNS_ANY,   "ANY") 
+    X(DNS_ANY,   "ANY")
 
 #define LOCATION_NAME(NAME, TEXT) NAME,
 #define LOCATION_TEXT(NAME, TEXT) [NAME] = TEXT,
@@ -247,11 +247,11 @@ static int dns_add_str(char *buf, size_t len, const char *str, size_t slen)
 }
 
 // append a fmt message to emsg buffer
-static int dns_wmsg(struct dns_dec *dec, const char *fmt, ...) 
+static int dns_wmsg(struct dns_dec *dec, const char *fmt, ...)
 {
     struct strbuf *buf = &dec->emsg;
-    size_t avail = strbuf_avail(buf);
-    char *ptr = strbuf_pos(buf);
+    size_t avail = strbuf_rem(buf);
+    char *ptr = strbuf_ptr(buf);
 
     va_list args;
     va_start(args, fmt);
@@ -303,7 +303,7 @@ char *dns_err_tostr(struct dns_dec *dec, struct dns_err *err)
 static int dns_dec_genmsg(struct dns_dec *dec)
 {
     if (!dec->nerr) {
-        if (!strbuf_avail(&dec->emsg)) {
+        if (!strbuf_rem(&dec->emsg)) {
             // decoders desc failed ?
             dns_wmsg(dec, "[ERROR] Missing PDU desc");
         }
@@ -348,7 +348,7 @@ int dns_hdr_decode(struct dns_hdr *hdr, const uint8_t *buf, size_t len)
     return 0;
 }
 
-// decode dns name from pkt buf - return bytes written or error 
+// decode dns name from pkt buf - return bytes written or error
 int decode_name(struct dns_dec *dec, char *name, size_t nlen)
 {
     size_t pkt_idx = dec->offset;
@@ -358,9 +358,9 @@ int decode_name(struct dns_dec *dec, char *name, size_t nlen)
     while (pkt_idx < dec->pkt_len) {
         // get label length
         len = dec->pkt_buf[pkt_idx++];
-        // compression pointer - rfc1035 - 4.1.4. Message compression  
+        // compression pointer - rfc1035 - 4.1.4. Message compression 
         if ((len & DNS_COMP_PTR) == DNS_COMP_PTR) {
-            if (pkt_idx == dec->pkt_len)  return -DNS_EBADJMP; 
+            if (pkt_idx == dec->pkt_len)  return -DNS_EBADJMP;
             if (njmp++ > DNS_MAX_JMP) return -DNS_EMAXJMP;
             if (njmp == 1) dec->offset += 2;
             // convert to jmp position
@@ -374,12 +374,12 @@ int decode_name(struct dns_dec *dec, char *name, size_t nlen)
 
         // label len (0-63)
         if ((size_t) len > dec->pkt_len - pkt_idx) return -DNS_ENAMELEN;
-        if ((size_t) len > out_len) return -DNS_EOUTLEN; 
+        if ((size_t) len > out_len) return -DNS_EOUTLEN;
         if (!njmp) dec->offset += 1 + len;
 
         // null check
         if (len == 0) break;
-    
+   
         // copy label
         if (name) {
             memcpy(name, dec->pkt_buf + pkt_idx, len);
@@ -388,7 +388,7 @@ int decode_name(struct dns_dec *dec, char *name, size_t nlen)
         out_len -= len;
         pkt_idx += len;
 
-        // add a dot    
+        // add a dot   
         if (!out_len) return -DNS_EOUTLEN;
         if (pkt_idx < dec->pkt_len && dec->pkt_buf[pkt_idx]) {
             // store the dot
@@ -418,7 +418,7 @@ struct dns_sect {
 };
 
 static void sect_init(struct dns_sect *sect,
-    struct dns_rr *base, uint16_t max, 
+    struct dns_rr *base, uint16_t max,
     uint16_t *count)
 {
     sect->base = base;
@@ -463,7 +463,7 @@ int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len)
     // rdata
     switch(rr->type) {
     case DNS_TYPE_A: // IP4 address
-        len = ip4_str_encode(rr->rdata.a, strbuf_pos(buf), strbuf_avail(buf));
+        len = ip4_str_encode(rr->rdata.a, strbuf_ptr(buf), strbuf_rem(buf));
         strbuf_mksp(buf, len);
         break;
     case DNS_TYPE_NS:
@@ -472,7 +472,7 @@ int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len)
     case DNS_TYPE_CNAME:
         strbuf_puts(buf, rr->rdata.cname);
         break;
-    case DNS_TYPE_SOA: 
+    case DNS_TYPE_SOA:
         // name + name + 5 integers
         strbuf_putm(buf, STR_LIT("MNAME="));
         strbuf_puts(buf, rr->rdata.soa.mname);
@@ -484,8 +484,8 @@ int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len)
         strbuf_putcn(buf, ' ', rr->rdata.soa.expire);
         strbuf_putcn(buf, ' ', rr->rdata.soa.min_ttl);
         break;
-    case DNS_TYPE_PTR: 
-        strbuf_puts(buf, rr->rdata.ptr_name); 
+    case DNS_TYPE_PTR:
+        strbuf_puts(buf, rr->rdata.ptr_name);
         break;
     case DNS_TYPE_HINFO:
         strbuf_putm(buf, STR_LIT("cpu="));
@@ -493,7 +493,7 @@ int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len)
         strbuf_putcm(buf,' ', STR_LIT("os="));
         strbuf_puts(buf, rr->rdata.hinfo.os_str);
         break;
-    case DNS_TYPE_MX: // Mail Exchange 
+    case DNS_TYPE_MX: // Mail Exchange
         strbuf_putm(buf, STR_LIT("Pref="));
         strbuf_putn(buf, rr->rdata.mx.pref);
         strbuf_putcs(buf, ' ', rr->rdata.mx.name);
@@ -506,7 +506,7 @@ int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len)
         }
         break;
     case DNS_TYPE_AAAA:// IPv6 Address
-        len = ip6_str_encode(rr->rdata.aaaa, 0, strbuf_pos(buf), strbuf_avail(buf));
+        len = ip6_str_encode(rr->rdata.aaaa, 0, strbuf_ptr(buf), strbuf_rem(buf));
         strbuf_mksp(buf, len);
         break;
     case DNS_TYPE_SRV:
@@ -536,14 +536,14 @@ int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len)
     strbuf_endz(buf);
 
     // bytes written
-    return strbuf_used(buf);
+    return strbuf_pos(buf);
 }
 
 // add dns section as string to buffer
 static int dns_sect_tostr(struct dns_sect *sect, char *buf, size_t buf_len)
 {
     size_t nw = 0;
-        
+       
     for (int i = 0; i < *sect->count; i++) {
         if (i > 0) {
             if (nw == buf_len) return DNS_FAIL;
@@ -836,7 +836,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         // decoded
         rdata_desc = rdata_str;
         break;
-    case DNS_TYPE_MX: { // Mail Exchange 
+    case DNS_TYPE_MX: { // Mail Exchange
         if (rdlen < 3) return dns_dec_err(dec, DNS_RR, DNS_MX, DNS_ERDATALEN);
         // Preference
         uint16_t pref = dec_u16(mkptr(dec->pkt_buf, dec->offset));
@@ -980,7 +980,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         rdata_desc = rdata_str;
         break;
     }
-    case DNS_TYPE_ANY: // Wildcard match (Query only) 
+    case DNS_TYPE_ANY: // Wildcard match (Query only)
         dec->offset += rdlen;
         break;
     default:
@@ -1000,9 +1000,9 @@ static int dns_rr_decode(struct dns_dec *dec,
         const char *class_str = dns_class_tostr(rr_class);
         const char *type_str  = dns_type_tostr(rr_type);
         // Record prefix
-        rc = rr_type == DNS_TYPE_OPT 
+        rc = rr_type == DNS_TYPE_OPT
             ? dns_wmsg(dec, "  %s: %s %s %s\n", sect_str, rec_name, type_str, rdata_desc)
-            : dns_wmsg(dec, "  %s: %s %d %s %s %s\n", sect_str, rec_name, rr_ttl, 
+            : dns_wmsg(dec, "  %s: %s %d %s %s %s\n", sect_str, rec_name, rr_ttl,
                 class_str, type_str, rdata_desc);
     }
 
@@ -1061,7 +1061,7 @@ static int dns_qd_decode(struct dns_dec *dec, struct dns_msg *msg)
     return ec;
 }
 
-// decode all resource records (RR) for a DNS section 
+// decode all resource records (RR) for a DNS section
 static int dns_sect_decode(struct dns_dec *dec, struct dns_msg *msg,
     int nrec, int sect_code, struct dns_sect *sect)
 {
@@ -1172,7 +1172,7 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
         int tc = flags & DNS_FLAGS_TC ? 1 : 0;
         int rd = flags & DNS_FLAGS_RD ? 1 : 0;
         int cd = flags & DNS_FLAGS_CD ? 1 : 0;
-        int ad = flags & DNS_FLAGS_AD ? 1 : 0;   
+        int ad = flags & DNS_FLAGS_AD ? 1 : 0;  
 
         // add flags
         if (tc) strbuf_puticm(&buf, ' ', STR_LIT("TC:1"));
@@ -1190,8 +1190,8 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
     // desc PDU as we decode
     rc = dns_wmsg(dec,
         "[%s] ID 0x%04x QR:%d OPCODE:%s %.*s\n",
-        type_str, hdr->id, qr, opcode_str, 
-        (int) strbuf_used(&buf), strbuf_start(&buf));
+        type_str, hdr->id, qr, opcode_str,
+        (int) strbuf_pos(&buf), strbuf_start(&buf));
 
     return rc;
 }
@@ -1213,7 +1213,7 @@ static int decode_msg(struct dns_dec *dec, struct dns_msg *msg)
     if (dec->need_emsg && dec->pkt_len > dec->udp_size) {
         //  pkt len exceed 512 bytes (UDP) or declared length
         rc = dns_wmsg(dec,
-            "UDP message: packet-length %zu > max size %zu\n", 
+            "UDP message: packet-length %zu > max size %zu\n",
             dec->pkt_len, dec->udp_size
         );
     }
@@ -1267,7 +1267,7 @@ struct dns_suffix {
     uint16_t offset;
 };
 
-// DNS encoder 
+// DNS encoder
 struct dns_enc {
     uint8_t *pkt_buf;
     size_t pkt_max;
@@ -1281,7 +1281,7 @@ static uint8_t *encode_name(struct dns_enc *enc, uint8_t *wptr, const char *name
 {
     int offset = wptr - enc->pkt_buf;
     const char *name_end = name ? name + strlen(name) : NULL;
-    
+   
     while (name < name_end) {
         // scan for suffix match
         for (size_t i = 0; i < enc->num_suffix; i++) {
@@ -1354,7 +1354,7 @@ static uint8_t *enc_fld_mkspace(struct dns_enc *enc, size_t len, int sc, int typ
 
     if (!wbuf) {
         return log_error_rn(
-            "No room for %s field %s len %zu", 
+            "No room for %s field %s len %zu",
             dec_code_tostr(sc), dns_type_tostr(type), len
         );
     }
@@ -1443,7 +1443,7 @@ static int dns_rr_encode(struct dns_enc *enc, struct dns_rr *rr, int sc)
 
     // add rdata
     switch(rr->type) {
-    case DNS_TYPE_A: 
+    case DNS_TYPE_A:
         rc = dns_enc_mem(enc, rr->rdata.a, sizeof(rr->rdata.a), sc, rr->type);
         if (rc) return rc;
         break;
@@ -1486,7 +1486,7 @@ static int dns_rr_encode(struct dns_enc *enc, struct dns_rr *rr, int sc)
         if (len_os) memcpy(wptr, rr->rdata.hinfo.os_str, len_os);
         break;
     }
-    case DNS_TYPE_MX: // Mail Exchange 
+    case DNS_TYPE_MX: // Mail Exchange
         len = sizeof(uint32_t);
         wptr = enc_fld_mkspace(enc, len, sc, rr->type);
         if (!wptr) return -1;
@@ -1494,7 +1494,7 @@ static int dns_rr_encode(struct dns_enc *enc, struct dns_rr *rr, int sc)
         rc = dns_enc_name(enc, rr->rdata.mx.name, sc, rr->type);
         if (rc) return rc;
         break;
-    case DNS_TYPE_TXT: 
+    case DNS_TYPE_TXT:
         // encode txt array
         for (int i = 0; i < rr->rdata.txt.num_str; i++) {
             char *str = rr->rdata.txt.str[i];
@@ -1518,7 +1518,7 @@ static int dns_rr_encode(struct dns_enc *enc, struct dns_rr *rr, int sc)
         rc = dns_enc_name(enc, rr->rdata.srv.name, sc, rr->type);
         if (rc) return rc;
         break;
-    case DNS_TYPE_OPT: {// EDNS0 Options (RFC 6891) 
+    case DNS_TYPE_OPT: {// EDNS0 Options (RFC 6891)
         uint32_t ttl = 0;
         ttl |= rr->rdata.opt.ext_rcode << 24;
         ttl |= rr->rdata.opt.edns_ver  << 16;
@@ -1530,7 +1530,7 @@ static int dns_rr_encode(struct dns_enc *enc, struct dns_rr *rr, int sc)
         wptr = enc_u16(wptr, ttl);
         break;
     }
-    case DNS_TYPE_ANY: // Wildcard match (Query only) 
+    case DNS_TYPE_ANY: // Wildcard match (Query only)
         break;
     default:
         break;
@@ -1667,7 +1667,7 @@ static int dns_sect_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dn
 
     // store rdata
     switch(rr->type) {
-    case DNS_TYPE_A: 
+    case DNS_TYPE_A:
         memcpy(rr->rdata.a, src_rr->rdata.a, 4);
         break;
     case DNS_TYPE_NS:
@@ -1700,7 +1700,7 @@ static int dns_sect_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dn
         rr->rdata.hinfo.cpu_str = msg_store_name(msg, src_rr->rdata.hinfo.cpu_str);
         rr->rdata.hinfo.os_str  = msg_store_name(msg, src_rr->rdata.hinfo.os_str);
         break;
-    case DNS_TYPE_MX: // Mail Exchange 
+    case DNS_TYPE_MX: // Mail Exchange
         rr->rdata.mx.pref = src_rr->rdata.mx.pref;
         rr->rdata.mx.name = msg_store_name(msg, src_rr->rdata.mx.name);
         if (!rr->rdata.mx.name) return -1;
@@ -1724,7 +1724,7 @@ static int dns_sect_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dn
         rr->rdata.srv.name   = msg_store_name(msg, src_rr->rdata.srv.name);
         if (!rr->rdata.srv.name) return -1;
         break;
-    case DNS_TYPE_ANY: // Wildcard match (Query only) 
+    case DNS_TYPE_ANY: // Wildcard match (Query only)
         break;
     case DNS_TYPE_OPT: // EDNS0 Options (RFC 6891)
         rr->rdata.opt.udp_size = src_rr->rdata.opt.udp_size;

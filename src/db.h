@@ -4,7 +4,7 @@
  * A simple API for key value store management featuring
  * - Flexible storage : can use a pure memory store or mmap file for database
  * - file : mmap file is secure and safe from corruption
- * - file : uses a header and 
+ * - file : uses a header and
  * - No fragmention : record state, key, value are stored as one block in memory
  */
 #ifndef _DB_H_
@@ -24,7 +24,7 @@
  * key-value api
  * -------------
  * db_set(key,vale) : store a key value
- * db_get(key)      : get value for key 
+ * db_get(key)      : get value for key
  * db_del(key)      : delete key
  */
 

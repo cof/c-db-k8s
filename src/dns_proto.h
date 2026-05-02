@@ -12,7 +12,7 @@
  * The dns_msg structure is defined as follows:
  *
  *   struct dns_msg {
- *       struct dns_hdr hdr; 
+ *       struct dns_hdr hdr;
  *       char names[DNS_MAX_PDUSIZE];
  *       int names_len;
  *       uint16_t qd_len;
@@ -35,7 +35,7 @@
  *  dns_msg_init(&msg, 0x1234, DNS_FLAGS_RD);
  *  rc = dns_add_qd(&msg, "example.com", DNS_TYPE_A, DNS_CLASS_IN);
  *
- *  // encode/decode 
+ *  // encode/decode
  *  ssize_t pkt_len = dns_msg_encode(&msg, buf, sizeof(buf));
  *  rc = dns_msg_decode(msg, buf, pkt_len);
  *
@@ -43,7 +43,7 @@
  *  for (int i = 0; i < msg->an_len; i++) {
  *      struct dns_rr *rr = &msg->an[i];
  *      rc = dns_rr_tostr(rr, buf, sizeof(buf));
- *      printf("%s\n", buf); 
+ *      printf("%s\n", buf);
  *  }
  *
  *  // validate
@@ -60,7 +60,7 @@
  * dns_msg_init(msg, id, flags)  : set hdr-id, hdr-flags
  * -
  * dns_add_qdl(msg, qname, len, qtype, qclass) : add to qd to msg
- * dns_add_qd(msg, qname, qtype, qclass)       : add to qd section - no qname len 
+ * dns_add_qd(msg, qname, qtype, qclass)       : add to qd section - no qname len
  * dns_add_rr(msg, sc, rr)                     : add rr to an|ns|ar section
  * dns_cnt_rr(mg)  : count total resouce records in msg
  * dns_get_rr(msg) : get first resource record if available
@@ -72,7 +72,7 @@
  * dnss_qd_tostr(qd, buf, len)    : print qd to buffer
  * dns_sects_tostr(msg, buf, len) : print sections to buffer
  * dns_rr_tostr(rr, buf, len) : print record to str buffer
- * - 
+ * -
  * rcode_tostr(rcode)     : convert rcode to str
  * opcode_tostr(opcode)   : convert opcode to str
  * dns_class_tostr(class) :
@@ -150,7 +150,7 @@
 #define DNS_TYPE_TXT    16   // Text Strings
 #define DNS_TYPE_AAAA   28   // IPv6 Address
 #define DNS_TYPE_SRV    33   // Service Locator
-#define DNS_TYPE_OPT    41   // EDNS0 Options (RFC 6891) 
+#define DNS_TYPE_OPT    41   // EDNS0 Options (RFC 6891)
 #define DNS_TYPE_ANY    255  // Wildcard match (Query only)
 
 // DNS Classes (QCLASS / CLASS)
@@ -201,7 +201,7 @@ struct dns_rr {
     const char *name;
     uint16_t type;
     uint16_t class;
-    uint32_t ttl; 
+    uint32_t ttl;
     uint16_t rdlen;
     // RDATA - union type to set|get values
     union {
@@ -217,13 +217,13 @@ struct dns_rr {
             uint32_t expire;
             uint32_t min_ttl;
         } soa; // 6
-        char *ptr_name; 
+        char *ptr_name;
         struct {
             char *cpu_str;
             char *os_str;
         } hinfo; // 13
         struct {
-            uint16_t pref;    
+            uint16_t pref;   
             char *name;
         } mx; // 15
         struct {
@@ -250,7 +250,7 @@ struct dns_rr {
 
 // DNS message state
 struct dns_msg {
-    struct dns_hdr hdr; 
+    struct dns_hdr hdr;
     // names store
     char names[DNS_MAX_PDUSIZE];
     int names_len;

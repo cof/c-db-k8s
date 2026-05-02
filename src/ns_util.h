@@ -46,7 +46,7 @@
  * shutdown_pid(pid, wait) : terminate a child process
  * exec_args_parse : convert cmd-line exec_args str into argv array
  * gen_id(buf, len, name)  : generate an id str based on hash of name
- * gen_path(dir, name)     : generate a path string 
+ * gen_path(dir, name)     : generate a path string
  */
 void shutdown_pid(int pid, int wait);
 char **exec_args_parse(const char *exec_path, const char *exec_args, int *argc);
@@ -60,17 +60,17 @@ char *gen_path(const char *dir, const char *name);
  * sync_pipe_read(fd, sig, who, name pid)  : parent|child process reads from its pipe end
  * sync_pipe_write(fd, sig, who, name pid) : parent|child process writes to its pipe end
  */
-int sync_pipe_close(int *rd_fd, int *wr_fd, 
-    const char *who, const char *what, const char *name, 
+int sync_pipe_close(int *rd_fd, int *wr_fd,
+    const char *who, const char *what, const char *name,
     pid_t pid);
 
-int sync_pipe_read(int *fd, 
-    struct simple_sig *sig, 
-    const char *who, const char *what, const char *name, 
+int sync_pipe_read(int *fd,
+    struct simple_sig *sig,
+    const char *who, const char *what, const char *name,
     pid_t pid);
 
-int sync_pipe_write(int *fd, 
-    struct simple_sig *sig, 
+int sync_pipe_write(int *fd,
+    struct simple_sig *sig,
     const char *who, const char *what, const char *name,
     pid_t pid);
 
@@ -79,7 +79,7 @@ int sync_pipe_write(int *fd,
  * ----------------
  * create_dir(path, mode, can_exist) : mkdir with mode
  * create_path_nocopy(path, mode)    : mkdir -p with mode
- * create_path(path, mode)           : mkdir -p (copys path) 
+ * create_path(path, mode)           : mkdir -p (copys path)
  * create_path_for_file(file, mode)  : mkdir -p for file
  * create_subdir(dir, subdir, mode)  : mkdir subdir with mode
  */
@@ -94,7 +94,7 @@ int copy_file(const char *src_path, const char *dst_path);
 char *validate_dir(const char *key, const char *dir);
 
 /*
- * netns 
+ * netns
  * -----
  * open_host_netns : open a fd to default host netns
  * switch_child_netns(fd, name) - switch to child netns
@@ -111,11 +111,11 @@ int create_netns_file(const char *netns_path);
  * mount_overlay(path, lower,upper,work, who) : mount an OverlayFs
  * unmount_overlay(path, who) : unmount OverlayFS
  * mount_rootfs(rootfs_dir, rootfs_path) : mount a host rootfs_dir into container rootfs_path
- * mount_cmd(host_path, roofs_path) : mount a host binary into container filesystem - no file copy 
+ * mount_cmd(host_path, roofs_path) : mount a host binary into container filesystem - no file copy
  * mount_file(path) : make a file a mount point
- * mount_netns(netns_path) : bind mount a new netns file - uses fork/exec to bind mount 
+ * mount_netns(netns_path) : bind mount a new netns file - uses fork/exec to bind mount
  */
-int mount_overlay(const char *path, 
+int mount_overlay(const char *path,
     const char *lowerdir, const char *upperdir, const char *workdir,
     const char *who);
 int unmount_overlay(const char *path, const char *name);
@@ -124,7 +124,7 @@ int mount_cmd(const char *host_path, const char *rootfs_path);
 int mount_netns(const char *netns_path);
 int mount_rootfs(const char *rootfs_dir, const char *rootfs_path);
 
-/* veth : add,delete, setns, setup 
+/* veth : add,delete, setns, setup
  * --------------------------------
  * veth_add(veth,peer)     : create a new veth device
  * veth_del(veth)          : delete veth device
@@ -152,11 +152,11 @@ int create_network(const char *veth_name, const char *ip_addr);
 /*
  * security : child process security changes
  * -----------------------------------------
- * drop_bounding_set : drop all capabilities 
+ * drop_bounding_set : drop all capabilities
  * clear_all_caps : wipe existing capabilities
  * drop_sudo : drop sudo right
  * drop_new_privs : drop right to new privileges
- * apply_seccomp : apply syscall security filters  
+ * apply_seccomp : apply syscall security filters 
  */
 int drop_bounding_set(const char *name);
 int clear_all_caps(const char *name);

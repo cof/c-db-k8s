@@ -16,7 +16,7 @@ typedef struct MAP_TYPE {
 } MAP_TYPE;
 
 
-static inline KEY_TYPE MAP_FN(sanitize)(KEY_TYPE k) 
+static inline KEY_TYPE MAP_FN(sanitize)(KEY_TYPE k)
 {
     return k == 0 ? (KEY_TYPE) -1 : k;
 }
@@ -27,7 +27,7 @@ static inline uint32_t MAP_FN(calc_bits)(uint32_t n)
 }
 
 // resize map to new capacity
-static inline uint32_t MAP_FN(resize)(MAP_TYPE *m, uint32_t capacity) 
+static inline uint32_t MAP_FN(resize)(MAP_TYPE *m, uint32_t capacity)
 {
     if (m->is_fixed) return 0;
 
@@ -59,7 +59,7 @@ static inline uint32_t MAP_FN(resize)(MAP_TYPE *m, uint32_t capacity)
     if (m->buckets) free(m->buckets);
     m->buckets  = buckets;
     m->capacity = capacity;
-    m->threshold = (capacity >> 1) + (capacity >> 2); 
+    m->threshold = (capacity >> 1) + (capacity >> 2);
     m->size     = size;
     m->mask     = mask;
     m->nbits    = nbits;
@@ -106,14 +106,14 @@ static inline uint32_t MAP_FN(end)(MAP_TYPE *m)
     return m->capacity;
 }
 
-// return elements in map 
+// return elements in map
 static inline uint32_t MAP_FN(size)(MAP_TYPE *m)
 {
     return m->size;
 }
 
 // put key, value in map - return index or end
-static inline uint32_t MAP_FN(put)(MAP_TYPE *m, KEY_TYPE key, VAL_TYPE val) 
+static inline uint32_t MAP_FN(put)(MAP_TYPE *m, KEY_TYPE key, VAL_TYPE val)
 {
     if (m->size >= m->threshold && !MAP_FN(resize)(m, m->capacity + 1)) {
         return m->capacity;
@@ -163,7 +163,7 @@ static inline uint32_t MAP_FN(rem)(MAP_TYPE *m, uint32_t idx)
     while (1) {
         nidx = (nidx + 1) & m->mask;
         if (nidx == idx || m->buckets[nidx].key == 0) break;
-        uint32_t kidx = KEY_HASH(m->buckets[nidx].key, m->nbits); 
+        uint32_t kidx = KEY_HASH(m->buckets[nidx].key, m->nbits);
         if ((nidx < idx) ^ (kidx <= idx) ^ (kidx > nidx)) {
             m->buckets[idx] = m->buckets[nidx];
             idx = nidx;

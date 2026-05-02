@@ -16,7 +16,7 @@
  *
  * Example usage:
  * -------------
- * 
+ *
  *  char line[BUFSIZ];
  *  struct simple_sock sock;
  *  sock_client(&sock, SOCK_TCP, "localhost", 10000);
@@ -69,7 +69,7 @@
 // addr-type
 #define SOCK_IPV4     (1u << 0)  // IPv4
 #define SOCK_IPV6     (1u << 1)  // IPv6
-// port-type 
+// port-type
 #define SOCK_TCP      (1u << 2)  // stream network socket
 #define SOCK_UDP      (1u << 3)  // datagram nework socket
 #define SOCK_FILE     (1u << 4)  // pipe or standard I/O fd
@@ -78,7 +78,7 @@
 #define SOCK_REUSE    (1u << 6)  // set SO_RESUSEADDR for fast server restart
 #define SOCK_UDPCON   (1u << 7)  // Connected UDP socket (fixed remote peer)
 // resolver
-#define SOCK_PASSIVE  (1u << 8)  // Bind for inbound listener (server mode) 
+#define SOCK_PASSIVE  (1u << 8)  // Bind for inbound listener (server mode)
 #define SOCK_NUMPORT  (1u << 9)  // disable name resolution on port str
 #define SOCK_ANY      (1u << 10) // IPv4, IPv6 or dual port
 
@@ -141,7 +141,7 @@ void sock_deinit(struct simple_sock *sock, int can_log);
 
 /* Connection : Create or close client|server socket connections
  * -------------------------------------------------------------
- * - sock_client(sock, mode, hostname, port) : client connect to hostname and port 
+ * - sock_client(sock, mode, hostname, port) : client connect to hostname and port
  * - sock_server(sock, mode, hostname, port) : listen|bind on hostname and port
  * - sock_accept(sock, addr) : accept a pending fd from listener queue
  * - sock_sendfin : half close - send a TCP fin (if possible)
@@ -188,7 +188,7 @@ ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[st
  * sock_send_line(sock, line)     : write send-buffer + str-sline + CRLF to fd, buffer remaining
  * -
  * sock_recv(sock)                 : read into recv-buffer from fd
- * sock_recv_line(sock, line, eof) : read line from recv-buffer - return fragment if eof  
+ * sock_recv_line(sock, line, eof) : read line from recv-buffer - return fragment if eof 
  * sock_recv_str(sock,str)         : load str-slice with recv-buffer
  * sock_recvbuf_consume(sock, len) : consume len bytes from recv-buffer
  */
@@ -240,7 +240,6 @@ char *sockaddr_tostr(struct sock_addr *addr);
 char *sock_tostr(struct simple_sock *sock);
 int sock_ipstr_decode(struct str_slice str, struct sock_addr *addr);
 
-
 static inline size_t sock_sendbuf_used(struct simple_sock *sock)
 {
     return rwbuf_used(&sock->send_buf);
@@ -253,7 +252,7 @@ static inline size_t sock_recvbuf_used(struct simple_sock *sock)
 
 static inline void sock_write_close(struct simple_sock *sock, int force)
 {
-    sock->send_fin = 1; 
+    sock->send_fin = 1;
     if (force) sock->close_now = 1;
 }
 

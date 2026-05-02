@@ -14,18 +14,18 @@
  * Status     : Socket status and info
  */
 #include <stdio.h>
-#include <stdlib.h> 
+#include <stdlib.h>
 #include <stdarg.h>
 #include <stddef.h>
-#include <string.h> 
+#include <string.h>
 #include <signal.h>
-#include <sys/types.h> 
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
 #include <sys/uio.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <netdb.h> 
+#include <netdb.h>
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -45,7 +45,7 @@ static int sock_resolv(uint32_t mode,
 
     if (mode & SOCK_PASSIVE) flags |= DNS_PASSIVE;
     if (mode & SOCK_NUMPORT) flags |= DNS_NUMPORT;
-    
+   
     // addr
     if (mode & SOCK_ANY) {
         flags |= DNS_IPV6 | DNS_V4MAPPED | DNS_ALL;
@@ -96,7 +96,7 @@ static int connect_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
     if (rc == 0) return log_error_rf("Unsupported addr %d", addr->len);
 
     int domain = addr->sa.sa_family;
-    int type = addr->sock_type; 
+    int type = addr->sock_type;
     sock->fd = socket(domain, type, 0);
 
     log_debug("a=%s t=%s fd=%d", dns_sockaddr_tostr(addr), dns_socktype_tostr(addr), sock->fd);
@@ -126,11 +126,11 @@ static int listen_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
 
     // create socket
     int domain = addr->sa.sa_family;
-    int type = addr->sock_type; 
+    int type = addr->sock_type;
     if (sock->mode & SOCK_NONBLK) type |= SOCK_NONBLOCK;
     sock->fd = socket(domain, type, 0);
 
-    log_debug("addr=%s type=%s fd=%d", 
+    log_debug("addr=%s type=%s fd=%d",
         dns_sockaddr_tostr(addr), dns_socktype_tostr(addr), sock->fd);
     if (sock->fd == -1) return log_errno_rf("socket(%d,%d) failed", domain, type);
 
@@ -258,7 +258,7 @@ int sock_accept(struct simple_sock *sock, struct sock_addr *addr)
 }
 
 // shutdown writes on socket
-int sock_sendfin(struct simple_sock *sock) 
+int sock_sendfin(struct simple_sock *sock)
 {
     if (sock->sys_err) return SOCK_ERROR;
     if (sock->fin_sent) return 0;
@@ -296,7 +296,7 @@ int sock_close(struct simple_sock *sock, int rc)
     return rc;
 }
 
-/* 
+/*
  * Change fd state
  * -----------------------
  * sock_set_mode   - change socket mode flags
@@ -335,7 +335,7 @@ int sock_set_sndto(struct simple_sock *sock, uint32_t ms)
         .tv_sec = ms / 1000,
         .tv_usec = (ms % 1000) * 1000
     };
-    
+   
     int rc = setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     if (rc) return log_errno_rf("set SO_SNDTIMEO on %d failed", sock->fd);
 
@@ -351,7 +351,7 @@ int sock_set_rcvto(struct simple_sock *sock, uint32_t ms)
         .tv_sec = ms / 1000,
         .tv_usec = (ms % 1000) * 1000
     };
-    
+   
     int rc = setsockopt(sock->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     if (rc) return log_errno_rf("set SO_RCVTIMEO, on %d failed", sock->fd);
 
@@ -505,7 +505,7 @@ ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[st
         rc = SOCK_DATA;
         write_len -= nw;
         twrite += nw;
-        
+       
         // update vectors for next write
         while (niov > 0 && (size_t) nw >= iov->iov_len) {
             nw -= iov->iov_len;
@@ -586,7 +586,7 @@ int sock_send_mem(struct simple_sock *sock, void *mem, size_t len)
 {
     struct iovec iovs[2];
 
-    // load backlog + data 
+    // load backlog + data
     iov_load(iovs + 0, rwbuf_rptr(&sock->send_buf), rwbuf_used(&sock->send_buf));
     iov_load(iovs + 1, mem, len);
 
@@ -686,7 +686,7 @@ int sock_recv_line(struct simple_sock *sock, struct str_slice *line, int eof)
     if (rc < 0) {
         // line too big
         sock->sys_err = 1;
-        return log_error_rf("peer %s exceed max line length %zu", 
+        return log_error_rf("peer %s exceed max line length %zu",
             sock_tostr(sock), sock->max_line);
     }
     return rc;
@@ -706,8 +706,8 @@ static char *sock_addr_tostr(struct sock_addr *addr)
     switch (addr_type) {
     case SOCK_IPV4: { // a.b.c.d:port
         char *str = buf;
-        str += ip4_str_encode(addr->v4, str, len); 
-        *str++ = ':'; 
+        str += ip4_str_encode(addr->v4, str, len);
+        *str++ = ':';
         str = uint16_toa(str, __builtin_bswap16(addr->port));
         str = '\0';
         break;
@@ -715,12 +715,12 @@ static char *sock_addr_tostr(struct sock_addr *addr)
     case SOCK_IPV6: { // [::]:port
         char *str = buf;
         str += ip6_str_encode(addr->v6, IP6_STR_ADDBRACK | IP6_STR_STRIPV4, str, len);
-        *str++ = ':'; 
+        *str++ = ':';
         str = uint16_toa(str, __builtin_bswap16(addr->port));
         str = '\0';
         break;
     }
-    default: 
+    default:
        buf = "<null>";
     }
 

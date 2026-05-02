@@ -1,4 +1,4 @@
-/* 
+/*
  * RWBUF - a simple memory buffer API
  * ----------------------------------
  * A simple API for memory buffer management featuring
@@ -6,7 +6,7 @@
  * - Flexible memory: Support dynamic or user supplied static buffers
  * - Dynamic limits : support for locked or max_size limits
  * - Position independent: size_t read|write offsets for safe memory relocation/resizing
- * - scatter-gather - vectorzed memory tranfers via writev   
+ * - scatter-gather - vectorzed memory tranfers via writev  
  * - support for readline with max length enforcement
  *
  * API sections
@@ -72,7 +72,7 @@ int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf]);
 
 /*
  * rwbuf_readline(buf, str, max_line, flags) : read a line (CRLF or LF terminated)
- *  e.g 
+ *  e.g
  *   rc = rwbuf_readline(sock->recv_buf, &line, 128, RWBUF_NOLOG)
  */
 int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32_t flags);
@@ -83,11 +83,11 @@ int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32
  * rwbuf_rptr(buf)  : return ptr to readable dataq
  * rwbuf_wptr(buf)  : return ptr to writable space
  * rwbuf_used(buf)  : return size of readable data
- * rwbuf_space(buf) : return size of writeable space 
+ * rwbuf_space(buf) : return size of writeable space
  * rwbuf_rdinc(buf) : increment read buffer index by len
  * -
  * iovs_len(niov, iovs)    : calc total iov_len of iovs
- * iov_load(iov, buf, len) : load buffer address into iovec 
+ * iov_load(iov, buf, len) : load buffer address into iovec
  */
 static inline uint8_t *rwbuf_rptr(struct rwbuf *buf)
 {
@@ -113,7 +113,7 @@ static inline int rwbuf_rdinc(struct rwbuf *buf, size_t len)
 {
     if (buf->ridx + len > buf->size) {
         return log_error_rf(
-            "rbwbuf overflow ridx(%zu) + len(%zu) > cap %zu", 
+            "rbwbuf overflow ridx(%zu) + len(%zu) > cap %zu",
             buf->ridx, len, buf->size);
     }
 

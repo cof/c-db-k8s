@@ -58,7 +58,7 @@ static bool raise_ambient_caps(void)
 
 int run_cmd(struct strbuf *buf, int flags, const char *fmt, ...)
 {
-    size_t avail = strbuf_avail(buf);
+    size_t avail = strbuf_rem(buf);
     char *cmd_str = strbuf_start(buf);
 
     va_list args;

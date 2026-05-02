@@ -15,7 +15,7 @@
 
 #include <sys/mman.h>
 #include <sys/mount.h>
-#include <sys/syscall.h> 
+#include <sys/syscall.h>
 
 #include "util.h"
 #include "log.h"
@@ -139,7 +139,7 @@ int lau_child_cfg_load(struct lau_child *child, struct lau_config *cfg)
     return 0;
 }
 
-// set child netns name 
+// set child netns name
 int lau_child_set_netns(struct lau_child *child, const char *name, const char *suffix)
 {
     if (!suffix) suffix = "";
@@ -153,11 +153,11 @@ int lau_child_set_veth(struct lau_child *child, const char *name, const char *pr
     return gen_str(child->veth_name, sizeof(child->veth_name), "%s%s", prefix, name);
 }
 
-/* 
- * parent brings veth up inside child namespace 
+/*
+ * parent brings veth up inside child namespace
  * - rename veth to eth0
  * - add ip addr
- * - set lo up 
+ * - set lo up
  * - set eth0 up
  */
 int lau_child_net_setup(struct lau_child *child)
@@ -260,7 +260,7 @@ int lau_child_postrun(struct lau_child *child, int netns_fd)
     }
 
     // release unused pipe ends
-    rc = sync_pipe_close(&child->go_read_fd, 
+    rc = sync_pipe_close(&child->go_read_fd,
         &child->ready_write_fd,
         "lau", "post-run", child->name, child->pid
     );
@@ -297,7 +297,7 @@ int lau_child_postrun(struct lau_child *child, int netns_fd)
 // child process - set security
 static int setup_priv(struct lau_child *child)
 {
-    log_debug("Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)", 
+    log_debug("Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)",
         child->name, child->pid, child->uid, child->gid);
 
     if (child->drop_caps && drop_bounding_set(child->name)) return -1;
@@ -306,14 +306,14 @@ static int setup_priv(struct lau_child *child)
     if (child->drop_privs && drop_new_privs(child->name))  return -1;
     if (child->use_seccomp && apply_seccomp(child->name)) return -1;
 
-    return 0; 
+    return 0;
 }
 
 // child process - send ready signal to parent
 static int child_send_ready(struct lau_child *child)
 {
     return sync_pipe_write(
-        &child->ready_write_fd, child->sig, 
+        &child->ready_write_fd, child->sig,
         "Container", "send-ready", child->name, child->pid
     );
 }
@@ -352,7 +352,7 @@ int lau_child_start(void *arg)
     // close all remaining fds other than stdio,stdout,stderr
     if (syscall(SYS_close_range, 3, ~0U, 0) == -1) {
         log_errno("child %s pid=%d close_range failed", child->name, child->pid);
-        _exit(7); 
+        _exit(7);
     }
 
     if (setup_priv(child) != 0) _exit(8);

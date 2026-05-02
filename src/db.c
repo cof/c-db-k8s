@@ -18,7 +18,7 @@
 #include "log.h"
 #include "db.h"
 
-/* 
+/*
  * 10000 entries
  * load factor 2/3
  * table size 10000 * 3/2 = 15000
@@ -113,14 +113,14 @@ static int hash_del(struct str_slice key)
         struct db_rec *rec = db_file ? mkptr(db_mmap_ptr, *pp) : mkmem(*pp);
         if (!slice_cmpmem(key, rec->data, key.len)) {
             // unchain
-            *pp = rec->next; 
+            *pp = rec->next;
             // delete existing entry
             del_rec(rec);
             // all done
             return 0;
         }
         // next entry
-        pp = &rec->next; 
+        pp = &rec->next;
     }
 
     // not found
@@ -190,7 +190,7 @@ static int file_check(void)
     uint64_t db_link, db_offset;
     struct db_rec *rec;
     size_t rec_size;
-    
+   
     if (be32toh(db_hdr->magic) != DB_MAGIC) {
         return log_error_rf("db-hdr magic 0x%08x != 0x%08d", db_hdr->magic, DB_MAGIC);
     }
@@ -336,7 +336,7 @@ int db_set(struct str_slice key, struct str_slice val)
     struct db_rec *rec;
 
     rec = hash_put(key, val);
-    
+   
     return rec ? 0 : DB_FAIL;
 }
 

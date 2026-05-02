@@ -11,7 +11,7 @@
  * Helpers  : buffer status and iov loader
  */
 #include <stdio.h>
-#include <stdlib.h> 
+#include <stdlib.h>
 
 #include "util.h"
 #include "log.h"
@@ -27,7 +27,7 @@ int rwbuf_init(struct rwbuf *buf, size_t init_size, size_t max_size)
     buf->is_grow   = 1;
 
     if (init_size && !rwbuf_mkspace(buf, init_size)) {
-        // no room 
+        // no room
         return -1;
     }
 
@@ -97,7 +97,7 @@ int rwbuf_write(struct rwbuf *buf, void *data, size_t len)
     void *space = rwbuf_mkspace(buf, len);
     if (!space) return -1;
 
-    memcpy(space, data, len); 
+    memcpy(space, data, len);
     buf->widx += len;
 
     return 0;
@@ -112,7 +112,7 @@ int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf])
     if (!space) return -1;
 
     for (int i = 0; i < nbuf; i++)  {
-        space = mempcpy(space, iovs[i].iov_base, iovs[i].iov_len); 
+        space = mempcpy(space, iovs[i].iov_base, iovs[i].iov_len);
     }
 
     buf->widx += len;
