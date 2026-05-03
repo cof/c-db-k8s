@@ -2,6 +2,8 @@
 
 A research project into how Linux containers work.
 
+This project began as a 4-day "impossible sprint" to implement a full-stack container runtime and DNS subsystem from first principles with just plain old vim,tmux and gcc. It has since evolved into a research platform for exploring how Linux containers work.
+
 There are two parts to this project. 
 
 - **Container Launcher** - Custom application isolation using Linux namespaces and OverlayFS.
