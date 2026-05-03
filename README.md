@@ -1,11 +1,11 @@
 # db-k8s
 
-Run database client and server applications inside containers.
+A research project into how Linux containers work.
 
-There are 2 parts to this project. 
+There are two parts to this project. 
 
-- **Container**  Run client/server applications inside containers using a custom Launcher
-- **Kubernetes**  Deploy client/server applications inside k8s pods
+- **Container Launcher** - Custom application isolation using Linux namespaces and OverlayFS.
+- **Kubernetes** - Automated application deployment using Docker, k3d and k8s pods.
 
 ## Prerequisites
 
@@ -24,17 +24,22 @@ There are 2 parts to this project.
 - **make test-full** Run all tests (cmds,launcher,k8s)
 - **make spotless**: wipe complied binaries, VMS, k8s pods
 
-## 1. Container
-
-Runs client and server applications inside containers using a custom launcher.
-
-- **launcher** A Linux container runtime management tool
-- **server**  key-value DB server supporting cli SET,GET,DEL operations
-- **client**  telnet-style DB client using a 4-way TCP-wrapper pipe
-
 ## Design
 
-- All application code written in C with no 3rd party libs
+All application code was written in C with no 3rd party libs.
+
+Implementation uses embeddable structures and avoid malloc where possible to maintain a
+simple deterministic memory profile.
+
+Far too many codebases these days rely on large complex frameworks that make
+even simple projects more resource-intensive than necessary, hiding the core 
+algorithms and design patterns from the developer (to their cost).
+
+C is a simple language - and while it does not provide the massive framework
+support found in C++, Rust, Zig, Go or Java - that's also its power. You write
+exactly what you need and no more.
+
+- Code written in C with no 3rd party libs
 - Custom APIs : UTIL, LOG, RWBUF, HASHMAP, DNS-PROTO, DNS-RESOLV, SOCK, DB
 - VM Provisioning : fully automated VM provisioning via build_vm.mk
 - UTIL  : strings/signal/cmd-line handling api
@@ -43,25 +48,35 @@ Runs client and server applications inside containers using a custom launcher.
 - RWBUF   : memory buffer api
 - DNS-PROTO  : rfc1035 compliant codec
 - DNS-RESOLV : DNS subsystem (getaddrinfo replacement)
-- SOCK : socket layer api suporting non-blocking client/servers/buffering
+- SOCK : socket layer api supporting non-blocking client/servers/buffering
 - DB   : key/value store api supporting a pure memory or mmap database file
 
 ### DNS-RESOLV
 
-DNS-RESOLV is a full custom DNS subsystem
+DNS-RESOLV is a complete DNS subsystem designed to be a getaddrinfo replacement.
 
-- getaddrinfo replacement
 - port name resolution using /etc/service
 - hostname resolution using /etc/hosts 
 - resolver configuration using /etc/resolv.conf 
-- nameserver mangement supportng attempts/timeout/ndots/search
+- nameserver management supportng attempts/timeout/ndots/search
 - Hyrbid UDP and TCP support
 - Parallel AAAA and A query support
 - Truncation (TC) support for UDP fall back to TCP
 - ESDN0 supporting UDP packet sizes > 512 bytes
-- Uses DNS-PROTO a rfc1035 compliant codec
+- Uses DNS-PROTO a full rfc1035 compliant codec (no mallocs).
 - DNS cache with TTL support
 - non-blocking I/O using poll
+
+## 1. Container Launcher
+
+A custom container launcher that runs applications inside isolated namespaces.
+
+Code consist of a container launcher and database client and server to test it.
+The database client and server are reused by k8s.
+
+- **launcher** A Linux container runtime management tool
+- **server**  key-value DB server supporting cli SET,GET,DEL operations
+- **client**  telnet-style DB client using a 4-way TCP-wrapper pipe
 
 ### VM Provisioning
 
@@ -91,7 +106,7 @@ A custom linux container launcher for running applications inside isolated names
 
 **Design**
 
-- single-threaded applicaton written in C with no 3rd party libs
+- single-threaded application written in C with no 3rd party libs
 - create run-time dirs before running containers
 - Create a folder for each container to hold its rootfs
 - create veth devices for container
@@ -99,7 +114,7 @@ A custom linux container launcher for running applications inside isolated names
 - creates a child process for each container
 - child switches to its private rootfs
 - child creates proc
-- child applys security settings
+- child applies security settings
 - child execs the client or server binary
 - uses mount and clone to create netns and containers
 
@@ -211,7 +226,7 @@ Client's simply connect to the server and send plain-text commands to modify the
 
 **Design**
 
-- single-threaded applicaton written in C with no 3rd party libs
+- single-threaded application written in C with no 3rd party libs
 - Uses epoll (level triggered) to monitor all socket events
 - Uses SOCK-API to create non-blocking dual-stack (IPv4|6) sockets
 - SOCK API uses DNS-RESOLV as a getaddrinfo replacement
@@ -246,7 +261,7 @@ Client's simply connect to the server and send plain-text commands to modify the
 ### 1.3 Client
 
 A telnet client that connect to a server address.  
-Client simply reads and writes lines betwen stdio and server socket.
+Client simply reads and writes lines between stdio and server socket.
 
 **Features**
 
@@ -335,7 +350,7 @@ This will:
      => check GET test-pod [ PASS ]
      => check DEL test-pod [ PASS ]
      => Ran 3 tests: 3 passed, 0 failed (100% success)
-    [+] Runing test-net
+    [+] Running test-net
      => db-pod     -> internet        ✗ DENIED  [ PASS ]
      => client-pod -> internet        ✗ DENIED  [ PASS ]
      => client-pod -> db-pod:6379     ✓ ALLOWED [ PASS ]

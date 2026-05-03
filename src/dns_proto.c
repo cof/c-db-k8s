@@ -311,7 +311,7 @@ static int dns_dec_genmsg(struct dns_dec *dec)
         return 0;
     }
 
-    // desribe error
+    // describe error
     dns_wmsg(dec, "[ERROR] ");
     if (dec->pkt_len >= DNS_HDR_LEN) {
         // have a hdr
@@ -407,7 +407,7 @@ int decode_name(struct dns_dec *dec, char *name, size_t nlen)
         out_len--;
     }
 
-    // num bytes writen
+    // num bytes written
     return nlen - out_len;
 }
 
@@ -753,7 +753,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         }
         wptr += rc;
 
-        // decode serial,refresh,retry,expire,mininum (5 x 32 bit ints)
+        // decode serial,refresh,retry,expire,minimum (5 x 32 bit ints)
         if (dec->offset + 20 > rd_end) return dns_dec_err(dec, DNS_RR, DNS_SOA, DNS_ERDATALEN);
         char *names[5] = { "serial","refresh", "retry", "expire", "min_ttl" };
         uint32_t vals[5];
@@ -973,7 +973,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         dec->edns_ver = version;
         dec->dnssec_ok = !!do_bit;
 
-        // skip remaing fields
+        // skip remaining fields
         dec->offset = rd_end;
 
         // decoded
@@ -1243,7 +1243,7 @@ int dns_validate(const void *buf, size_t len, char *emsg, size_t emsg_len)
         if (ec && !rc) rc = ec;
     }
 
-    // 0 mean succes
+    // 0 mean success
     return rc;
 }
 

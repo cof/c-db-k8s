@@ -235,7 +235,7 @@ int sock_accept(struct simple_sock *sock, struct sock_addr *addr)
     struct sockaddr_storage store;
     socklen_t store_len = sizeof(store);
 
-    // accept new connnection
+    // accept new connection
     int flags = sock->mode & SOCK_NONBLK ? SOCK_NONBLOCK : 0;
     int fd = accept4(sock->fd, (struct sockaddr *) &store, &store_len, flags);
     if (fd == -1) {

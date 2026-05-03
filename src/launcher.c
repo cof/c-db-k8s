@@ -7,14 +7,14 @@
  * --------
  * Implements a container launcher for running client and server.
  *
- * Bascially:
+ * Basically:
  * - Create a folder for each container to hold its rootfs
  * - create a veth device for client and db container
  * - create a network namespace (netns) for each container
  * - create a child process for each container
  * - child switches to its private rootfs
  * - child creates proc
- * - child applys security settings
+ * - child applies security settings
  * - child execs the client or server binary
  *
  * Note:
@@ -44,11 +44,11 @@
 
 // launcher state
 struct lau_ctx {
-    char *cur_dir;      // cwd where laucher start
+    char *cur_dir;      // cwd where launcher start
     char *base_dir;     // root dir for all launcher state
     char *src_dir;      // location of host cmd files live
     char *run_dir;      // location of launcher pid run file
-    char *netns_dir;    // netns mount point overide e.g /var/run/netns
+    char *netns_dir;    // netns mount point override e.g /var/run/netns
     char *store_dir;    // path where container dirs are createed
     char *rootfs_dir;   // path where a rootfs_dir lives
     char *netns_suffix; // suffix to add to nens name e.g name-ns
@@ -62,7 +62,7 @@ struct lau_ctx {
     struct lau_child *procs[MAX_PROC];
     unsigned int num_run; // take a wild guess reader
     int netns_fd;      // default host netns
-    mode_t dir_mode;   // mode for createing dirs
+    mode_t dir_mode;   // mode for creating dirs
     pid_t pid;         // our pid
     // security
     char *sudo_user; // SUDO_USER value

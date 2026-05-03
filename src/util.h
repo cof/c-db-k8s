@@ -12,7 +12,7 @@
  * API sections
  * ------------
  * sys errors : general error codes
- * gen macros : array len, string literal, aligment, rmconst
+ * gen macros : array len, string literal, alignment, rmconst
  * ptr macros : ptr manipulation
  * str macros : Stringification
  * min-max    : safe min/max funcs
@@ -75,10 +75,10 @@ static inline size_t min(size_t x, size_t y)
 
 /* signal handler API
  * -----------------
- * Simple single hander API for apps featuring
+ * Simple single handler API for apps featuring
  * - Structure-composable: built for inline embedding, object compostion & memory locality
  * - uses sigaction
- * - catchs  SIGINT|SIGTERM
+ * - catches  SIGINT|SIGTERM
  * - ignores SIGPIPE
  * - logs signal, sender uid and pid for app
  * - simple set run to 1 to 0 design
@@ -642,7 +642,7 @@ int run_cmd(struct strbuf *buf, int flags, const char *fmt, ...) \
  * String slice API
  * ----------------
  * A simple structure that stores a ptr + len
- * - Ensures buffer + len alway available
+ * - Ensures buffer + len always available
  * - No more strlen() to check
  * - Can pass by value a ptr + len
  * - Can return by value a ptr + len
@@ -961,7 +961,7 @@ struct cmd_opt {
     const char *name;
     const char *desc;
     const char *def_str;
-    int has_arg;  // 0=none, 1=requried, 2=optional
+    int has_arg;  // 0=none, 1=required, 2=optional
     int code;
 };
 

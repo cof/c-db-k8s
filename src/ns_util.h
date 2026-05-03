@@ -1,7 +1,7 @@
 /*
  * NameSpace Util API for containers
  * ---------------------------------
- * An api to manage namepsaces.
+ * An api to manage namespaces.
  *
  * API sections
  * ------------
@@ -12,7 +12,7 @@
  * netns     : open,create netns file
  * Mount     : mount overlay, rootfs cmd, file, netns
  * veth      : add,delete, setns, setup
- * namespace : child process namepace changes
+ * namespace : child process namespace changes
  * security  : child process security changes
  * helpers   : status check, close func
  */
@@ -79,7 +79,7 @@ int sync_pipe_write(int *fd,
  * ----------------
  * create_dir(path, mode, can_exist) : mkdir with mode
  * create_path_nocopy(path, mode)    : mkdir -p with mode
- * create_path(path, mode)           : mkdir -p (copys path)
+ * create_path(path, mode)           : mkdir -p (copies path)
  * create_path_for_file(file, mode)  : mkdir -p for file
  * create_subdir(dir, subdir, mode)  : mkdir subdir with mode
  */
@@ -137,10 +137,10 @@ int veth_del(const char *veth);
 int veth_setns(const char *veth, const char *netns);
 int veth_setup(const char *cont_name, const char *netns);
 
-/* namespace : child process namepace changes
+/* namespace : child process namespace changes
  * ------------------------------------------
  * set_identity(name) : set container hostname
- * set_rootfs(rootfs) : swith child process to new root file system
+ * set_rootfs(rootfs) : switch child process to new root file system
  * set_proc() : create proc dir
  * create_network(veth, ip_addr) : create veth, add addr, bring veth up
  */

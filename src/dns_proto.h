@@ -62,7 +62,7 @@
  * dns_add_qdl(msg, qname, len, qtype, qclass) : add to qd to msg
  * dns_add_qd(msg, qname, qtype, qclass)       : add to qd section - no qname len
  * dns_add_rr(msg, sc, rr)                     : add rr to an|ns|ar section
- * dns_cnt_rr(mg)  : count total resouce records in msg
+ * dns_cnt_rr(mg)  : count total resource records in msg
  * dns_get_rr(msg) : get first resource record if available
  * -
  * dns_msg_decode(msg, buf, len) : decode DNS message from buffer
@@ -95,7 +95,7 @@
 #define DNS_NAME_MAXSTR  253  // 255 - len(1) - nul(1) = 253
 #define DNS_LABEL_MAXSTR 63   // 63 octets or less
 #define DNS_HDR_LEN      12   // header size
-#define DNS_MAX_UDP     512   // can be overriden by EDNS
+#define DNS_MAX_UDP     512   // can be overridden by EDNS
 
 // zero-length label
 #define DNS_NULL_STR "."

@@ -18,14 +18,14 @@ struct list_elem {
 #define list_first(head, entry, field) \
     list_isempty(head) ? NULL : list_first_entry(head, entry, field)
 
-// iterate over a list (cannot be modifed)
+// iterate over a list (cannot be modified)
 #define list_fornext(head, elem) \
     for ((elem) = (head)->next; (elem) != (head); (elem) = (elem)->next)
 
 #define list_forprev(head, elem) \
     for ((elem) = (head)->prev; (elem) != (head); (elem) = (elem)->prev)
 
-// iterate over a list (can be modifed)
+// iterate over a list (can be modified)
 #define list_fornext_safe(head, elem, next) \
     for ((elem) = (head)->next, (next) = (elem)->next; \
         (elem) != (head); \
@@ -36,13 +36,13 @@ struct list_elem {
         (elem) != (head); \
         (elem) = (prev), (prev) = (elem)->prev)
 
-// iterate over list entries (cannot be modifed)
+// iterate over list entries (cannot be modified)
 #define list_fornext_entry(head, entry, field) \
     for ((entry) = list_first_entry(head, __typeof__(*entry), field); \
         &(entry)->field != (head); \
         (entry) = list_next_entry(entry, field))
 
-// iterate over list entries (can be modifed)
+// iterate over list entries (can be modified)
 #define list_fornext_entry_safe(head, entry, next, field) \
     for ((entry) = list_first_entry(head, __typeof__(*entry), field), \
         (next) = list_next_entry(entry, field); \

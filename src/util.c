@@ -6,7 +6,7 @@
  * API sections
  * ------------
  * sys errors : general error codes
- * gen macros : array len, string literal, aligment, rmconst
+ * gen macros : array len, string literal, alignment, rmconst
  * ptr macros : ptr manipulation
  * str macros : Stringification
  * min-max    : safe min/max funcs

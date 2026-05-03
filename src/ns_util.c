@@ -14,7 +14,7 @@
  * netns     : open,create netns file
  * Mount     : mount overlay, rootfs cmd, file, netns
  * veth      : add,delete, setns, setup
- * namespace : child process namepace changes
+ * namespace : child process namespace changes
  * security  : child process security changes
  * helpers   : status check, close func
  *
@@ -25,7 +25,7 @@
  * man 2 pivot_root
  * man 2 wait
  * man 2 seccomp
- * Kerrisk - TLPI - The Linux Progamming Interface
+ * Kerrisk - TLPI - The Linux Programming Interface
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -280,7 +280,7 @@ int create_path_for_file(const char *file, mode_t mode)
     char *tmp = strdup(file);
     if (!tmp) return log_errno_rf("strdup %s failed", file);
 
-    // chop the file name fro, path
+    // chop the file name from, path
     char *ptr = strrchr(tmp, '/');
     if (!ptr) {
         free(tmp);
@@ -697,7 +697,7 @@ int veth_setup(const char *cont_name, const char *netns)
     return 0;
 }
 
-/* namespace : child process namepace changes */
+/* namespace : child process namespace changes */
 
 // set container hostname
 int set_identity(const char *name)
@@ -767,7 +767,7 @@ int set_proc(void)
     }
 
     if (mount("proc", "/proc", "proc", 0, NULL) != 0) {
-        return log_errno_rf("mount /proc faild");
+        return log_errno_rf("mount /proc failed");
     }
 
     return 0;

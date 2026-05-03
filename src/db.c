@@ -30,7 +30,7 @@
 #define DB_REC_DEL 0x1
 #define DB_FILE_MODE 0666
 
-// databse record - note key and val are stored at end of rec
+// database record - note key and val are stored at end of rec
 struct db_rec {
     uint64_t next;
     uint64_t flags;
@@ -305,7 +305,7 @@ static void hash_deinit(void)
     db_buckets = NULL;
 }
 
-// allocate hash table memroy
+// allocate hash table memory
 static int hash_init(void)
 {
     db_buckets = calloc(DB_NUM_BUCKETS, sizeof(uintptr_t));

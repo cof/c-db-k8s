@@ -7,7 +7,7 @@
  * - Fibonacci hashing : fast hashing
  * - open addressing : L1/L2/L3 cache friendly
  * - static bucket memory (fixed buffer)
- * - dynamic memory allocaiton (grows)
+ * - dynamic memory allocation (grows)
  *
  * MAP api
  * -------

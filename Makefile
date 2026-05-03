@@ -268,7 +268,6 @@ $(LOAD_DONE): $(DOCKER_DONE) $(CLUSTER_DONE) | $(BUILD_DIR)
 	k3d image import $(CLIENT_IMG) -c $(CLUSTER_NAME)
 	touch $(LOAD_DONE)
 
-
 # deploy the pods
 # ---------------
 .PHONY: deploy

@@ -7,7 +7,7 @@
  * - port name resolution using /etc/service
  * - hostname resolution using /etc/hosts
  * - resolver configuration using /etc/resolv.conf
- * - nameserver mangement supportng attempts/timeout/ndots/search
+ * - nameserver management supportng attempts/timeout/ndots/search
  * - UDP and TCP support
  * - Parallel A and AAAA query support
  * - Truncation (TC) support for UDP fall back to TCP
@@ -122,7 +122,7 @@ struct dns_result {
     unsigned int need_ip6 : 1;
 };
 
-// conection state
+// connection state
 enum dns_state {
     DNS_IDLE = 0,
     DNS_SEND,
@@ -203,7 +203,7 @@ static int64_t get_now_ms(void)
     struct timespec ts;
 
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
-        // failed - return ts that will trigger a timout
+        // failed - return ts that will trigger a timeout
         return  0x7FFFFFFFFFFFFFFFLL;
     }
 
@@ -1029,7 +1029,7 @@ static int add_dnsans(struct dns_ns *ns)
         }
     }
 
-    log_debug("addr=%s ans=%d ip4=%d ip6=%d", ADDR_STR(ns->addr), ns->have_ans, ns->have_ip4, ns->have_ip6);
+    log_debug("addr=%s and=%d ip4=%d ip6=%d", ADDR_STR(ns->addr), ns->have_ans, ns->have_ip4, ns->have_ip6);
 
     return 0;
 }
@@ -1505,7 +1505,7 @@ static int try_hostname(struct dns_result *res)
         res->flags |= (DNS_IPV4 | DNS_IPV6);
     }
 
-    // set the name querys we need
+    // set the name queries we need
     if (res->flags & DNS_IPV6) res->need_ip6 = 1;
     if (res->flags & DNS_IPV4) res->need_ip4 = 1;
     if (res->flags & (DNS_IPV6 | DNS_V4MAPPED)) res->need_ip4 = 1;

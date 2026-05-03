@@ -9,7 +9,7 @@
  * - Non-blocking I/O : built-in state tracking  asynchronous, event-driven flows
  * - Line-buffered I/O : integrated read and write line with max length enforcement
  * - Integratd DNS : resolver support for hostname and service port lookups
- * - Zero-copy scatter-gather - vectorzed tranfers via writev
+ * - Zero-copy scatter-gather - vectorzed transfers via writev
  * - Diagnostics: robust error capture and trace logging
  * - Clean termination - graceful half close (FIN) and shutdown management
  * - Human-readable formatting: string repr of socket address or file descriptor
@@ -71,7 +71,7 @@
 #define SOCK_IPV6     (1u << 1)  // IPv6
 // port-type
 #define SOCK_TCP      (1u << 2)  // stream network socket
-#define SOCK_UDP      (1u << 3)  // datagram nework socket
+#define SOCK_UDP      (1u << 3)  // datagram network socket
 #define SOCK_FILE     (1u << 4)  // pipe or standard I/O fd
 // behavior
 #define SOCK_NONBLK   (1u << 5)  // enable non-blocking state
@@ -99,11 +99,11 @@ struct sock_addr {
 struct simple_sock {
     int fd;                // managed file descriptor
     uint32_t mode;         // bitmask of SOCK_* flags
-    struct sock_addr addr; // the socket adress
+    struct sock_addr addr; // the socket address
     struct rwbuf send_buf; // send buffer
     struct rwbuf recv_buf; // receive buffer
     size_t max_line;       // maximum line length
-    size_t min_size;       // minium buffer space for I/O
+    size_t min_size;       // minimum buffer space for I/O
     // active state flags
     unsigned int is_server    : 1; // 1 = simple_server, 0= simple_client
     unsigned int is_epoll     : 1; // 1 = registered

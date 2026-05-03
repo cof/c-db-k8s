@@ -10,7 +10,7 @@
  * Supported commands:
  *
  *  SET key value - store a key value
- *  GET key       - retrive a key value
+ *  GET key       - retrieve a key value
  *  DEL key       - delete key/value from store
  *  QUIT          - close connection
  *
@@ -19,7 +19,7 @@
  * - code is using dual-stack sockets
  * - code is using epoll for socket fd activity
  * - default listen is [::]:6379
- * - commands are case insensitve
+ * - commands are case insensitive
  * - see config.h for current defaults
  */
 #include <netdb.h>
