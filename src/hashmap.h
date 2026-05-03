@@ -1,7 +1,7 @@
 /*
  * HASHMAP
  * ------
- * a hash map api featuring
+ * a hash map API featuring
  * - C11 generics : type safe map operations
  * - X-Macros  : code generation, traceable code
  * - Fibonacci hashing : fast hashing
@@ -9,10 +9,22 @@
  * - static bucket memory (fixed buffer)
  * - dynamic memory allocation (grows)
  *
+ * Hash functions
+ * ---------------
+ * dbj2a_hash(key, len) : DJB2a non-cryptographic hash of key
+ * dbj2a_hash_str(str)  : DJB2a non-cryptographic hash of str
+ * map_hash32(key, bits) : 32-bit Fibonacci hash
+ * map_hash64(key, bits) : 64-bit Fibonacci hash
+ *
+ * MAP types
+ * ---------
+ * hashmap32 : 32-bit key,value
+ * hashmap64 : 64-bit key,value
+ * hashmap32s  : char *key, 32-bit val
+ * hashmap64s  : char *key, 64-bit val
+ *
  * MAP api
  * -------
- * hasmap32/hashmap64/hashmap32s/hashmap64s : map types
- * -
  * map_init(m, capacity)  : initialize map
  * map_free(m)            : free map memory
  * map_attach(m, buffer, capacity) : attach static buffer to map
@@ -34,6 +46,24 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+
+static inline uint64_t dbj2a_hash(const void *key, const int klen)
+{
+    const unsigned char *data,*end;
+    uint64_t hash = 5381;
+
+    end = key + klen;
+    for (data = key; data < end; data++) {
+        hash = ((hash << 5) + hash) ^ *data;
+    }
+
+    return hash;
+}
+
+static inline uint64_t dbj2a_hash_str(const char *name)
+{
+    return dbj2a_hash(name, strlen(name));
+}
 
 // 32 bit Fibonacci hashing
 static inline uint32_t map_hash32(uint32_t key, int bits)
@@ -64,63 +94,63 @@ static inline int map_streq(const char *a, const char *b)
 // macros to add prefix to function names
 #define CAT_INNER(a, b) a##_##b
 #define CAT(a, b) CAT_INNER(a, b)
-#define MAP_FN(name) CAT(MAP_PREFIX, name)
+#define MAP_FN(name) CAT(HASHMAP_PREFIX, name)
 
 // -- 32-bit key+val --
-#define MAP_TYPE   hashmap32
-#define MAP_PREFIX map32
+#define HASHMAP_TYPE   hashmap32
+#define HASHMAP_PREFIX map32
 #define KEY_HASH   map_hash32
 #define KEY_EQ(a,b) ((a) == (b))
 #define KEY_TYPE   uint32_t
 #define VAL_TYPE   uint32_t
 #include "hashmap_impl.h"
-#undef MAP_TYPE
-#undef MAP_PREFIX
+#undef HASHMAP_TYPE
+#undef HASHMAP_PREFIX
 #undef KEY_HASH
 #undef KEY_EQ
 #undef KEY_TYPE
 #undef VAL_TYPE
 
 // -- 64-bit key+val --
-#define MAP_TYPE   hashmap64
-#define MAP_PREFIX map64
+#define HASHMAP_TYPE   hashmap64
+#define HASHMAP_PREFIX map64
 #define KEY_HASH   map_hash64
 #define KEY_EQ(a,b) ((a) == (b))
 #define KEY_TYPE   uint64_t
 #define VAL_TYPE   uint64_t
 #include "hashmap_impl.h"
-#undef MAP_TYPE
-#undef MAP_PREFIX
+#undef HASHMAP_TYPE
+#undef HASHMAP_PREFIX
 #undef KEY_HASH
 #undef KEY_EQ
 #undef KEY_TYPE
 #undef VAL_TYPE
 
 // -- str + 32-bit val --
-#define MAP_TYPE   hashmap32s
-#define MAP_PREFIX map32s
+#define HASHMAP_TYPE   hashmap32s
+#define HASHMAP_PREFIX map32s
 #define KEY_HASH   map_hashstr
 #define KEY_EQ     map_streq
 #define KEY_TYPE   char *
 #define VAL_TYPE   uint32_t
 #include "hashmap_impl.h"
-#undef MAP_TYPE
-#undef MAP_PREFIX
+#undef HASHMAP_TYPE
+#undef HASHMAP_PREFIX
 #undef KEY_HASH
 #undef KEY_EQ
 #undef KEY_TYPE
 #undef VAL_TYPE
 
 // -- str + 64-bit val --
-#define MAP_TYPE   hashmap64s
-#define MAP_PREFIX map64s
+#define HASHMAP_TYPE   hashmap64s
+#define HASHMAP_PREFIX map64s
 #define KEY_HASH   map_hashstr
 #define KEY_EQ     map_streq
 #define KEY_TYPE   char *
 #define VAL_TYPE   uint64_t
 #include "hashmap_impl.h"
-#undef MAP_TYPE
-#undef MAP_PREFIX
+#undef HASHMAP_TYPE
+#undef HASHMAP_PREFIX
 #undef KEY_HASH
 #undef KEY_EQ
 #undef KEY_TYPE

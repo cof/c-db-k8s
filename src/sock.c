@@ -536,13 +536,13 @@ int sock_write_mem(struct simple_sock *sock, void *mem, size_t len)
 }
 
 // append str-slice to send-buffer
-int sock_write_str(struct simple_sock *sock, struct str_slice str)
+int sock_write_str(struct simple_sock *sock, struct slice str)
 {
     return sock_write_mem(sock, str.ptr, str.len);
 }
 
 // append str-slice + CRLF to send-buffer
-int sock_write_line(struct simple_sock *sock, struct str_slice line)
+int sock_write_line(struct simple_sock *sock, struct slice line)
 {
     struct iovec iovs[2];
 
@@ -609,13 +609,13 @@ int sock_send_mem(struct simple_sock *sock, void *mem, size_t len)
 }
 
 // write send-buffer + str-slice to fd, buffer remaining
-int sock_send_str(struct simple_sock *sock, struct str_slice str)
+int sock_send_str(struct simple_sock *sock, struct slice str)
 {
     return sock_send_mem(sock, str.ptr, str.len);
 }
 
 // write send-buffer + str-slice + CRLF to fd, buffer remaining
-int sock_send_line(struct simple_sock *sock, struct str_slice line)
+int sock_send_line(struct simple_sock *sock, struct slice line)
 {
     struct iovec iovs[3];
 
@@ -677,7 +677,7 @@ int sock_recv(struct simple_sock *sock)
 }
 
 // extract a line from recv-buffer - return fragment if eof
-int sock_recv_line(struct simple_sock *sock, struct str_slice *line, int eof)
+int sock_recv_line(struct simple_sock *sock, struct slice *line, int eof)
 {
     int flags = RWBUF_NOLOG;
     if (eof) flags |= RWBUF_EOF;
@@ -756,7 +756,7 @@ char *sock_tostr(struct simple_sock *sock)
     return sock_addr_tostr(&sock->addr);
 }
 
-int sock_ipstr_decode(struct str_slice str, struct sock_addr *addr)
+int sock_ipstr_decode(struct slice str, struct sock_addr *addr)
 {
     if (slice_ip4_decode(str, addr->v4)) return addr->type = SOCK_IPV4;
     if (slice_ip6_decode(str, addr->v6)) return addr->type = SOCK_IPV6;

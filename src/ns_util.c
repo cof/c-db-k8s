@@ -63,6 +63,7 @@
 
 #include "util.h"
 #include "log.h"
+#include "hashmap.h"
 #include "ns_util.h"
 
 // terminate child process pid, wait usecs
@@ -634,7 +635,7 @@ int mount_netns(const char *netns_path)
 int veth_add(const char *veth, const char *peer)
 {
     char tmp[128];
-    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+    struct sbuf buf = SBUF_INIT(tmp, sizeof(tmp));
 
     return run_cmd(&buf, RUN_NULL, "ip link add %s type veth peer name %s", veth, peer);
 }
@@ -643,7 +644,7 @@ int veth_add(const char *veth, const char *peer)
 int veth_del(const char *veth)
 {
     char tmp[128];
-    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+    struct sbuf buf = SBUF_INIT(tmp, sizeof(tmp));
 
     return run_cmd(&buf, RUN_NULL, "ip link del %s", veth);
 }
@@ -652,7 +653,7 @@ int veth_del(const char *veth)
 int veth_setns(const char *veth, const char *netns)
 {
     char tmp[128];
-    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+    struct sbuf buf = SBUF_INIT(tmp, sizeof(tmp));
 
     return run_cmd(&buf, 0, "ip link set %s netns %s", veth, netns);
 }
@@ -682,7 +683,7 @@ int veth_gen_idstr(const char *name,
 int veth_setup(const char *cont_name, const char *netns)
 {
     char tmp[128];
-    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+    struct sbuf buf = SBUF_INIT(tmp, sizeof(tmp));
 
     char veth[IFNAMSIZ];
     char peer[IFNAMSIZ];
@@ -777,7 +778,7 @@ int set_proc(void)
 int create_network(const char *veth_name, const char *ip_addr)
 {
     char tmp[128];
-    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+    struct sbuf buf = SBUF_INIT(tmp, sizeof(tmp));
 
     if (run_cmd(&buf, 0, "ip link set %s name eth0", veth_name)) return -1;
     if (run_cmd(&buf, 0, "ip addr add %s dev eth0", ip_addr)) return -1;

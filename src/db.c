@@ -14,8 +14,9 @@
 #include <endian.h>
 
 #include "config.h"
-#include "util.h"
 #include "log.h"
+#include "str_util.h"
+#include "hashmap.h"
 #include "db.h"
 
 /*
@@ -27,7 +28,7 @@
 #define DB_MAX_REC     10000
 #define DB_NUM_BUCKETS 15013
 
-#define DB_REC_DEL 0x1
+#define DB_REC_DEL   0x1
 #define DB_FILE_MODE 0666
 
 // database record - note key and val are stored at end of rec
@@ -57,13 +58,13 @@ static int      db_file;
 static int      init_done;
 
 // calc hash for key
-static int hash(struct str_slice key)
+static int hash(struct slice key)
 {
     return dbj2a_hash(key.ptr, key.len) % DB_NUM_BUCKETS;
 }
 
 // note key and val are stored directly in entry
-static struct db_rec *create_rec(struct str_slice key, struct str_slice val)
+static struct db_rec *create_rec(struct slice key, struct slice val)
 {
     struct db_rec *rec;
     size_t rec_size = sizeof(*rec) + key.len + val.len;
@@ -103,7 +104,7 @@ static void del_rec(struct db_rec *rec)
 }
 
 // delete from hash table
-static int hash_del(struct str_slice key)
+static int hash_del(struct slice key)
 {
     uint32_t idx = hash(key);
     uint64_t *pp = &db_buckets[idx];
@@ -128,7 +129,7 @@ static int hash_del(struct str_slice key)
 }
 
 // lookup key in hash bucket
-static struct db_rec *hash_search(int idx, struct str_slice key)
+static struct db_rec *hash_search(int idx, struct slice key)
 {
     uint64_t db_link = db_buckets[idx];
 
@@ -143,14 +144,14 @@ static struct db_rec *hash_search(int idx, struct str_slice key)
 }
 
 // lookup key in hash table
-static struct db_rec *hash_find(struct str_slice key)
+static struct db_rec *hash_find(struct slice key)
 {
     int idx = hash(key);
     return hash_search(idx, key);
 }
 
 // store key value in database
-static struct db_rec *hash_put(struct str_slice key, struct str_slice val)
+static struct db_rec *hash_put(struct slice key, struct slice val)
 {
     int idx = hash(key);
     uint64_t *pp = &db_buckets[idx];
@@ -331,7 +332,7 @@ void db_deinit()
     if (!db_file) hash_deinit();
 }
 
-int db_set(struct str_slice key, struct str_slice val)
+int db_set(struct slice key, struct slice val)
 {
     struct db_rec *rec;
 
@@ -340,7 +341,7 @@ int db_set(struct str_slice key, struct str_slice val)
     return rec ? 0 : DB_FAIL;
 }
 
-struct str_slice db_get(struct str_slice key)
+struct slice db_get(struct slice key)
 {
     struct db_rec *rec = hash_find(key);
 
@@ -350,7 +351,7 @@ struct str_slice db_get(struct str_slice key)
     return slice_make(rec->data + rec->key_len, rec->val_len);
 }
 
-int db_del(struct str_slice key)
+int db_del(struct slice key)
 {
     int rc = hash_del(key);
 

@@ -70,7 +70,7 @@ static void my_pipe_readwrite(struct my_pipe *src, struct my_pipe *dst,
 
     while ((rc = sock_recv(src->recv_sock)) == SOCK_DATA) {
         // send src-data to dst
-        struct str_slice str = sock_recv_str(src->recv_sock);
+        struct slice str = sock_recv_str(src->recv_sock);
         rc = sock_send_str(dst->send_sock, str);
         if (rc < 0) {
             // dst write error - bail

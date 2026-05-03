@@ -20,6 +20,7 @@
 #define _RWBUF_H_
 
 #include <sys/uio.h>
+#include <str_util.h>
 
 // state structure
 struct rwbuf {
@@ -75,7 +76,7 @@ int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf]);
  *  e.g
  *   rc = rwbuf_readline(sock->recv_buf, &line, 128, RWBUF_NOLOG)
  */
-int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32_t flags);
+int rwbuf_readline(struct rwbuf *buf, struct slice *line, size_t max, uint32_t flags);
 
 /*
  * Helpers : buffer status and iov loader

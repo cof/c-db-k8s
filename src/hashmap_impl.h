@@ -1,11 +1,15 @@
-// X-macro hash map - XXX dont add include guards
-
+/* 
+ * X-Macro hash map - XXX dont add include guards
+ *
+ * Uses Linear Probing.
+ *
+ */
 typedef struct MAP_FN(entry) {
     KEY_TYPE key;
     VAL_TYPE val;
 } MAP_FN(entry);
 
-typedef struct MAP_TYPE {
+typedef struct HASHMAP_TYPE {
     MAP_FN(entry) *buckets;
     uint32_t capacity;
     uint32_t threshold;
@@ -13,8 +17,7 @@ typedef struct MAP_TYPE {
     uint32_t mask;
     uint32_t nbits;
     unsigned int is_fixed : 1;
-} MAP_TYPE;
-
+} HASHMAP_TYPE;
 
 static inline KEY_TYPE MAP_FN(sanitize)(KEY_TYPE k)
 {
@@ -27,7 +30,7 @@ static inline uint32_t MAP_FN(calc_bits)(uint32_t n)
 }
 
 // resize map to new capacity
-static inline uint32_t MAP_FN(resize)(MAP_TYPE *m, uint32_t capacity)
+static inline uint32_t MAP_FN(resize)(HASHMAP_TYPE *m, uint32_t capacity)
 {
     if (m->is_fixed) return 0;
 
@@ -69,13 +72,13 @@ static inline uint32_t MAP_FN(resize)(MAP_TYPE *m, uint32_t capacity)
 }
 
 // initialize map
-static inline uint32_t MAP_FN(init)(MAP_TYPE *m, uint32_t capacity)
+static inline uint32_t MAP_FN(init)(HASHMAP_TYPE *m, uint32_t capacity)
 {
     return MAP_FN(resize)(m, capacity);
 }
 
 // free map memory
-static inline void MAP_FN(free)(MAP_TYPE *m)
+static inline void MAP_FN(free)(HASHMAP_TYPE *m)
 {
     if (m->buckets && !m->is_fixed) {
         free(m->buckets);
@@ -83,7 +86,7 @@ static inline void MAP_FN(free)(MAP_TYPE *m)
     }
 }
 
-static inline int MAP_FN(attach)(MAP_TYPE *m, MAP_FN(entry) *buffer, uint32_t capacity)
+static inline int MAP_FN(attach)(HASHMAP_TYPE *m, MAP_FN(entry) *buffer, uint32_t capacity)
 {
     // capacity MUST be at least 4 and a power of 2
     if (capacity < 4 || (capacity & (capacity - 1))) return 0;
@@ -101,19 +104,19 @@ static inline int MAP_FN(attach)(MAP_TYPE *m, MAP_FN(entry) *buffer, uint32_t ca
 }
 
 // return map end - aka capacity
-static inline uint32_t MAP_FN(end)(MAP_TYPE *m)
+static inline uint32_t MAP_FN(end)(HASHMAP_TYPE *m)
 {
     return m->capacity;
 }
 
 // return elements in map
-static inline uint32_t MAP_FN(size)(MAP_TYPE *m)
+static inline uint32_t MAP_FN(size)(HASHMAP_TYPE *m)
 {
     return m->size;
 }
 
 // put key, value in map - return index or end
-static inline uint32_t MAP_FN(put)(MAP_TYPE *m, KEY_TYPE key, VAL_TYPE val)
+static inline uint32_t MAP_FN(put)(HASHMAP_TYPE *m, KEY_TYPE key, VAL_TYPE val)
 {
     if (m->size >= m->threshold && !MAP_FN(resize)(m, m->capacity + 1)) {
         return m->capacity;
@@ -137,7 +140,7 @@ static inline uint32_t MAP_FN(put)(MAP_TYPE *m, KEY_TYPE key, VAL_TYPE val)
 }
 
 // get key in map - return index or end
-static inline uint32_t MAP_FN(get)(MAP_TYPE *m, KEY_TYPE key)
+static inline uint32_t MAP_FN(get)(HASHMAP_TYPE *m, KEY_TYPE key)
 {
     if (m->size == 0) return m->capacity;
 
@@ -155,7 +158,7 @@ static inline uint32_t MAP_FN(get)(MAP_TYPE *m, KEY_TYPE key)
 }
 
 // remove index entry from map - uses "Algorithm R" aka backshifting
-static inline uint32_t MAP_FN(rem)(MAP_TYPE *m, uint32_t idx)
+static inline uint32_t MAP_FN(rem)(HASHMAP_TYPE *m, uint32_t idx)
 {
     if (m->size == 0 || idx >= m->capacity) return m->capacity;
     uint32_t nidx = idx;
@@ -177,7 +180,7 @@ static inline uint32_t MAP_FN(rem)(MAP_TYPE *m, uint32_t idx)
 }
 
 // delete key from map - return index or end
-static inline uint32_t MAP_FN(del)(MAP_TYPE *m, KEY_TYPE key)
+static inline uint32_t MAP_FN(del)(HASHMAP_TYPE *m, KEY_TYPE key)
 {
     key = MAP_FN(sanitize)(key);
     uint32_t idx = MAP_FN(get)(m, key);
@@ -185,21 +188,21 @@ static inline uint32_t MAP_FN(del)(MAP_TYPE *m, KEY_TYPE key)
 }
 
 // return key at index
-static inline KEY_TYPE MAP_FN(key)(MAP_TYPE *m, uint32_t idx)
+static inline KEY_TYPE MAP_FN(key)(HASHMAP_TYPE *m, uint32_t idx)
 {
     if (idx >= m->capacity || !m->buckets[idx].key) return 0;
     return m->buckets[idx].key;
 }
 
 // return value at index
-static inline VAL_TYPE MAP_FN(val)(MAP_TYPE *m, uint32_t idx)
+static inline VAL_TYPE MAP_FN(val)(HASHMAP_TYPE *m, uint32_t idx)
 {
     if (idx >= m->capacity || !m->buckets[idx].key) return 0;
     return m->buckets[idx].val;
 }
 
 // update value at index
-static inline uint32_t MAP_FN(set)(MAP_TYPE *m, uint32_t idx, VAL_TYPE val)
+static inline uint32_t MAP_FN(set)(HASHMAP_TYPE *m, uint32_t idx, VAL_TYPE val)
 {
     if (idx >= m->capacity || !m->buckets[idx].key) return m->capacity;
     m->buckets[idx].val = val;

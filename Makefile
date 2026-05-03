@@ -102,7 +102,7 @@ $(BUILD_DIR):
 
 # API
 # ---
-API_SRCS = src/util.c src/log.c src/rwbuf.c src/dns_proto.c src/dns_resolv.c src/sock.c
+API_SRCS = src/util.c src/str_util.c src/log.c src/rwbuf.c src/dns_proto.c src/dns_resolv.c src/sock.c
 
 # server
 # ------

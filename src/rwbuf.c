@@ -121,7 +121,7 @@ int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf])
 }
 
 // read a line (CRLF or LF terminated)
-int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32_t flags)
+int rwbuf_readline(struct rwbuf *buf, struct slice *line, size_t max, uint32_t flags)
 {
     size_t   rlen = rwbuf_used(buf);
     uint8_t *rptr = rwbuf_rptr(buf);

@@ -58,7 +58,7 @@ struct dns_dec {
     size_t udp_size;
     uint8_t ext_rcode;
     uint8_t edns_ver;
-    struct strbuf emsg; // track what we write into emsg
+    struct sbuf emsg; // track what we write into emsg
     struct dns_hdr hdr;
     char msg[DNS_MSG_SIZE]; // decode_name + dns_err_tostr
 };
@@ -249,9 +249,9 @@ static int dns_add_str(char *buf, size_t len, const char *str, size_t slen)
 // append a fmt message to emsg buffer
 static int dns_wmsg(struct dns_dec *dec, const char *fmt, ...)
 {
-    struct strbuf *buf = &dec->emsg;
-    size_t avail = strbuf_rem(buf);
-    char *ptr = strbuf_ptr(buf);
+    struct sbuf *buf = &dec->emsg;
+    size_t avail = sbuf_rem(buf);
+    char *ptr = sbuf_ptr(buf);
 
     va_list args;
     va_start(args, fmt);
@@ -303,7 +303,7 @@ char *dns_err_tostr(struct dns_dec *dec, struct dns_err *err)
 static int dns_dec_genmsg(struct dns_dec *dec)
 {
     if (!dec->nerr) {
-        if (!strbuf_rem(&dec->emsg)) {
+        if (!sbuf_rem(&dec->emsg)) {
             // decoders desc failed ?
             dns_wmsg(dec, "[ERROR] Missing PDU desc");
         }
@@ -450,93 +450,93 @@ int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len)
 {
     if (!rr) return 0;
 
-    struct strbuf tmp;
-    struct strbuf *buf = strbuf_init(&tmp, mem, len);
+    struct sbuf tmp;
+    struct sbuf *buf = sbuf_init(&tmp, mem, len);
 
     // name,class,type
-    strbuf_putm(buf, STR_LIT("  "));
-    strbuf_puts(buf, str_def(rr->name, "<null>"));
-    strbuf_putcs(buf, ' ', dns_class_tostr(rr->class));
-    strbuf_putcs(buf, ' ', dns_type_tostr(rr->type));
-    strbuf_putm(buf, STR_LIT(" "));
+    sbuf_putm(buf, STR_LIT("  "));
+    sbuf_puts(buf, str_def(rr->name, "<null>"));
+    sbuf_putcs(buf, ' ', dns_class_tostr(rr->class));
+    sbuf_putcs(buf, ' ', dns_type_tostr(rr->type));
+    sbuf_putm(buf, STR_LIT(" "));
 
     // rdata
     switch(rr->type) {
     case DNS_TYPE_A: // IP4 address
-        len = ip4_str_encode(rr->rdata.a, strbuf_ptr(buf), strbuf_rem(buf));
-        strbuf_mksp(buf, len);
+        len = ip4_str_encode(rr->rdata.a, sbuf_ptr(buf), sbuf_rem(buf));
+        sbuf_mksp(buf, len);
         break;
     case DNS_TYPE_NS:
-        strbuf_puts(buf, rr->rdata.ns_name);
+        sbuf_puts(buf, rr->rdata.ns_name);
         break;
     case DNS_TYPE_CNAME:
-        strbuf_puts(buf, rr->rdata.cname);
+        sbuf_puts(buf, rr->rdata.cname);
         break;
     case DNS_TYPE_SOA:
         // name + name + 5 integers
-        strbuf_putm(buf, STR_LIT("MNAME="));
-        strbuf_puts(buf, rr->rdata.soa.mname);
-        strbuf_putcm(buf, ' ', STR_LIT("RNAME="));
-        strbuf_puts(buf, rr->rdata.soa.rname);
-        strbuf_putcn(buf, ' ', rr->rdata.soa.serial);
-        strbuf_putcn(buf, ' ', rr->rdata.soa.refresh);
-        strbuf_putcn(buf, ' ', rr->rdata.soa.retry);
-        strbuf_putcn(buf, ' ', rr->rdata.soa.expire);
-        strbuf_putcn(buf, ' ', rr->rdata.soa.min_ttl);
+        sbuf_putm(buf, STR_LIT("MNAME="));
+        sbuf_puts(buf, rr->rdata.soa.mname);
+        sbuf_putcm(buf, ' ', STR_LIT("RNAME="));
+        sbuf_puts(buf, rr->rdata.soa.rname);
+        sbuf_putcn(buf, ' ', rr->rdata.soa.serial);
+        sbuf_putcn(buf, ' ', rr->rdata.soa.refresh);
+        sbuf_putcn(buf, ' ', rr->rdata.soa.retry);
+        sbuf_putcn(buf, ' ', rr->rdata.soa.expire);
+        sbuf_putcn(buf, ' ', rr->rdata.soa.min_ttl);
         break;
     case DNS_TYPE_PTR:
-        strbuf_puts(buf, rr->rdata.ptr_name);
+        sbuf_puts(buf, rr->rdata.ptr_name);
         break;
     case DNS_TYPE_HINFO:
-        strbuf_putm(buf, STR_LIT("cpu="));
-        strbuf_puts(buf, rr->rdata.hinfo.cpu_str);
-        strbuf_putcm(buf,' ', STR_LIT("os="));
-        strbuf_puts(buf, rr->rdata.hinfo.os_str);
+        sbuf_putm(buf, STR_LIT("cpu="));
+        sbuf_puts(buf, rr->rdata.hinfo.cpu_str);
+        sbuf_putcm(buf,' ', STR_LIT("os="));
+        sbuf_puts(buf, rr->rdata.hinfo.os_str);
         break;
     case DNS_TYPE_MX: // Mail Exchange
-        strbuf_putm(buf, STR_LIT("Pref="));
-        strbuf_putn(buf, rr->rdata.mx.pref);
-        strbuf_putcs(buf, ' ', rr->rdata.mx.name);
+        sbuf_putm(buf, STR_LIT("Pref="));
+        sbuf_putn(buf, rr->rdata.mx.pref);
+        sbuf_putcs(buf, ' ', rr->rdata.mx.name);
         break;
     case DNS_TYPE_TXT:
         for (int i = 0; i < rr->rdata.txt.num_str; i++) {
             char *str = rr->rdata.txt.str[i];
-            strbuf_putm(buf, STR_LIT(" txt="));
-            strbuf_puts(buf, str);
+            sbuf_putm(buf, STR_LIT(" txt="));
+            sbuf_puts(buf, str);
         }
         break;
     case DNS_TYPE_AAAA:// IPv6 Address
-        len = ip6_str_encode(rr->rdata.aaaa, 0, strbuf_ptr(buf), strbuf_rem(buf));
-        strbuf_mksp(buf, len);
+        len = ip6_str_encode(rr->rdata.aaaa, 0, sbuf_ptr(buf), sbuf_rem(buf));
+        sbuf_mksp(buf, len);
         break;
     case DNS_TYPE_SRV:
-        strbuf_putm(buf, STR_LIT("Priority"));
-        strbuf_putcn(buf, ' ', rr->rdata.srv.prior);
-        strbuf_putcm(buf, ' ', STR_LIT("Weight"));
-        strbuf_putcn(buf, ' ', rr->rdata.srv.weight);
-        strbuf_putcm(buf, ' ', STR_LIT("Port"));
-        strbuf_putcn(buf, ' ', rr->rdata.srv.port);
-        strbuf_putcm(buf, ' ', STR_LIT("Srv"));
-        strbuf_putcs(buf, ' ', rr->rdata.srv.name);
+        sbuf_putm(buf, STR_LIT("Priority"));
+        sbuf_putcn(buf, ' ', rr->rdata.srv.prior);
+        sbuf_putcm(buf, ' ', STR_LIT("Weight"));
+        sbuf_putcn(buf, ' ', rr->rdata.srv.weight);
+        sbuf_putcm(buf, ' ', STR_LIT("Port"));
+        sbuf_putcn(buf, ' ', rr->rdata.srv.port);
+        sbuf_putcm(buf, ' ', STR_LIT("Srv"));
+        sbuf_putcs(buf, ' ', rr->rdata.srv.name);
         break;
     case DNS_TYPE_OPT: // EDNS0
-        strbuf_putm(buf, STR_LIT("udp-size:"));
-        strbuf_putcn(buf, ' ', rr->rdata.opt.udp_size);
-        strbuf_putcm(buf, ' ', STR_LIT("Ext-RCODE:"));
-        strbuf_putcn(buf, ' ', rr->rdata.opt.ext_rcode);
-        strbuf_putcm(buf, ' ', STR_LIT("EDNS0:"));
-        strbuf_putcn(buf, ' ', rr->rdata.opt.edns_ver);
-        strbuf_putcm(buf, ' ', STR_LIT("DNSEC-OK:"));
-        strbuf_putcn(buf, ' ', rr->rdata.opt.do_bit);
+        sbuf_putm(buf, STR_LIT("udp-size:"));
+        sbuf_putcn(buf, ' ', rr->rdata.opt.udp_size);
+        sbuf_putcm(buf, ' ', STR_LIT("Ext-RCODE:"));
+        sbuf_putcn(buf, ' ', rr->rdata.opt.ext_rcode);
+        sbuf_putcm(buf, ' ', STR_LIT("EDNS0:"));
+        sbuf_putcn(buf, ' ', rr->rdata.opt.edns_ver);
+        sbuf_putcm(buf, ' ', STR_LIT("DNSEC-OK:"));
+        sbuf_putcn(buf, ' ', rr->rdata.opt.do_bit);
         break;
     default:
         break;
     }
 
-    strbuf_endz(buf);
+    sbuf_endz(buf);
 
     // bytes written
-    return strbuf_pos(buf);
+    return sbuf_pos(buf);
 }
 
 // add dns section as string to buffer
@@ -1134,7 +1134,7 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
     const char *type_str = qr ? "RESPONSE" : "QUERY";
 
     char tmp[100];
-    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+    struct sbuf buf = SBUF_INIT(tmp, sizeof(tmp));
     tmp[0] = '\0';
 
     if (qr) {
@@ -1146,24 +1146,24 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
         int rcode = flags & DNS_FLAGS_RCODE;
 
         // add flags
-        if (as) strbuf_puticm(&buf, ' ', STR_LIT("AS:1"));
-        if (tc) strbuf_puticm(&buf, ' ', STR_LIT("TC:1"));
-        if (rd) strbuf_puticm(&buf, ' ', STR_LIT("RD:1"));
-        if (ra) strbuf_puticm(&buf, ' ', STR_LIT("RA:1"));
+        if (as) sbuf_puticm(&buf, ' ', STR_LIT("AS:1"));
+        if (tc) sbuf_puticm(&buf, ' ', STR_LIT("TC:1"));
+        if (rd) sbuf_puticm(&buf, ' ', STR_LIT("RD:1"));
+        if (ra) sbuf_puticm(&buf, ' ', STR_LIT("RA:1"));
 
         // convert RCODE to str
         const char *rcode_str = rcode_tostr(rcode);
-        strbuf_puticm(&buf, ' ', STR_LIT("RCODE:"));
-        strbuf_puts(&buf, rcode_str);
+        sbuf_puticm(&buf, ' ', STR_LIT("RCODE:"));
+        sbuf_puts(&buf, rcode_str);
 
         // validate OPCODE range
         if (opcode == 3 || opcode > 5) {
-            strbuf_puticm(&buf, ' ', STR_LIT("bad-opcode"));
+            sbuf_puticm(&buf, ' ', STR_LIT("bad-opcode"));
         }
 
         // validate RCODE range
         if (rcode > 10) {
-            strbuf_puticm(&buf, ' ', STR_LIT("bad-rcode"));
+            sbuf_puticm(&buf, ' ', STR_LIT("bad-rcode"));
             dns_dec_err(dec, DNS_PDU, DNS_HDR, DNS_ERCODE);
         }
     }
@@ -1175,14 +1175,14 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
         int ad = flags & DNS_FLAGS_AD ? 1 : 0;
 
         // add flags
-        if (tc) strbuf_puticm(&buf, ' ', STR_LIT("TC:1"));
-        if (rd) strbuf_puticm(&buf, ' ', STR_LIT("RD:1"));
-        if (cd) strbuf_puticm(&buf, ' ', STR_LIT("CD:1"));
-        if (ad) strbuf_puticm(&buf, ' ', STR_LIT("AD:1"));
+        if (tc) sbuf_puticm(&buf, ' ', STR_LIT("TC:1"));
+        if (rd) sbuf_puticm(&buf, ' ', STR_LIT("RD:1"));
+        if (cd) sbuf_puticm(&buf, ' ', STR_LIT("CD:1"));
+        if (ad) sbuf_puticm(&buf, ' ', STR_LIT("AD:1"));
 
         // validate OPCODE range
         if (opcode == 3 || opcode > 5) {
-            strbuf_puticm(&buf, ' ', STR_LIT("bad-opcode"));
+            sbuf_puticm(&buf, ' ', STR_LIT("bad-opcode"));
             dns_dec_err(dec, DNS_PDU, DNS_HDR, DNS_EOPCODE);
         }
     }
@@ -1191,7 +1191,7 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
     rc = dns_wmsg(dec,
         "[%s] ID 0x%04x QR:%d OPCODE:%s %.*s\n",
         type_str, hdr->id, qr, opcode_str,
-        (int) strbuf_pos(&buf), strbuf_start(&buf));
+        (int) sbuf_pos(&buf), sbuf_start(&buf));
 
     return rc;
 }
@@ -1229,7 +1229,7 @@ int dns_validate(const void *buf, size_t len, char *emsg, size_t emsg_len)
         .pkt_len = len,
         .udp_size = DNS_MAX_UDP,
         .need_emsg = 1,
-        .emsg = STRBUF_INIT(emsg, emsg_len)
+        .emsg = SBUF_INIT(emsg, emsg_len)
     };
 
     struct dns_msg msg = { 0 };

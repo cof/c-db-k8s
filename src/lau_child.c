@@ -163,7 +163,7 @@ int lau_child_set_veth(struct lau_child *child, const char *name, const char *pr
 int lau_child_net_setup(struct lau_child *child)
 {
     char tmp[128];
-    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+    struct sbuf buf = SBUF_INIT(tmp, sizeof(tmp));
 
     log_debug("lau setup-network (name=%s ipaddr=%s" , child->name, child->ip_addr);
 

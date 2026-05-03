@@ -107,8 +107,8 @@ struct dns_services {
 // result state
 struct dns_result {
     uint32_t flags;
-    struct str_slice host;
-    struct str_slice port;
+    struct slice host;
+    struct slice port;
     int udp_port;
     int tcp_port;
     int num_ip4;
@@ -146,7 +146,7 @@ struct dns_sock {
 };
 
 struct dns_query {
-    struct str_slice qname;
+    struct slice qname;
     uint16_t qtype;
     uint16_t qclass;
     uint16_t tid;
@@ -156,7 +156,7 @@ struct dns_query {
 
 // nameserver state
 struct dns_ns {
-    struct str_slice name;
+    struct slice name;
     struct dns_sockaddr *addr;
     struct dns_result *res;
     struct dns_sock  sock;
@@ -211,7 +211,7 @@ static int64_t get_now_ms(void)
 }
 
 // decode ip-addr str
-static uint32_t ipstr_decode(struct str_slice str, uint8_t dst[static 16])
+static uint32_t ipstr_decode(struct slice str, uint8_t dst[static 16])
 {
     if (ip4_str_decode(str.ptr, str.len, dst)) return DNS_IPV4;
     if (ip6_str_decode(str.ptr, str.len, dst)) return DNS_IPV6;
@@ -356,7 +356,7 @@ static int fixup_addrs(struct dns_result *res)
     return 0;
 }
 
-static int read_line(int fd, struct rwbuf *buf, struct str_slice *line)
+static int read_line(int fd, struct rwbuf *buf, struct slice *line)
 {
     if (fd == -1) return 0;
     int flags = rwbuf_used(buf) ? 0 : 1;
@@ -382,7 +382,7 @@ again:
 #define OPT_TIMEOUT  2
 #define OPT_ATTEMPTS 3
 #define OPT_USEVC    4
-int str_toopt(struct str_slice str)
+int str_toopt(struct slice str)
 {
     if (!slice_cmpmem(str, STR_LIT("ndots"))) return OPT_NDOTS;
     if (!slice_cmpmem(str, STR_LIT("timeout"))) return OPT_TIMEOUT;
@@ -391,11 +391,11 @@ int str_toopt(struct str_slice str)
     return 0;
 }
 
-static void cfg_add_options(struct dns_config *cfg, struct str_slice str)
+static void cfg_add_options(struct dns_config *cfg, struct slice str)
 {
     while (str.len) {
-        struct str_slice val = slice_splitset(&str, STR_LIT(" \t"));
-        struct str_slice key = slice_splitch(&val, ':');
+        struct slice val = slice_splitset(&str, STR_LIT(" \t"));
+        struct slice key = slice_splitch(&val, ':');
         switch(str_toopt(key)) {
         case OPT_NDOTS:    cfg->ndots = slice_tou32(val); break;
         case OPT_TIMEOUT:  cfg->timeout_secs = slice_tou32(val); break;
@@ -405,10 +405,10 @@ static void cfg_add_options(struct dns_config *cfg, struct str_slice str)
     }
 }
 
-static void cfg_add_search(struct dns_config *cfg, struct str_slice str)
+static void cfg_add_search(struct dns_config *cfg, struct slice str)
 {
     while (str.len && cfg->num_search < ARR_LEN(cfg->search)) {
-       struct str_slice name = slice_splitset(&str, STR_LIT(" \t"));
+       struct slice name = slice_splitset(&str, STR_LIT(" \t"));
        if (cfg->store_len + name.len + 1 > sizeof(cfg->store)) return;
         // copy name
         char *str = cfg->store + cfg->store_len;
@@ -420,7 +420,7 @@ static void cfg_add_search(struct dns_config *cfg, struct str_slice str)
     }
 }
 
-static int cfg_add_nameserver(struct dns_config *cfg, struct str_slice ip_str)
+static int cfg_add_nameserver(struct dns_config *cfg, struct slice ip_str)
 {
     if (cfg->num_ns >= ARR_LEN(cfg->ns_addrs)) return 0;
     struct dns_sockaddr *ns_addr = &cfg->ns_addrs[cfg->num_ns];
@@ -440,7 +440,7 @@ static int cfg_add_nameserver(struct dns_config *cfg, struct str_slice ip_str)
 #define CFG_SERVER  1
 #define CFG_SEARCH  2
 #define CFG_OPTIONS 3
-int str_tocfg(struct str_slice str)
+int str_tocfg(struct slice str)
 {
     if (!slice_cmpmem(str, STR_LIT("nameserver"))) return CFG_SERVER;
     if (!slice_cmpmem(str, STR_LIT("search")))     return CFG_SEARCH;
@@ -452,7 +452,7 @@ static void init_config(struct dns_config *cfg)
 {
     uint8_t tmp[1024];
     struct rwbuf buf = RWBUF_INIT(tmp, sizeof(tmp));
-    struct str_slice line;
+    struct slice line;
     int rc;
 
     int fd = open(DNS_RESOLV_CONF, O_RDONLY);
@@ -460,7 +460,7 @@ static void init_config(struct dns_config *cfg)
         slice_chop(&line, '#');
         slice_trim(&line);
         if (line.len == 0) continue;
-        struct str_slice key = slice_splitset(&line, STR_LIT(" \t"));
+        struct slice key = slice_splitset(&line, STR_LIT(" \t"));
         switch(str_tocfg(key)) {
         case CFG_SERVER:  cfg_add_nameserver(cfg, line); break;
         case CFG_SEARCH:  cfg_add_search(cfg, line); break;
@@ -476,7 +476,7 @@ static void init_config(struct dns_config *cfg)
     if (!cfg->num_ns) cfg_add_nameserver(cfg, slice_make(STR_LIT("127.0.0.1")));
 }
 
-struct dns_sockaddr *hosts_get(struct dns_hosts *hosts, struct str_slice hostname)
+struct dns_sockaddr *hosts_get(struct dns_hosts *hosts, struct slice hostname)
 {
     struct dns_sockaddr *addr = NULL;
 
@@ -493,7 +493,7 @@ struct dns_sockaddr *hosts_get(struct dns_hosts *hosts, struct str_slice hostnam
     return addr;
 }
 
-static int hosts_put(struct dns_hosts *hosts, struct str_slice hostname, struct dns_sockaddr *addr)
+static int hosts_put(struct dns_hosts *hosts, struct slice hostname, struct dns_sockaddr *addr)
 {
     if (hosts->num_addr >= hosts->max_addr) return 0;
 
@@ -527,7 +527,7 @@ static int hosts_put(struct dns_hosts *hosts, struct str_slice hostname, struct 
 }
 
 static int hosts_add(struct dns_hosts *hosts,
-    struct str_slice ip, struct str_slice hostname, struct str_slice aliases)
+    struct slice ip, struct slice hostname, struct slice aliases)
 {
     if (hosts->num_addr >= ARR_LEN(hosts->addrs)) return 0;
     struct dns_sockaddr *addr = &hosts->addrs[hosts->num_addr];
@@ -546,7 +546,7 @@ static int hosts_add(struct dns_hosts *hosts,
     // add aliases
     int num_add = 1;
     while (aliases.len) {
-        struct str_slice alias = slice_splitset(&aliases, STR_LIT(" \t"));
+        struct slice alias = slice_splitset(&aliases, STR_LIT(" \t"));
         if (hosts_put(hosts, alias, addr)) num_add++;
     }
 
@@ -558,7 +558,7 @@ static void init_hosts(struct dns_hosts *hosts)
 {
     uint8_t tmp[1024];
     struct rwbuf buf = RWBUF_INIT(tmp, sizeof(tmp));
-    struct str_slice line;
+    struct slice line;
     int rc;
 
     hosts->max_addr = ARR_LEN(hosts->addrs);
@@ -572,8 +572,8 @@ static void init_hosts(struct dns_hosts *hosts)
         slice_trim(&line);
         if (line.len == 0) continue;
         total++;
-        struct str_slice addr = slice_splitset(&line, STR_LIT(" \t"));
-        struct str_slice name = slice_splitset(&line, STR_LIT(" \t"));
+        struct slice addr = slice_splitset(&line, STR_LIT(" \t"));
+        struct slice name = slice_splitset(&line, STR_LIT(" \t"));
         if (addr.len == 0 || name.len == 0) continue;
         if (hosts_add(hosts, addr, name, line)) num_add++;
     }
@@ -582,7 +582,7 @@ static void init_hosts(struct dns_hosts *hosts)
     log_debug("lines %zu services %zu added %zu", lines, total, num_add);
 }
 
-static uint32_t services_get(struct dns_services *svcs, struct str_slice port)
+static uint32_t services_get(struct dns_services *svcs, struct slice port)
 {
     char name[DNS_SVC_MAXNAME];
     size_t len = slice_tomem(port, name, ARR_LEN(name));
@@ -594,7 +594,7 @@ static uint32_t services_get(struct dns_services *svcs, struct str_slice port)
 }
 
 static int services_put(struct dns_services *svcs,
-    struct str_slice service, int ptype, int16_t port)
+    struct slice service, int ptype, int16_t port)
 {
     char name[DNS_SVC_MAXNAME];
     size_t name_len = slice_tomem(service, name, sizeof(name));
@@ -624,14 +624,14 @@ static int services_put(struct dns_services *svcs,
 }
 
 static int services_add(struct dns_services *svcs,
-    struct str_slice name, struct str_slice pp, struct str_slice aliases)
+    struct slice name, struct slice pp, struct slice aliases)
 {
     log_debug("n=%.*s p=%.*s as%.*s", SLICE(name), SLICE(pp), SLICE(aliases));
 
     if (svcs->num_svc >= svcs->max_svc) return 0;
 
     // get port and ptype
-    struct str_slice port_str = slice_splitch(&pp, '/');
+    struct slice port_str = slice_splitch(&pp, '/');
     uint16_t port = slice_tou32(port_str);
     int ptype = 0;
     if (slice_cmpmem(pp, STR_LIT("tcp"))) ptype = DNS_TCP;
@@ -646,7 +646,7 @@ static void init_services(struct dns_services *svcs)
 {
     uint8_t tmp[1024];
     struct rwbuf buf = RWBUF_INIT(tmp, sizeof(tmp));
-    struct str_slice line;
+    struct slice line;
     int rc;
 
     if (!map_attach(&svcs->name_toport, svcs->buffer, DNS_SVC_MAXPORT)) return;
@@ -662,8 +662,8 @@ static void init_services(struct dns_services *svcs)
         if (line.len == 0) continue;
         // add service
         total++;
-        struct str_slice name = slice_splitset(&line, STR_LIT(" \t"));
-        struct str_slice pp = slice_splitset(&line, STR_LIT(" \t"));
+        struct slice name = slice_splitset(&line, STR_LIT(" \t"));
+        struct slice pp = slice_splitset(&line, STR_LIT(" \t"));
         if (name.len == 0 || pp.len == 0) continue;
         if (services_add(svcs, name, pp, line)) num_add++;
     }
@@ -673,7 +673,7 @@ static void init_services(struct dns_services *svcs)
 }
 
 static struct dns_sockaddr *cache_get(struct dns_cache *cache,
-    int type, struct str_slice hostname)
+    int type, struct slice hostname)
 {
     struct dns_sockaddr *addr = NULL;
 
@@ -705,7 +705,7 @@ static struct dns_sockaddr *cache_get(struct dns_cache *cache,
 }
 
 static int cache_put(struct dns_cache *cache,
-    int type, struct str_slice hostname,
+    int type, struct slice hostname,
     struct dns_sockaddr *addr, uint32_t ttl)
 {
     log_debug("t=%d n=%.*s a=%s ttl=%u", type, SLICE(hostname), ADDR_STR(addr), ttl);
@@ -969,7 +969,7 @@ static int set_dnsreq(struct dns_ns *ns, struct dns_query *q)
 {
     struct dns_msg *msg = &ns->msg;
     struct dns_hdr *hdr = &msg->hdr;
-    struct str_slice name = ns->name;
+    struct slice name = ns->name;
 
     q->tid = gen_tid();
     q->qname = ns->name;
@@ -1100,7 +1100,7 @@ static bool chk_dnsqd(struct dns_query *query, struct dns_msg *rsp)
     if (rsp->qd_len != 1) return false;
 
     struct dns_qd *qd = &rsp->qd[0];
-    struct str_slice qname = query->qname;
+    struct slice qname = query->qname;
     if (slice_endswith(qname, '.')) qname.len--;
 
     if (slice_casecmpstr(qname, qd->qname)) false;
@@ -1279,7 +1279,7 @@ static int ns_getrc(struct dns_ns *ns, int rc)
     return ip4_rc;
 }
 
-static int try_nameserver(struct str_slice name,
+static int try_nameserver(struct slice name,
     struct dns_sockaddr *addr, uint32_t timeout_secs, int use_tcp,
     struct dns_result *res)
 {
@@ -1337,26 +1337,26 @@ static inline int stop_search(int rc)
     return rc == DNS_OK || rc == DNS_NODATA ? 1 : 0;
 }
 
-static struct str_slice build_name(struct strbuf *buf,
-    struct str_slice name, struct str_slice suffix)
+static struct slice build_name(struct sbuf *buf,
+    struct slice name, struct slice suffix)
 {
-    strbuf_reset(buf);
+    sbuf_reset(buf);
     if (slice_startswith(suffix, '.'))
-        strbuf_putm(buf, name.ptr, name.len);
+        sbuf_putm(buf, name.ptr, name.len);
     else {
-        strbuf_putmc(buf, name.ptr, name.len, '.');
+        sbuf_putmc(buf, name.ptr, name.len, '.');
     }
     if (slice_endswith(suffix, '.')) {
-        strbuf_putm(buf, suffix.ptr, suffix.len);
+        sbuf_putm(buf, suffix.ptr, suffix.len);
     }
     else {
-        strbuf_putmc(buf, suffix.ptr, suffix.len, '.');
+        sbuf_putmc(buf, suffix.ptr, suffix.len, '.');
     }
 
-    return slice_make(strbuf_start(buf), strbuf_pos(buf));
+    return slice_make(sbuf_start(buf), sbuf_pos(buf));
 }
 
-static int try_cache(struct str_slice name, struct dns_result *res)
+static int try_cache(struct slice name, struct dns_result *res)
 {
     log_debug("lookup n=%.*s ", SLICE(name));
 
@@ -1379,7 +1379,7 @@ static int try_cache(struct str_slice name, struct dns_result *res)
     return res->need_ip4 || res->need_ip6;
 }
 
-static int query_name(struct str_slice name, struct dns_config *cfg, struct dns_result *res)
+static int query_name(struct slice name, struct dns_config *cfg, struct dns_result *res)
 {
     log_debug("n %.*s #att %d tmo %u #ns %zu", SLICE(name), CFG_QN(cfg));
 
@@ -1400,17 +1400,17 @@ static int query_name(struct str_slice name, struct dns_config *cfg, struct dns_
     return rc;
 }
 
-static int query_search(struct str_slice name, struct dns_config *cfg, struct dns_result *res)
+static int query_search(struct slice name, struct dns_config *cfg, struct dns_result *res)
 {
     int rc = DNS_NXDOMAIN;
     char tmp[DNS_HOSTS_MAXNAME];
-    struct strbuf buf = STRBUF_INIT(tmp, sizeof(tmp));
+    struct sbuf buf = SBUF_INIT(tmp, sizeof(tmp));
 
     log_debug("n=%.*s nsearch=%zu", SLICE(name), cfg->num_search);
 
     for (size_t s = 0; s < cfg->num_search; s++) {
-        struct str_slice suffix = slice_make_cstr(cfg->search[s]);
-        struct str_slice search = build_name(&buf, name, suffix);
+        struct slice suffix = slice_make_cstr(cfg->search[s]);
+        struct slice search = build_name(&buf, name, suffix);
         rc = query_name(search, cfg, res);
         if (stop_search(rc)) return rc;
     }
@@ -1425,7 +1425,7 @@ static int try_nameservers(struct dns_result *res)
     log_debug("#att %u tmo:%u ndots %u #ns %zu", CFG_NS(cfg));
 
     // check fqdn
-    struct str_slice name = res->host;
+    struct slice name = res->host;
     if (name.len == 0) return 0;
     int is_fqdn = slice_endswith(name, '.');
     size_t ndots = slice_countch(name, '.');
@@ -1462,7 +1462,7 @@ static int try_port(struct dns_result *res)
     }
 
     // empty port-str
-    struct str_slice port = res->port;
+    struct slice port = res->port;
     if (!port.len) return 0;
 
     // numeric port-str
@@ -1510,7 +1510,7 @@ static int try_hostname(struct dns_result *res)
     if (res->flags & DNS_IPV4) res->need_ip4 = 1;
     if (res->flags & (DNS_IPV6 | DNS_V4MAPPED)) res->need_ip4 = 1;
 
-    struct str_slice host_str = res->host;
+    struct slice host_str = res->host;
 
     // empty hostname
     if (!host_str.len) {

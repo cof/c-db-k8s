@@ -23,16 +23,16 @@
  *
  * key-value api
  * -------------
- * db_set(key,vale) : store a key value
- * db_get(key)      : get value for key
- * db_del(key)      : delete key
+ * db_set(key, value) : store a key value
+ * db_get(key)        : get value for key
+ * db_del(key)        : delete key
  */
 
 int db_init(const char *file);
 void db_deinit(void);
 
-int db_set(struct str_slice key, struct str_slice val);
-struct str_slice db_get(struct str_slice key);
-int db_del(struct str_slice key);
+int db_set(struct slice key, struct slice val);
+struct slice db_get(struct slice key);
+int db_del(struct slice key);
 
 #endif

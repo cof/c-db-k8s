@@ -65,12 +65,12 @@ static int send_prompt(struct simple_client *client)
     return sock_write_mem(&client->sock, STR_LIT("> "));
 }
 
-static int send_line(struct simple_client *client, struct str_slice line)
+static int send_line(struct simple_client *client, struct slice line)
 {
     return sock_write_line(&client->sock, line);
 }
 
-static int send_rsp(struct simple_client *client, struct str_slice rsp)
+static int send_rsp(struct simple_client *client, struct slice rsp)
 {
     if (client->log_line) {
         log_info("LOG", "send-rsp: %.*s", SLICE(rsp));
@@ -85,14 +85,14 @@ static int send_rsp(struct simple_client *client, struct str_slice rsp)
 }
 
 // handler - SET key value
-static int cmd_set(struct simple_client *client, struct str_slice args)
+static int cmd_set(struct simple_client *client, struct slice args)
 {
-    struct str_slice val = slice_copy(args);
-    struct str_slice key = slice_splitch(&val, ' ');
+    struct slice val = slice_copy(args);
+    struct slice key = slice_splitch(&val, ' ');
     slice_trim(&key);
     slice_trim(&val);
 
-    struct str_slice res;
+    struct slice res;
     if (!key.len || ! val.len)
         res = slice_make(STR_LIT("FAIL"));
     else if (db_set(key, val))
@@ -104,9 +104,9 @@ static int cmd_set(struct simple_client *client, struct str_slice args)
 }
 
 // handler - GET key
-static int cmd_get(struct simple_client *client, struct str_slice key)
+static int cmd_get(struct simple_client *client, struct slice key)
 {
-    struct str_slice res = db_get(key);
+    struct slice res = db_get(key);
 
     if (!res.ptr) {
         res = slice_make(STR_LIT("FAIL"));
@@ -116,9 +116,9 @@ static int cmd_get(struct simple_client *client, struct str_slice key)
 }
 
 // handler - DEL key
-static int cmd_del(struct simple_client *client, struct str_slice key)
+static int cmd_del(struct simple_client *client, struct slice key)
 {
-    struct str_slice res;
+    struct slice res;
 
     if (!key.len)
         res = slice_make(STR_LIT("FAIL"));
@@ -131,10 +131,10 @@ static int cmd_del(struct simple_client *client, struct str_slice key)
 }
 
 // handler - QUIT
-static int cmd_quit(struct simple_client *client, struct str_slice args)
+static int cmd_quit(struct simple_client *client, struct slice args)
 {
     (void) args;
-    struct str_slice res = slice_make(STR_LIT("OK"));
+    struct slice res = slice_make(STR_LIT("OK"));
 
     client->snd_prompt = 0;
     int rc = send_rsp(client, res);
@@ -144,10 +144,10 @@ static int cmd_quit(struct simple_client *client, struct str_slice args)
 }
 
 // take a wild guess
-static int cmd_unsupp(struct simple_client *client, struct str_slice args)
+static int cmd_unsupp(struct simple_client *client, struct slice args)
 {
     (void) args;
-    struct str_slice res = slice_make(STR_LIT("UNSUPP"));
+    struct slice res = slice_make(STR_LIT("UNSUPP"));
 
     return send_rsp(client, res);
 }
@@ -155,7 +155,7 @@ static int cmd_unsupp(struct simple_client *client, struct str_slice args)
 static struct {
     const char *name;
     size_t len;
-    int (*func)(struct simple_client *client, struct str_slice args);
+    int (*func)(struct simple_client *client, struct slice args);
 } cli_cmds[] = {
     { 0, 0,  cmd_unsupp },
     { STR_LIT("SET"),  cmd_set },
@@ -164,7 +164,7 @@ static struct {
     { STR_LIT("QUIT"), cmd_quit },
 };
 
-static int find_cli_cmd(struct str_slice cmd)
+static int find_cli_cmd(struct slice cmd)
 {
     for (size_t i = 1; i < ARR_LEN(cli_cmds); i++) {
         if (!slice_cmpmem(cmd, cli_cmds[i].name, cli_cmds[i].len)) {
@@ -176,9 +176,9 @@ static int find_cli_cmd(struct str_slice cmd)
     return 0;
 }
 
-static int process_line(struct simple_client *client, struct str_slice cmd)
+static int process_line(struct simple_client *client, struct slice cmd)
 {
-    struct str_slice name = slice_splitch(&cmd, ' ');
+    struct slice name = slice_splitch(&cmd, ' ');
     name = slice_toupper(name);
     slice_trim(&cmd);
 
@@ -260,7 +260,7 @@ void do_client_recv(struct simple_client *client)
     int rc;
 
     while ((rc = sock_recv(&client->sock)) == SOCK_DATA) {
-        struct str_slice line;
+        struct slice line;
         int is_eof = sock_iseof(&client->sock);
         // recv cmd-line
         while ((rc = sock_recv_line(&client->sock, &line, is_eof)) > 0) {

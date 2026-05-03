@@ -193,18 +193,18 @@ ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[st
  * sock_recvbuf_consume(sock, len) : consume len bytes from recv-buffer
  */
 int sock_write_mem(struct simple_sock *sock, void *buf, size_t len);
-int sock_write_str(struct simple_sock *sock, struct str_slice str);
-int sock_write_line(struct simple_sock *sock, struct str_slice line);
+int sock_write_str(struct simple_sock *sock, struct slice str);
+int sock_write_line(struct simple_sock *sock, struct slice line);
 
 int sock_send(struct simple_sock *sock);
 int sock_send_mem(struct simple_sock *sock, void *mem, size_t len);
-int sock_send_str(struct simple_sock *sock, struct str_slice str);
-int sock_send_line(struct simple_sock *sock, struct str_slice line);
+int sock_send_str(struct simple_sock *sock, struct slice str);
+int sock_send_line(struct simple_sock *sock, struct slice line);
 
 int sock_recv(struct simple_sock *sock);
-int sock_recv_line(struct simple_sock *sock, struct str_slice *line, int eof);
+int sock_recv_line(struct simple_sock *sock, struct slice *line, int eof);
 
-static inline struct str_slice sock_recv_str(struct simple_sock *sock)
+static inline struct slice sock_recv_str(struct simple_sock *sock)
 {
     return slice_make((char *) rwbuf_rptr(&sock->recv_buf), rwbuf_used(&sock->recv_buf));
 }
@@ -238,7 +238,7 @@ static inline int sock_recvbuf_consume(struct simple_sock *sock, size_t len)
 int sockaddr_tobuf(struct sockaddr *addr, socklen_t addr_len, char *buf, size_t buf_len);
 char *sockaddr_tostr(struct sock_addr *addr);
 char *sock_tostr(struct simple_sock *sock);
-int sock_ipstr_decode(struct str_slice str, struct sock_addr *addr);
+int sock_ipstr_decode(struct slice str, struct sock_addr *addr);
 
 static inline size_t sock_sendbuf_used(struct simple_sock *sock)
 {
