@@ -5,7 +5,7 @@
  * -----------------------
  * A DNS codec API for reading and writing DNS messages featuring
  *
- * - Structure-composable: built for inline embedding, object compostion & memory locality
+ * - Intrusive-design: structures allow for inline embedding and object composition
  * - full rfc1035 support for encoding/decoding wire-format DNS messages.
  * - provides a DNS message structure for easy message generation
  * - Human-readable formatting of decoded DNS messages
