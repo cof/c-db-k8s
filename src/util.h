@@ -11,7 +11,6 @@
  * min-max     : safe min/max funcs
  * str-helpers : misc string helpers
  * signal      : simple signal handler api
- * inet        : inet api
  * setter      : for setting string and int values
  * cmd-line    : cmd-line api
  */

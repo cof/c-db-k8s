@@ -28,24 +28,14 @@ There are two parts to this project.
 
 ## Design
 
-All application code was written in C with no 3rd party libs.
-
-Implementation uses embeddable structures and avoid malloc where possible to maintain a
-simple deterministic memory profile.
-
-Far too many codebases these days rely on large complex frameworks that make
-even simple projects more resource-intensive than necessary, hiding the core 
-algorithms and design patterns from the developer (to their cost).
-
-C is a simple language - and while it does not provide the massive framework
-support found in C++, Rust, Zig, Go or Java - that's also its power. You write
-exactly what you need and no more.
-
-- Code written in C with no 3rd party libs
-- Custom APIs : UTIL, LOG, RWBUF, HASHMAP, DNS-PROTO, DNS-RESOLV, SOCK, DB
+- All application code was written in C with no 3rd party libs.
+- Uses embeddable structures and avoid malloc where possible
 - VM Provisioning : fully automated VM provisioning via build_vm.mk
-- UTIL  : strings/signal/cmd-line handling api
-- LOG   : levels-based logging subsystem (FATAL, ERROR, INFO, DEBUG)
+- K8s Integration: automated Kubernetes provisioning and testing.
+- LOG : levels-based logging subsystem (FATAL, ERROR, INFO, DEBUG)
+- MACROS : macros for safe pointer and offset calculation
+- STR_UTIL : custom string buffer and string slice API
+- UTIL :  helpers for signal handling, system execution and command-line parsing
 - HASHMAP : type-safe api uses C11 generics,X-Macros,Fibonacci hashing,open addressing
 - RWBUF   : memory buffer api
 - DNS-PROTO  : rfc1035 compliant codec
@@ -69,17 +59,6 @@ DNS-RESOLV is a complete DNS subsystem designed to be a getaddrinfo replacement.
 - DNS cache with TTL support
 - non-blocking I/O using poll
 
-## 1. Container Launcher
-
-A custom container launcher that runs applications inside isolated namespaces.
-
-Code consist of a container launcher and database client and server to test it.
-The database client and server are reused by k8s.
-
-- **launcher** A Linux container runtime management tool
-- **server**  key-value DB server supporting cli SET,GET,DEL operations
-- **client**  telnet-style DB client using a 4-way TCP-wrapper pipe
-
 ### VM Provisioning
 
 - A container launcher that modifies its host namespaces **needs a VM** to safely test
@@ -92,6 +71,18 @@ The database client and server are reused by k8s.
 - make test-lau simply installs client,server,launcher into VM and runs launcher
 - ssh directly to VM with ssh alpine@test-lau if nsswitch.conf allows it
 - Add libvirt_guest to hosts line in /etc/nsswitch.conf e.g "hosts: files libvirt_guest"
+
+## 1. Container Launcher
+
+A custom container launcher that runs applications inside isolated namespaces.
+
+Code consist of a container launcher and database client and server to test it.
+The database client and server are reused by k8s.
+
+- **launcher** A Linux container runtime management tool
+- **server**  key-value DB server supporting cli SET,GET,DEL operations
+- **client**  telnet-style DB client using a 4-way TCP-wrapper pipe
+
 
 ## 1.1 Launcher
 
