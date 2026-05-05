@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
+
 #ifndef _LIST_H_
 #define _LIST_H_
 

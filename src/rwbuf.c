@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
+
 /*
  * RWBUF - A simple memory buffer API
  * ----------------------------------

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
+
 /*
  * A DNS message codec API
  * -----------------------

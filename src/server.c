@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
+
 /*
  * server   : TCP server than supports telnet api to acesss a key/value store
  * Usage    : ./server --help

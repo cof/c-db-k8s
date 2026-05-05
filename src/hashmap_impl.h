@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
+
 /* 
  * X-Macro hash map - XXX dont add include guards
  *

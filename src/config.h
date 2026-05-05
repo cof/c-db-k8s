@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
+
 #ifndef _CONFIG_H_
 #define _CONFIG_H_
 

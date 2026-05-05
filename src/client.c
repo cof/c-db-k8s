@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
+
 /*
  * client  : telnet like TCP client
  * Usage   : ./client --help
