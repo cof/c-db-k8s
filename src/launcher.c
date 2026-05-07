@@ -679,6 +679,7 @@ static int lau_parse_argv(struct lau_ctx *lau, int argc, char *argv[])
 // set defaults
 int lau_init(struct lau_ctx *lau)
 {
+    if (!lau) return log_errno_rf("lau is null");
     log_level = LOG_ERROR;
 
     lau->max_proc = ARR_LEN(lau->procs);

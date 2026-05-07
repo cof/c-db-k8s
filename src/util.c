@@ -75,6 +75,7 @@ int run_cmd(struct sbuf *buf, int flags, const char *fmt, ...)
         arg.ptr[arg.len] = '\0';
         cmd_args[cmd_idx++] = arg.ptr;
     }
+    if (cmd_idx >= ARR_LEN(cmd_args)) return log_error_rf("cmd_args: no space"); 
     cmd_args[cmd_idx] = NULL;
     if (cmd_idx == 0) return -1;
 
@@ -214,7 +215,7 @@ char *int_tostr(int val)
     char *str = bufs[idx];
     idx = (idx + 1) & 15;
 
-    return itoa(val, str, sizeof(bufs[0][0]));
+    return itoa(val, str, sizeof(bufs[0]));
 }
 
 char *u32_tostr(uint32_t val)
@@ -252,6 +253,7 @@ int gen_str(char *buf, size_t len, const char *fmt, ...)
 // generic setters
 int str_setval(char **str, const char *name, const char *val_str)
 {
+    if (!str) return 0;
     if (*str) free(*str);
     *str = strdup(val_str);
     if (!*str) {
@@ -317,9 +319,9 @@ int opt_setint(int *iptr, struct cmd_argv *parse)
     return int_setval(iptr, parse->name, parse->value);
 }
 
-int opt_setuint(uint32_t *iptr, struct cmd_argv *parse)
+int opt_setuint(uint32_t *uptr, struct cmd_argv *parse)
 {
-    return uint_setval(iptr, parse->name, parse->value);
+    return uint_setval(uptr, parse->name, parse->value);
 }
 
 static int find_opt(const char *name, const struct cmd_opt opts[])

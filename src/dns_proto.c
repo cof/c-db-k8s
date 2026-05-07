@@ -429,12 +429,12 @@ static void sect_init(struct dns_sect *sect,
 }
 
 // print dns_qd to str - returns bytes written or error
-int dns_qd_tostr(struct dns_qd *quest, char *buf, size_t buf_len)
+int dns_qd_tostr(struct dns_qd *qd, char *buf, size_t buf_len)
 {
     // ensure no hidden fields
-    const char *name = str_def(quest->qname, "<null>");
-    const char *type_str = dns_type_tostr(quest->qtype);
-    const char *class_str = dns_class_tostr(quest->qclass);
+    const char *name = str_def(qd->qname, "<null>");
+    const char *type_str = dns_type_tostr(qd->qtype);
+    const char *class_str = dns_class_tostr(qd->qclass);
 
     char *wptr = buf;
     char *wend = wptr + buf_len;

@@ -51,12 +51,13 @@
 
 static inline uint64_t dbj2a_hash(const void *key, const int klen)
 {
-    const unsigned char *data,*end;
+    const unsigned char *data = key;
+    const unsigned char *end = data + klen;
     uint64_t hash = 5381;
 
-    end = key + klen;
-    for (data = key; data < end; data++) {
+    while (data < end) {
         hash = ((hash << 5) + hash) ^ *data;
+        data++;
     }
 
     return hash;

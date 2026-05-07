@@ -73,12 +73,12 @@ extern int log_level;
  * functions : direct functions
  * -----------------------------
  * log_init(dst, level) : setup up logger
- * _log_msg(file, line, func, what, ec, what, whatstr, fmt, ...) : log msg - "[what] file:line (func): fmt-str":
+ * _log_msg(file, line, func, ec, what, who, fmt, ...) : log msg - "[what] file:line (func): fmt-str":
  * log_argv(what, argc, argv) : log_info cmd-line - useful for debuing pod exec issues
  */
 void log_init(FILE *dst, int level);
 void _log_msg(const char *file, int line, const char *func,
-    int ec, int what, const char *what_str, const char *fmt, ...)
+    int ec, int what, const char *who, const char *fmt, ...)
     __attribute__((format(printf, 7, 8)));
 void log_argv(const char *what, int argc, char *argv[]);
 

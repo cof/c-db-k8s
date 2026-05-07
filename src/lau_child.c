@@ -234,7 +234,7 @@ int lau_child_prerun(struct lau_child *child)
 // run - clone child aka fork the parent process
 int lau_child_run(struct lau_child *child)
 {
-    child->pid = clone(lau_child_start, child->stack + child->stack_size, child->clone_flags, child);
+    child->pid = clone(lau_child_start, mkptr(child->stack, child->stack_size), child->clone_flags, child);
 
     if (child->pid == -1) {
         // failed ?

@@ -60,7 +60,7 @@ static int      db_file;
 static int      init_done;
 
 // calc hash for key
-static int hash(struct slice key)
+static int calc_hash(struct slice key)
 {
     return dbj2a_hash(key.ptr, key.len) % DB_NUM_BUCKETS;
 }
@@ -108,7 +108,7 @@ static void del_rec(struct db_rec *rec)
 // delete from hash table
 static int hash_del(struct slice key)
 {
-    uint32_t idx = hash(key);
+    uint32_t idx = calc_hash(key);
     uint64_t *pp = &db_buckets[idx];
 
     while (*pp) {
@@ -148,14 +148,14 @@ static struct db_rec *hash_search(int idx, struct slice key)
 // lookup key in hash table
 static struct db_rec *hash_find(struct slice key)
 {
-    int idx = hash(key);
+    int idx = calc_hash(key);
     return hash_search(idx, key);
 }
 
 // store key value in database
 static struct db_rec *hash_put(struct slice key, struct slice val)
 {
-    int idx = hash(key);
+    int idx = calc_hash(key);
     uint64_t *pp = &db_buckets[idx];
 
     while (*pp) {
@@ -190,7 +190,7 @@ static struct db_rec *hash_put(struct slice key, struct slice val)
 // check database file is valid
 static int file_check(void)
 {
-    uint64_t db_link, db_offset;
+    //uint64_t db_offset = 0;
     struct db_rec *rec;
     size_t rec_size;
 
@@ -203,7 +203,7 @@ static int file_check(void)
     }
 
     for (int i = 0; i < DB_NUM_BUCKETS; i++) {
-        db_link = db_buckets[i];
+        uint64_t db_link = db_buckets[i];
         while (db_link) {
             rec_size = sizeof(*rec);
             if (db_link + rec_size > db_size) {
@@ -214,7 +214,7 @@ static int file_check(void)
             if (db_link + rec_size > db_size) {
                 return log_error_rf("truncated rec-data at offset %lu", db_link);
             }
-            db_offset += rec_size;
+            //db_offset += rec_size;
             db_link = rec->next;
         }
     }

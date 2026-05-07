@@ -59,7 +59,7 @@ struct simple_server {
 };
 
 static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uint32_t events);
-static void client_destroy(struct simple_client *client, int can_log);
+static void client_destroy(struct simple_client *client, int rc);
 static void client_close(struct simple_client *client, int force);
 
 static int send_prompt(struct simple_client *client)
@@ -252,7 +252,7 @@ static void do_client_send(struct simple_client *client)
         // need an epoll update
         rc = poll_ctrl(client->parent, &client->sock, events);
         if (rc) return;
-        client->sock.wait_write = events & EPOLLOUT ? 1 : 0;
+        client->sock.wait_write = (events & EPOLLOUT) ? 1 : 0;
     }
 }
 

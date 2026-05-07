@@ -123,7 +123,7 @@ struct simple_sock {
  * ------------------------
  * - SOCK_INIT(fd, max_line, min_size, buf1, len1, buf2, len2)  - init state for file or pipe stream
  * - sock_init(sock, fd, addr, max_line, buf_size, min_size, max_size) -  init state for new or accepted fd
- * - sock_deinit(sock, can_log) : close fd, free buffers
+ * - sock_deinit(sock, rc) : close fd, free buffers
  */
 #define SOCK_INIT(_fd, _max_line,  _min_size, _buf1, _len1, _buf2, _len2) { \
     .fd = _fd, \
@@ -134,26 +134,26 @@ struct simple_sock {
 }
 
 int sock_init(struct simple_sock *sock,
-    int fd, struct sock_addr *addr,
+    int fd, const struct sock_addr *addr,
     size_t max_line, size_t buf_size,
     size_t min_size, size_t max_size);
 
 // close sock, free memory
-void sock_deinit(struct simple_sock *sock, int can_log);
+void sock_deinit(struct simple_sock *sock, int rc);
 
 /* Connection : Create or close client|server socket connections
  * -------------------------------------------------------------
  * - sock_client(sock, mode, hostname, port) : client connect to hostname and port
  * - sock_server(sock, mode, hostname, port) : listen|bind on hostname and port
  * - sock_accept(sock, addr) : accept a pending fd from listener queue
- * - sock_sendfin : half close - send a TCP fin (if possible)
- * - sock_close   : close socket fd
+ * - sock_sendfin(sock)      : half close - send a TCP fin (if possible)
+ * - sock_close(sock, rc)    : close socket fd
  */
-int sock_client(struct simple_sock *sock, uint32_t mode, const char *host, const char *port);
-int sock_server(struct simple_sock *sock, uint32_t mode, const char *host, const char *port);
+int sock_client(struct simple_sock *sock, uint32_t mode, const char *hostname, const char *port);
+int sock_server(struct simple_sock *sock, uint32_t mode, const char *hostname, const char *port);
 int sock_accept(struct simple_sock *sock, struct sock_addr *addr);
 int sock_sendfin(struct simple_sock *sock);
-int sock_close(struct simple_sock *sock, int can_log);
+int sock_close(struct simple_sock *sock, int rc);
 
 /* State : Change sock mode or fd state
  * ------------------------------------
@@ -173,8 +173,8 @@ int sock_set_rcvto(struct simple_sock *sock, uint32_t ms);
  * sock_write_data(sock, data, len)  : write data-buffer to fd
  * sock_write_iovs(sock, niov, iovs) : write data-buffers to socket fd
  */
-ssize_t sock_read_data(struct simple_sock *sock, void *buf, size_t len);
-ssize_t sock_write_data(struct simple_sock *sock, void *buf, size_t len);
+ssize_t sock_read_data(struct simple_sock *sock, void *data, size_t len);
+ssize_t sock_write_data(struct simple_sock *sock, void *data, size_t len);
 ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[static niov]);
 
 /*
@@ -194,7 +194,7 @@ ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[st
  * sock_recv_str(sock,str)         : load str-slice with recv-buffer
  * sock_recvbuf_consume(sock, len) : consume len bytes from recv-buffer
  */
-int sock_write_mem(struct simple_sock *sock, void *buf, size_t len);
+int sock_write_mem(struct simple_sock *sock, void *mem, size_t len);
 int sock_write_str(struct simple_sock *sock, struct slice str);
 int sock_write_line(struct simple_sock *sock, struct slice line);
 

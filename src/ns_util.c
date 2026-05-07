@@ -666,10 +666,10 @@ int veth_gen_idstr(const char *name,
     char *peer, size_t peer_len)
 {
     uint32_t id = dbj2a_hash_str(name) & 0xffffffff;
-    int rc, salt = 10;
+    int salt = 10;
 
     do {
-        rc = gen_str(veth, veth_len, "vth%08x%d", id, salt);
+        int rc = gen_str(veth, veth_len, "vth%08x%d", id, salt);
         if (rc) return rc;
         rc = gen_str(peer, peer_len, "%s", veth);
         if (rc) return rc;

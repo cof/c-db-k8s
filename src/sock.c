@@ -170,7 +170,7 @@ static int listen_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
 
 // init state for new or accepted file descriptor
 int sock_init(struct simple_sock *sock,
-    int fd, struct sock_addr *addr,
+    int fd, const struct sock_addr *addr,
     size_t max_line, size_t buf_size,
     size_t min_size, size_t max_size)
 {
@@ -223,7 +223,7 @@ int sock_server(struct simple_sock *sock, uint32_t mode,
     // resolv hostname+port
     struct dns_sockaddr addrs[DNS_MAXADDR];
     int num_addr = sock_resolv(mode, hostname, port, ARRAY(addrs));
-    if (num_addr <= 0) return num_addr;
+    if (num_addr < 0) return num_addr;
     if (num_addr == 0) return log_error_rf("resolv(%s,%s) not-found", hostname, port);
 
     sock->mode = mode;
@@ -238,7 +238,7 @@ int sock_accept(struct simple_sock *sock, struct sock_addr *addr)
     socklen_t store_len = sizeof(store);
 
     // accept new connection
-    int flags = sock->mode & SOCK_NONBLK ? SOCK_NONBLOCK : 0;
+    int flags = (sock->mode & SOCK_NONBLK) ? SOCK_NONBLOCK : 0;
     int fd = accept4(sock->fd, (struct sockaddr *) &store, &store_len, flags);
     if (fd == -1) {
         /// EAGAIN|EWOULDBLOCK - means no more pending accepts ..
@@ -711,7 +711,7 @@ static char *sock_addr_tostr(struct sock_addr *addr)
         str += ip4_str_encode(addr->v4, str, len);
         *str++ = ':';
         str = uint16_toa(str, __builtin_bswap16(addr->port));
-        str = '\0';
+        *str = '\0';
         break;
     }
     case SOCK_IPV6: { // [::]:port
@@ -719,7 +719,7 @@ static char *sock_addr_tostr(struct sock_addr *addr)
         str += ip6_str_encode(addr->v6, IP6_STR_ADDBRACK | IP6_STR_STRIPV4, str, len);
         *str++ = ':';
         str = uint16_toa(str, __builtin_bswap16(addr->port));
-        str = '\0';
+        *str = '\0';
         break;
     }
     default:
@@ -742,9 +742,9 @@ static char *sock_fd_tostr(int sock_fd)
     char tmp[20];
     char *fd_str = itoa(sock_fd, tmp, sizeof(tmp));
 
-    char *str = buf;
-    str = str_memcpy(str, STR_LIT("fd = "));
-    str = str_cat(str, fd_str);
+    *buf = '\0';
+    char *str = str_memcpy(buf, STR_LIT("fd = "));
+    str_cat(str, fd_str);
 
     return buf;
 }

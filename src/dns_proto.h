@@ -322,12 +322,12 @@ int dns_validate(const void *buf, size_t len, char *emsg, size_t emsg_len);
 // string repr
 int dns_qd_tostr(struct dns_qd *qd, char *buf, size_t buf_len);
 int dns_sects_tostr(struct dns_msg *msg,  char *buf, size_t len);
-int dns_rr_tostr(struct dns_rr *rr, char *buf, size_t buf_len);
+int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len);
 
 const char *rcode_tostr(int rcode);
 const char *opcode_tostr(int opcode);
-const char *dns_class_tostr(int ec);
-const char *dns_type_tostr(int ec);
+const char *dns_class_tostr(int code);
+const char *dns_type_tostr(int code);
 
 int dns_get_type(const char *str);
 int dns_get_class(const char *str);

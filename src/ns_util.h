@@ -92,7 +92,7 @@ int create_path_for_file(const char *file, mode_t mode);
 char *create_subdir(const char *dir, const char *subdir, mode_t mode);
 
 // copy file from src path to dst path
-int copy_file(const char *src_path, const char *dst_path);
+int copy_file(const char *src, const char *dst);
 char *validate_dir(const char *key, const char *dir);
 
 /*
@@ -105,7 +105,7 @@ char *validate_dir(const char *key, const char *dir);
  */
 int open_host_netns(void);
 int switch_child_netns(int *fd, const char *name);
-int restore_host_netns(int fd);
+int restore_host_netns(int netns_fd);
 int create_netns_file(const char *netns_path);
 
 /* Mount
@@ -173,7 +173,7 @@ int apply_seccomp(const char *name);
  */
 static inline int is_reaped(int status)
 {
-    return WIFEXITED(status) | WIFSIGNALED(status) ? 1 : 0;
+    return (WIFEXITED(status) | WIFSIGNALED(status)) ? 1 : 0;
 }
 
 static inline int close_fd(int *fd)

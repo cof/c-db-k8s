@@ -384,16 +384,16 @@ struct sbuf {
  */
 
 #define SBUF_INIT(_mem, _len) { \
-    (uint8_t *) _mem, \
-    (uint8_t *) _mem, \
-    (uint8_t *) _mem + _len \
+    (uint8_t *) (_mem), \
+    (uint8_t *) (_mem), \
+    (uint8_t *) (_mem) + (_len) \
 }
 
 static inline struct sbuf *sbuf_init(struct sbuf *buf, void *mem, size_t len)
 {
     buf->mem = mem;
     buf->ptr = buf->mem;
-    buf->end = buf->mem + len;
+    buf->end = buf->mem ?  buf->mem + len : NULL;
 
     return buf;
 }
