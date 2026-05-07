@@ -299,7 +299,7 @@ int lau_child_postrun(struct lau_child *child, int netns_fd)
 // child process - set security
 static int setup_priv(struct lau_child *child)
 {
-    log_debug("Container (name=%s pid=%d) setup-priv (uid=%d,gid=%d)",
+    log_debug("Container (name=%s pid=%d) setup-priv (uid=%u,gid=%u)",
         child->name, child->pid, child->uid, child->gid);
 
     if (child->drop_caps && drop_bounding_set(child->name)) return -1;

@@ -58,6 +58,7 @@ GCC_DEPS      := -MMD -MP
 CPP_FLAGS     := -D_GNU_SOURCE -Isrc
 EXTRA_CFLAGS  := -Wextra -Wno-missing-field-initializers
 COMMON_CFLAGS := -Wall \
+	-Wformat -Wformat-signedness \
 	-Werror=sign-compare \
 	-Werror=discarded-qualifiers \
 	-Werror=shadow=compatible-local \

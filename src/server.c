@@ -461,7 +461,7 @@ static int server_run(struct simple_server *serv)
     }
 
     if (serv->sig.signo) {
-        log_info("+","server PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ",
+        log_info("+","server PID:%d shutting down: got signal %d (%s) from UID:%u PID:%d ",
             serv->pid,
             serv->sig.signo, strsignal(serv->sig.signo),
             serv->sig.uid,

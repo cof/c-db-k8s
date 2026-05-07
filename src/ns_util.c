@@ -832,11 +832,11 @@ int drop_sudo(const char *name, uid_t uid, uid_t gid)
     */
 
     if (setgid(gid) != 0) {
-        return log_errno_rf("setgid %d failed for %s", gid, name);
+        return log_errno_rf("setgid %u failed for %s", gid, name);
     }
 
     if (setuid(uid) != 0) {
-        return log_errno_rf("setuid %d failed for %s", uid, name);
+        return log_errno_rf("setuid %u failed for %s", uid, name);
     }
 
     return 0;

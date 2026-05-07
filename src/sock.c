@@ -95,7 +95,7 @@ static int sock_addr_load(struct sock_addr *addr, struct sockaddr *sa, socklen_t
 static int connect_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
 {
     int rc = sock_addr_load(&sock->addr, &addr->sa, addr->len);
-    if (rc == 0) return log_error_rf("Unsupported addr %d", addr->len);
+    if (rc == 0) return log_error_rf("Unsupported addr %u", addr->len);
 
     int domain = addr->sa.sa_family;
     int type = addr->sock_type;
@@ -124,7 +124,7 @@ static int connect_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
 static int listen_addr(struct simple_sock *sock, struct dns_sockaddr *addr)
 {
     int rc = sock_addr_load(&sock->addr, &addr->sa, addr->len);
-    if (rc == 0) return log_error_rf("Unsupported addr %d", addr->len);
+    if (rc == 0) return log_error_rf("Unsupported addr %u", addr->len);
 
     // create socket
     int domain = addr->sa.sa_family;
@@ -249,7 +249,7 @@ int sock_accept(struct simple_sock *sock, struct sock_addr *addr)
     int rc = sock_addr_load(addr, (struct sockaddr *) &store, store_len);
     if (rc == 0) {
         close(fd);
-        return log_error_rf("Unsupported addr %d", store_len);
+        return log_error_rf("Unsupported addr %u", store_len);
     }
 
     // turn off nagle
@@ -325,7 +325,7 @@ int sock_set_nonblk(struct simple_sock *sock)
     flags |= O_NONBLOCK;
 
     int rc = fcntl(sock->fd, F_SETFL, flags);
-    if (rc == -1) return log_errno_rf("fcntl %d SETFL 0x%x failed", sock->fd, flags);
+    if (rc == -1) return log_errno_rf("fcntl %d SETFL 0x%x failed", sock->fd, (uint32_t) flags);
 
     return 0;
 }

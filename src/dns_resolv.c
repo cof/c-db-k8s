@@ -752,7 +752,7 @@ static int cache_put(struct dns_cache *cache,
     *sa = *addr;
     sa->sock_type = get_now_ms() / 1000 + ttl;
 
-    log_debug("expiry in %u", sa->sock_type);
+    log_debug("expiry in %u", (uint32_t ) sa->sock_type);
 
     return 1;
 }
@@ -961,7 +961,7 @@ static int enc_dnspkt(struct dns_sock *s, struct dns_msg *msg)
         s->tx_len += 2;
     }
 
-    log_debug("pkt_len=%zu msg_len=%zu is_tcp=%d", s->tx_len, len, s->is_tcp);
+    log_debug("pkt_len=%zu msg_len=%zd is_tcp=%d", s->tx_len, len, s->is_tcp);
 
     return 0;
 }
@@ -1042,7 +1042,7 @@ static int do_connect(struct dns_sock *s, int type, struct dns_sockaddr *addr)
     int sock_type = type == DNS_UDP ? SOCK_DGRAM : SOCK_STREAM;
     sock_type |= SOCK_NONBLOCK | SOCK_CLOEXEC;
     s->fd = socket(addr->sa.sa_family, sock_type, 0);
-    if (s->fd == -1) return log_errno_rf("create_socket(%u) failed", sock_type);
+    if (s->fd == -1) return log_errno_rf("create_socket(0x%x) failed", (uint32_t) sock_type);
     s->is_open = 1;
     s->is_tcp = type == DNS_TCP;
 
@@ -1285,7 +1285,7 @@ static int try_nameserver(struct slice name,
     struct dns_sockaddr *addr, uint32_t timeout_secs, int use_tcp,
     struct dns_result *res)
 {
-    log_debug("n=%.*s a=%s tout=%d tcp=%d 4=%d 6=%d",
+    log_debug("n=%.*s a=%s tout=%u tcp=%d 4=%d 6=%d",
         SLICE(name), ADDR_STR(addr), timeout_secs, use_tcp, NEED(res));
 
     struct dns_ns ns = {
@@ -1383,7 +1383,7 @@ static int try_cache(struct slice name, struct dns_result *res)
 
 static int query_name(struct slice name, struct dns_config *cfg, struct dns_result *res)
 {
-    log_debug("n %.*s #att %d tmo %u #ns %zu", SLICE(name), CFG_QN(cfg));
+    log_debug("n %.*s #att %u tmo %u #ns %zu", SLICE(name), CFG_QN(cfg));
 
     if (!try_cache(name, res)) return 0;
 
@@ -1537,7 +1537,7 @@ static int try_hostname(struct dns_result *res)
     uint32_t allow = res->flags & (DNS_IPV4 | DNS_IPV6 | DNS_V4MAPPED);
     if (allow & DNS_V4MAPPED) allow |= DNS_IPV4;
     if ((allow & addr_type)  == 0) {
-        return log_error_rf("ip-addr type %d match %d failed for %.*s",
+        return log_error_rf("ip-addr type %u match %u failed for %.*s",
             addr_type, allow, SLICE(host_str));
     }
 
@@ -1592,7 +1592,7 @@ int dns_resolv(uint32_t flags,
         .addrs    = addrs
     };
 
-    log_debug("flags=0x%x host=%s port=%s max_addr=%u",
+    log_debug("flags=0x%x host=%s port=%s max_addr=%d",
         flags, hostname, port, max_addr);
 
     if (max_addr <= 0) return 0;

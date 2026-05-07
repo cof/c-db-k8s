@@ -118,7 +118,7 @@ static int lau_check_reaped(struct lau_ctx *lau, struct lau_child *child, int st
     }
     else {
         // unknown reason
-        snprintf(why, sizeof(why), "unknown 0x%08x", child->status);
+        snprintf(why, sizeof(why), "unknown 0x%08x", (uint32_t) child->status);
     }
 
     return log_error_rc(rc, "Container '%s' reaped (pid=%d why=%s)", child->name, child->pid, why);

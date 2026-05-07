@@ -1004,7 +1004,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         // Record prefix
         rc = rr_type == DNS_TYPE_OPT
             ? dns_wmsg(dec, "  %s: %s %s %s\n", sect_str, rec_name, type_str, rdata_desc)
-            : dns_wmsg(dec, "  %s: %s %d %s %s %s\n", sect_str, rec_name, rr_ttl,
+            : dns_wmsg(dec, "  %s: %s %u %s %s %s\n", sect_str, rec_name, rr_ttl,
                 class_str, type_str, rdata_desc);
     }
 
