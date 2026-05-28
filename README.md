@@ -1,13 +1,18 @@
 # db-k8s
 
-A research project into how Linux containers work.
-
-This project began as a 4-day "impossible sprint" to implement a full-stack container runtime and DNS subsystem from first principles with just plain old vim,tmux and gcc. It has since evolved into a research platform for exploring how Linux containers work.
+A research project into how containers runtime environments work on Linux.
 
 There are two parts to this project. 
 
-- **Container Launcher** - Custom application isolation using Linux namespaces and OverlayFS.
+- **Container Launcher** - Custom application isolation using clone and linux namespaces
 - **Kubernetes** - Automated application deployment using Docker, k3d and k8s pods.
+
+Project first looks at how to implement a container runtime like Docker and LXC
+using a combination of clone() and Linux namespace ABI calls to create and run 
+sandboxed applications.
+
+Project then looks at how real-world container environemts are created and managed
+by using Docker engine and a Kubernetes cluster to run client/server applications.
 
 ## Prerequisites
 
