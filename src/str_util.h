@@ -188,8 +188,8 @@ size_t ip6_str_encode(const uint8_t addr[static 16], int flags, char *str, size_
  * str_tolower(str, len)      : lower case a string
  * str_toupper(str, len)      : upper case a string
  * str_countch(str, len, ch)  : count number of ch in str
- * str_cmpmem(s1,len,s2,len2)  : cmp mem return < 0, 0, > 0 if lt, eq or gt
- * str_cmpmemi(s1,len,s2,len2) : cmp mem ignore case return < 0, 0, > 0 if lt, eq or gt
+ * str_cmp(s1,len,s2,len2)     : cmp mem return < 0, 0, > 0 if lt, eq or gt
+ * str_casecmp(s1,len,s2,len2) : cmp mem ignore case return < 0, 0, > 0 if lt, eq or gt
  * str_startswith(str,len,ch) : true if str begins with ch
  * str_endswith(str,len,ch)   : true if str ends with ch
  * str_isnumeric(str, len)    : true if str is numeric
