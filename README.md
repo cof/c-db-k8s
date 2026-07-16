@@ -229,7 +229,7 @@ Client's simply connect to the server and send plain-text commands to modify the
 - single-threaded application written in C with no 3rd party libs
 - Uses epoll (level triggered) to monitor all socket events
 - Uses SOCK-API to create non-blocking dual-stack (IPv4|6) sockets
-- SOCK API uses DNS-RESOLV as a getaddrinfo replacement
+- Uses DNS-RESOLV api to resolve dns names (getaddrinfo replacement)
 - SOCK API uses RWBUF api to read and write lines to sockets
 - DB API used to update key/value store
 - DB backend can support either in memory store or mmap database file
@@ -275,6 +275,7 @@ Client simply reads and writes lines between stdio and server socket.
 - Reads lines from stdin and writes then to socket
 - Reads lines from socket  and writes then to stdout
 - Uses SOCK api to create socket and manage stdin,stdout fds
+- Used DNS-RESOLV api to resolve dns names (getaddrinfo replacement)
 - Uses poll() to monitor fd activity (stdin,stdout,socket)
 - LOG api used to capture errors and logs them to stderr
 
