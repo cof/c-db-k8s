@@ -98,7 +98,8 @@ A custom linux container launcher for running applications inside isolated names
 - Create and manages its own network namespaces
 - Creates an isolated filesystem for each container
 - OverLay FS support using a provided rootfs-dir
-- Supports privilege dropping (sudo,caps,privs,seccomp)
+- Supports privilege reduction (UID/GID,capabilities,seccomp)
+- Supports sequential and parallel container startup
 - Use a simple API for container configuration
 - An Alpine Linux VM was used to test launcher
 
@@ -110,11 +111,12 @@ A custom linux container launcher for running applications inside isolated names
 - create veth devices for container
 - creates a network namespace for each container
 - creates a child process for each container
+- uses clone() and mount APIs to create netns and containers
 - child switches to its private rootfs
 - child creates proc
 - child applies security settings
+- child uses pipe synchronisation for READY/WAIT/GO signalling
 - child execs the client or server binary
-- uses mount and clone to create netns and containers
 
 **Testing**
 
