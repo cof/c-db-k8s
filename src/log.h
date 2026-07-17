@@ -211,7 +211,7 @@ void log_argv(const char *what, int argc, char *argv[]);
     if (log_level >= LOG_ERROR) { \
         _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, NULL, __VA_ARGS__); \
     } \
-    (ec); \
+    (rc); \
 })
 
 #define log_errno_rv(...) ({ \
