@@ -131,7 +131,6 @@ int mount_rootfs(const char *rootfs_dir, const char *rootfs_path);
  * veth_add(veth,peer)     : create a new veth device
  * veth_del(veth)          : delete veth device
  * veth_setns(veth, netns) : set netns for veth
- * veth_gen_idstr(name, veth, veth_len, peer,peer_len) : generate id-str for veth
  * veth_setup(cont_name, netns) : create and setup a veth for container netns
  */
 int veth_add(const char *veth, const char *peer);

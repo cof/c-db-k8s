@@ -661,7 +661,7 @@ int veth_setns(const char *veth, const char *netns)
 }
 
 // generate id-str for veth
-int veth_gen_idstr(const char *name,
+static int veth_gen_idstr(const char *name,
     char *veth, int veth_len,
     char *peer, size_t peer_len)
 {

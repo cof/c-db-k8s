@@ -210,7 +210,7 @@ static void client_destroy(struct simple_client *client, int rc)
 }
 
 // create client for fd + addr
-struct simple_client *client_create(int fd, struct sock_addr *addr)
+static struct simple_client *client_create(int fd, struct sock_addr *addr)
 {
     struct simple_client *client;
 
@@ -257,7 +257,7 @@ static void do_client_send(struct simple_client *client)
 }
 
 // recv-data from sock
-void do_client_recv(struct simple_client *client)
+static void do_client_recv(struct simple_client *client)
 {
     int rc;
 
@@ -334,7 +334,7 @@ static int poll_ctrl(struct simple_server *server, struct simple_sock *sock, uin
 }
 
 // accept incoming client
-struct simple_client *server_accept(struct simple_server *server)
+static struct simple_client *server_accept(struct simple_server *server)
 {
     struct sock_addr addr;
 

@@ -286,7 +286,7 @@ static int dns_dec_err(struct dns_dec *dec, int group, int field, int ec)
 }
 
 // convert dns err to string
-char *dns_err_tostr(struct dns_dec *dec, struct dns_err *err)
+static char *dns_err_tostr(struct dns_dec *dec, struct dns_err *err)
 {
     const char *group = dec_code_tostr(err->group);
     const char *field = dec_code_tostr(err->field);
@@ -351,7 +351,7 @@ int dns_hdr_decode(struct dns_hdr *hdr, const uint8_t *buf, size_t len)
 }
 
 // decode dns name from pkt buf - return bytes written or error
-int decode_name(struct dns_dec *dec, char *name, size_t nlen)
+static int decode_name(struct dns_dec *dec, char *name, size_t nlen)
 {
     size_t pkt_idx = dec->offset;
     size_t out_len = nlen;
@@ -367,7 +367,7 @@ int decode_name(struct dns_dec *dec, char *name, size_t nlen)
             if (njmp == 1) dec->offset += 2;
             // convert to jmp position
             len = ((len & 0x3F) << 8) | dec->pkt_buf[pkt_idx];
-            if (len < 12)      return -DNS_EBADJMP;
+            if (len < 12) return -DNS_EBADJMP;
             if ((size_t) len > dec->pkt_len) return -DNS_EBADJMP;
             // jmp to position
             pkt_idx = len;

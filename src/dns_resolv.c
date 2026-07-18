@@ -384,7 +384,7 @@ again:
 #define OPT_TIMEOUT  2
 #define OPT_ATTEMPTS 3
 #define OPT_USEVC    4
-int str_toopt(struct slice str)
+static int str_toopt(struct slice str)
 {
     if (!slice_cmpmem(str, STR_LIT("ndots"))) return OPT_NDOTS;
     if (!slice_cmpmem(str, STR_LIT("timeout"))) return OPT_TIMEOUT;
@@ -442,7 +442,7 @@ static int cfg_add_nameserver(struct dns_config *cfg, struct slice ip_str)
 #define CFG_SERVER  1
 #define CFG_SEARCH  2
 #define CFG_OPTIONS 3
-int str_tocfg(struct slice str)
+static int str_tocfg(struct slice str)
 {
     if (!slice_cmpmem(str, STR_LIT("nameserver"))) return CFG_SERVER;
     if (!slice_cmpmem(str, STR_LIT("search")))     return CFG_SEARCH;
@@ -478,7 +478,7 @@ static void init_config(struct dns_config *cfg)
     if (!cfg->num_ns) cfg_add_nameserver(cfg, slice_make(STR_LIT("127.0.0.1")));
 }
 
-struct dns_sockaddr *hosts_get(struct dns_hosts *hosts, struct slice hostname)
+static struct dns_sockaddr *hosts_get(struct dns_hosts *hosts, struct slice hostname)
 {
     struct dns_sockaddr *addr = NULL;
 
