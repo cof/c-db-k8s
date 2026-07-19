@@ -321,7 +321,7 @@ show-log:
 
 # ###########
 # TEST SUITES
-# ###########:
+# ###########
 include scripts/tests.mk
 
 .PHONY: test-full

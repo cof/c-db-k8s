@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
 
-/* 
+/*
  * STR_UTIL API
  * ------------
  * codec  : simple encoders/decoders
@@ -350,14 +350,14 @@ char *u32_tostr(uint32_t val);
  * a simple string buffer API
  */
 
-// sbuf state
+// string buffer state
 struct sbuf {
-    uint8_t *mem;
-    uint8_t *ptr;
-    uint8_t *end;
+    uint8_t *mem; // buffer start
+    uint8_t *ptr; // current position
+    uint8_t *end; // buffer end
 };
 
-/* sbuf api
+/* string buffer api
  * ----------
  * SBUF_INIT(mem, len)      : macro for compile-time init
  * sbuf_init(buf, mem, len) : load buffer with mem and size
@@ -369,8 +369,8 @@ struct sbuf {
  * sbuf_len(buf)      : return buffer size
  * sbuf_rem(buf)      : return space remaining
  * sbuf_pos(buf)      : return space used
- * sbuf_mksp(buf,len) : return ptr if space else null
- * sbuf_endz(buf)     : set ptr pos to nul char
+ * sbuf_mksp(buf,len) : reserve space for len bytes (returns NULL if full)
+ * sbuf_endz(buf)     : set last byte of packet buffer to nul char if space
  * -
  * sbuf_putm(buf,  mem, len)      : append mem
  * sbuf_putmc(buf, mem, len, ch)  : append mem + ch
@@ -380,7 +380,7 @@ struct sbuf {
  * sbuf_puts(buf, str)            : append str
  * sbuf_putn(buf, num)            : append number
  * sbuf_putcn(buf, num)           : append ch + number
- * run_cmd(buf, flags, fmt, ...)    : run a system cmd
+ * run_cmd(buf, flags, fmt, ...)  : run a system cmd
  */
 
 #define SBUF_INIT(_mem, _len) { \
@@ -393,7 +393,7 @@ static inline struct sbuf *sbuf_init(struct sbuf *buf, void *mem, size_t len)
 {
     buf->mem = mem;
     buf->ptr = buf->mem;
-    buf->end = buf->mem ?  buf->mem + len : NULL;
+    buf->end = buf->mem ? buf->mem + len : NULL;
 
     return buf;
 }
