@@ -135,9 +135,9 @@ static inline uint32_t dec_u32(const unsigned char *buf)
 {
     uint32_t value;
 
-    value = buf[0] << 24;
-    value |= buf[1] << 16;
-    value |= buf[2] << 8;
+    value = (uint32_t) buf[0] << 24;
+    value |= (uint32_t) buf[1] << 16;
+    value |= (uint32_t) buf[2] << 8;
     value |= buf[3];
 
     return value;
@@ -147,7 +147,7 @@ static inline uint16_t dec_u16(const unsigned char *buf)
 {
     uint16_t value;
 
-    value = buf[0] << 8;
+    value = (uint16_t) buf[0] << 8;
     value |= buf[1];
 
     return value;

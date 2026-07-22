@@ -1522,10 +1522,10 @@ static int dns_rr_encode(struct dns_enc *enc, struct dns_rr *rr, int sc)
         break;
     case DNS_TYPE_OPT: {// EDNS0 Options (RFC 6891)
         uint32_t ttl = 0;
-        ttl |= rr->rdata.opt.ext_rcode << 24;
-        ttl |= rr->rdata.opt.edns_ver  << 16;
+        ttl |= (uint32_t) rr->rdata.opt.ext_rcode << 24;
+        ttl |= (uint32_t) rr->rdata.opt.edns_ver  << 16;
         if (rr->rdata.opt.do_bit) ttl |= 0x8000;
-        ttl |= rr->rdata.opt.z_bits & 0x7fff;
+        ttl |= (uint32_t) rr->rdata.opt.z_bits & 0x7fff;
         // rewind to class field
         wptr = rdlen_ptr - (4 + 2);
         wptr = enc_u16(wptr, rr->rdata.opt.udp_size);
