@@ -3,8 +3,11 @@
 /* 
  * X-Macro hash map - XXX dont add include guards
  *
- * Uses Linear Probing.
- *
+ * Design:
+ * - key 0 reserved as empty, key 0 remaps 0 to -1
+ * - Fibonacci hash
+ * - open addressing / linear Probing
+ * - backshift-shift for deletes
  */
 typedef struct MAP_FN(entry) {
     KEY_TYPE key;
@@ -159,6 +162,44 @@ static inline uint32_t MAP_FN(get)(HASHMAP_TYPE *m, KEY_TYPE key)
     return m->buckets[idx].key ? idx : m->capacity;
 }
 
+/*
+ * Backshift - should the key at nidx move into hole idx?
+ * =========================================
+ * i = hole slot where key deleted
+ * n = current key location
+ * k = home location of key (hash(key)
+ *
+ * Two circular probe cases
+ *
+ * Case 1: i <= n
+ *
+ *  0|1|2|3|4|5|6|7
+ *    a b c
+ *    k i n
+ *
+ *    k <= i OR k > n
+ *
+ * Case 2: i > n
+ *
+ *  0|1|2|3|4|5|6|7
+ *    a   b     c
+ *    n   k     i
+ *
+ *    k > n AND k <= i
+ */
+static inline int MAP_FN(must_backshift)(uint32_t idx, uint32_t nidx, uint32_t kidx)
+{
+#ifdef HASHMAP_BACKSHIFT_NORMAL
+    // gcc branch, clang branhless
+    return idx <= nidx
+        ? kidx <= idx || kidx > nidx
+        : kidx > nidx && kidx <= idx;
+#else
+    // gcc/clang branchless
+    return (nidx < idx) ^ (kidx <= idx) ^ (kidx > nidx);
+#endif
+}
+
 // remove index entry from map - uses "Algorithm R" aka backshifting
 static inline uint32_t MAP_FN(rem)(HASHMAP_TYPE *m, uint32_t idx)
 {
@@ -169,7 +210,7 @@ static inline uint32_t MAP_FN(rem)(HASHMAP_TYPE *m, uint32_t idx)
         nidx = (nidx + 1) & m->mask;
         if (nidx == idx || m->buckets[nidx].key == 0) break;
         uint32_t kidx = KEY_HASH(m->buckets[nidx].key, m->nbits);
-        if ((nidx < idx) ^ (kidx <= idx) ^ (kidx > nidx)) {
+        if (MAP_FN(must_backshift)(idx, nidx, kidx)) {
             m->buckets[idx] = m->buckets[nidx];
             idx = nidx;
         }

@@ -2,28 +2,13 @@
 
 /*
  * HASHMAP
- * ------
- * a hash map API featuring
- * - C11 generics : type safe map operations
- * - X-Macros  : code generation, traceable code
- * - Fibonacci hashing : fast hashing
- * - open addressing : L1/L2/L3 cache friendly
- * - static bucket memory (fixed buffer)
- * - dynamic memory allocation (grows)
+ * -------
+ * Type-safe C11 generic hashmap.
  *
- * Hash functions
- * ---------------
- * dbj2a_hash(key, len) : DJB2a non-cryptographic hash of key
- * dbj2a_hash_str(str)  : DJB2a non-cryptographic hash of str
- * map_hash32(key, bits) : 32-bit Fibonacci hash
- * map_hash64(key, bits) : 64-bit Fibonacci hash
- *
- * MAP types
- * ---------
- * hashmap32 : 32-bit key,value
- * hashmap64 : 64-bit key,value
- * hashmap32s  : char *key, 32-bit val
- * hashmap64s  : char *key, 64-bit val
+ * Key usage:
+ * - key 0 reserved as empty bucket flag
+ * - user key 0 is remapped to (KEY_TYPE) -1
+ * - bucket index is returned by map_put/map_get/map_del
  *
  * MAP api
  * -------
@@ -42,6 +27,30 @@
  * map_val(m, index)      : get value at index
  * map_rem(m, index)      : remove entry at index
  * map_set(m, index, val) : update value at index
+ *
+ * MAP TYPES
+ * ---------
+ * hashmap32  : 32-bit key,value
+ * hashmap64  : 64-bit key,value
+ * hashmap32s : char *key, 32-bit val
+ * hashmap64s : char *key, 64-bit val
+ *
+ * HASH FUNCTIONS
+ * --------------
+ * dbj2a_hash(key, len)  : DJB2a non-cryptographic hash of key
+ * dbj2a_hash_str(str)   : DJB2a non-cryptographic hash of str
+ * map_hash32(key, bits) : 32-bit Fibonacci hash
+ * map_hash64(key, bits) : 64-bit Fibonacci hash
+ *
+ * DESIGN
+ * ------
+ * - C11 generics : type-safe map operations
+ * - X-Macros  : code generaton with debuggable output
+ * - Fibonacci hashing : fast hashing
+ * - open addressing: cache friendly
+ * - backward-shift deletion (no tombstones)
+ * - static bucket memory (fixed buffer)
+ * - dynamic memory allocation (grows)
  */
 #ifndef _HASHMAP_H_
 #define _HASHMAP_H_
@@ -68,6 +77,22 @@ static inline uint64_t dbj2a_hash_str(const char *name)
     return dbj2a_hash(name, strlen(name));
 }
 
+/*
+ * Fibonacci Hashing (Multiplicative Hashing)
+ *
+ *  alpha = floor( 2^W *  (sqrt(5) - 1 ) / 2)
+ *
+ * For W = 32 bits:
+ *   alpha = 2^32 * (sqrt(5) - 1) / 2
+ *         = 2^31 * (sqrt(5) - 1) 
+ *         = 2654435769
+ * e.g.
+ * const unsigned int alpha = pow(2,31) * (sqrt(5) - 1);  
+ *
+ * Note: 2654435769 is swapped for nearest true prime 2654435761 to help
+ * minimize risk of key clustering if input keys increment in steps/strides
+ * that share common factors with the alpha multiplier.
+ */
 // 32 bit Fibonacci hashing
 static inline uint32_t map_hash32(uint32_t key, int bits)
 {
