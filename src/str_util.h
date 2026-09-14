@@ -544,17 +544,17 @@ struct slice {
  * slice_isnumeric(str)          : true if slice is numeric
  * -
  * slice_unbracket(str, left, right) : strip left and right chars from str
- * slice_chop(str, ch)    : chop str-slice at ch if founc
- * slice_rsplit(src, ch)  : split string from right at ch if found
- * slice_splitch(src, ch)        : split string from left if ch found
- * slice_splitset(src, set, len) : split string from left if ch found in set
- * slice_countch(str,ch)  : count number of ch in slice
- * slice_tou32(str)         : convert str-slice to uint32_t
- * slice_ltrim(str)         : left trim leading whitespace
- * slice_rtrim(str)         : right trim trailing whitespace
- * slice_trim(str)          : trim left and right whitespace
- * slice_toupper(str)       : upper case str
- * slice_tolower(str)       : lowwer case str
+ * slice_chop(str, ch)    : chop string at ch if found
+ * slice_splitch(src, ch)       : return left part at ch; advance src past ch
+ * slice_splitset(src, set, n)  : return next token; skip delimiters in set
+ * slice_rsplit(src, ch)        : return right part at last ch; shrink src to left part
+ * slice_countch(str, ch)   : count number of ch in slice
+ * slice_tou32(str)         : convert slice to uint32_t
+ * slice_ltrim(str)         : trim leading whitespace from slice
+ * slice_rtrim(str)         : trim trailing whitespace from slice
+ * slice_trim(str)          : trim left and right whitespace from slice
+ * slice_toupper(str)       : upper case slice
+ * slice_tolower(str)       : lowwer case slice
  * slice_strdup(str)        : create a memory copy of str
  * slice_memcpy(buf,len,str)  : copy slice to buf
  * slice_ip4_decode(str, dst) : decode IPv4 str
@@ -653,66 +653,75 @@ static inline struct slice *slice_chop(struct slice *str, int ch)
     return str;
 }
 
-static inline struct slice slice_rsplit(struct slice *src, int ch)
-{
-    struct slice dst;
-
-    dst.ptr = memrchr(src->ptr, ch, src->len);
-
-    if (dst.ptr) {
-        dst.len = src->len - (dst.ptr - src->ptr + 1);
-        src->len -= dst.len + 1;
-        dst.ptr++;
-    }
-    else {
-        dst.len = 0;
-    }
-
-    return dst;
-}
-
 static inline struct slice slice_splitch(struct slice *src, int ch)
 {
-    struct slice dst = { src->ptr, 0 };
+    if (!src->ptr) {
+        // empty
+        return (struct slice) { NULL, 0 };
+    }
+
+    // look for delimiter
     char *ptr = memchr(src->ptr, ch, src->len);
 
     if (ptr) {
-        // match
-        dst.len = ptr - src->ptr;
-        src->ptr += dst.len + 1;
-        src->len -= dst.len + 1;
-    }
-    else {
-        // no match
-        dst.len = src->len;
-        src->ptr += src->len;
-        src->len = 0;
+        struct slice tok = { src->ptr, ptr - src->ptr };
+        src->ptr = ptr + 1;
+        src->len -= tok.len + 1;
+        return tok;
     }
 
-    return dst;
+    // no match
+    struct slice tok = *src;
+    src->ptr = NULL;
+    src->len = 0;
+
+    return tok;
 }
 
-static inline struct slice slice_splitset(struct slice *src, const char *set, size_t len)
+static inline struct slice slice_splitset(struct slice *src, const char *set, size_t set_len)
 {
-    struct slice dst = { src->ptr, 0 };
+    struct slice tok = { src->ptr, 0 };
     size_t i = 0;
 
     // find first delimiter
-    while (i < src->len && !memchr(set, src->ptr[i], len)) {
+    while (i < src->len && !memchr(set, src->ptr[i], set_len)) {
         i++;
     }
-    dst.len = i;
+    tok.len = i;
 
     // skip delimiters
-    while (i < src->len && memchr(set, src->ptr[i], len)) {
+    while (i < src->len && memchr(set, src->ptr[i], set_len)) {
         i++;
     }
 
+    // remote token from source
     src->ptr += i;
     src->len -= i;
 
-    return dst;
+    return tok;
 }
+
+static inline struct slice slice_rsplit(struct slice *src, int ch)
+{
+    if (!src->ptr) {
+        // empty
+        return (struct slice) { NULL, 0 };
+    }
+
+    // look for delimiter
+    char *ptr = memrchr(src->ptr, ch, src->len);
+
+    if (ptr) {
+        size_t len = ptr - src->ptr;
+        struct slice tok = { ptr + 1, src->len - len - 1 };
+        src->len = len;
+        return tok;
+    }
+
+    // no match
+    return (struct slice) { NULL, 0 };
+}
+
 
 static inline size_t slice_countch(struct slice str, int ch)
 {

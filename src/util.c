@@ -32,6 +32,11 @@
 #include "log.h"
 #include "util.h"
 
+/*
+ * Raise CAP_NET_ADMIN and CAP_NET_RAW into the ambient set so they
+ * survive execvp() in the child and are available to the executed program.
+ * Note: the capabilities must already be present in the permitted set.
+ */
 static bool raise_ambient_caps(void)
 {
     struct __user_cap_header_struct hdr = { _LINUX_CAPABILITY_VERSION_3, 0 };
@@ -52,11 +57,15 @@ static bool raise_ambient_caps(void)
     return true;
 }
 
+#define RUN_MAXARG 32
+
 int run_cmd(struct sbuf *buf, int flags, const char *fmt, ...)
 {
+	// Get available buffer space.
     size_t avail = sbuf_rem(buf);
     char *cmd_str = sbuf_start(buf);
 
+	// Construct command string from fmt and arg
     va_list args;
     va_start(args, fmt);
     int rc = vsnprintf(cmd_str, avail, fmt, args);
@@ -66,6 +75,7 @@ int run_cmd(struct sbuf *buf, int flags, const char *fmt, ...)
     if ((size_t) rc >= avail) return log_error_rf("snprintf: no space");
     log_debug("%s", cmd_str);
 
+	// Construct argv for execvp
     char *cmd_args[RUN_MAXARG];
     size_t cmd_idx = 0;
     struct slice str = slice_make_cstr(cmd_str);
@@ -82,8 +92,10 @@ int run_cmd(struct sbuf *buf, int flags, const char *fmt, ...)
     // fork child to run cmd
     pid_t pid = fork();
     if (pid == 0) {
-        if (flags & RUN_CAPS) raise_ambient_caps();
+        if (flags & RUN_CAPS) 
+			raise_ambient_caps();
         if (flags & RUN_NULL) {
+			// Redirect stderr to /dev/null
             int fd = open("/dev/null", O_WRONLY);
             if (fd != -1) {
                 dup2(fd, STDERR_FILENO);
@@ -91,7 +103,8 @@ int run_cmd(struct sbuf *buf, int flags, const char *fmt, ...)
             }
         }
         execvp(cmd_args[0], cmd_args);
-        _exit(127);
+		// execvp() only returns on failure
+        _exit(127); 
     }
 
     // parent

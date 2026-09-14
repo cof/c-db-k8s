@@ -11,6 +11,7 @@
  * min-max     : safe min/max funcs
  * str-helpers : misc string helpers
  * signal      : simple signal handler api
+ * run         : Execute a command without invoking a shell
  * setter      : for setting string and int values
  * cmd-line    : cmd-line api
  */
@@ -103,9 +104,21 @@ struct simple_sig {
 int setup_signals(struct simple_sig *sig);
 
 
-#define RUN_MAXARG 32
-#define RUN_CAPS 0x1
-#define RUN_NULL 0x2
+/*
+ * run api
+ * -------
+ * run_cmd(sbuf, flags, fmt, 
+ * Execute a command without invoking a shell.
+ *
+ * flags is bitmask of the following RUN_* options:
+ *
+ * 	RUN_CAPS : raise CAP_NET_ADMIN and CAP_NET_RAW in the child before exec.
+ * 	RUN_NULL : redirect child stderr to /dev/null.
+ *
+ * Returns the command's exit status, or -1 on error or signal termination.
+ */
+#define RUN_CAPS 0x01
+#define RUN_NULL 0x02
 int run_cmd(struct sbuf *buf, int flags, const char *fmt, ...) \
     __attribute__((format(printf, 3, 4)));
 
