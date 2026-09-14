@@ -11,6 +11,7 @@
  * min-max     : safe min/max funcs
  * str-helpers : misc string helpers
  * signal      : simple signal handler api
+ * run         : Execute a command without invoking a shell
  * inet        : inet api
  * setter      : for setting string and int values
  * cmd-line    : cmd-line api
@@ -33,27 +34,28 @@
 #include "util.h"
 
 /*
- * Raise CAP_NET_ADMIN and CAP_NET_RAW into the ambient set so they
- * survive execvp() in the child and are available to the executed program.
- * Note: the capabilities must already be present in the permitted set.
+ * Add network capabilities (CAP_NET_ADMIN/CAP_NET_RAW) to the ambient set
+ * so they are passed to the child process when execvp() is called.
+ * The parent process must already have these capabilities in its permitted set.
  */
 static bool raise_ambient_caps(void)
 {
     struct __user_cap_header_struct hdr = { _LINUX_CAPABILITY_VERSION_3, 0 };
     struct __user_cap_data_struct data[2];
 
-    // get process caps
+    // get process capabilities
     if (syscall(SYS_capget, &hdr, data) < 0) return false;
 
-    // mirror permitted to inheritable
+    // copy permitted capabilities to inheritable set
     data[0].inheritable = data[0].permitted;
     data[1].inheritable = data[1].permitted;
     if (syscall(SYS_capset, &hdr, data) < 0) return false;
 
-    // raise Ambient
+    // preserve network capabilities for the child process
     if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_NET_ADMIN, 0, 0) < 0) return false;
     if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_NET_RAW, 0, 0)  < 0) return false;
 
+    // all done
     return true;
 }
 
@@ -61,11 +63,11 @@ static bool raise_ambient_caps(void)
 
 int run_cmd(struct sbuf *buf, int flags, const char *fmt, ...)
 {
-	// Get available buffer space.
+    // Get available buffer space.
     size_t avail = sbuf_rem(buf);
     char *cmd_str = sbuf_start(buf);
 
-	// Construct command string from fmt and arg
+    // Construct command string from fmt and arg
     va_list args;
     va_start(args, fmt);
     int rc = vsnprintf(cmd_str, avail, fmt, args);
@@ -75,7 +77,7 @@ int run_cmd(struct sbuf *buf, int flags, const char *fmt, ...)
     if ((size_t) rc >= avail) return log_error_rf("snprintf: no space");
     log_debug("%s", cmd_str);
 
-	// Construct argv for execvp
+    // Construct argv for execvp
     char *cmd_args[RUN_MAXARG];
     size_t cmd_idx = 0;
     struct slice str = slice_make_cstr(cmd_str);
@@ -93,9 +95,9 @@ int run_cmd(struct sbuf *buf, int flags, const char *fmt, ...)
     pid_t pid = fork();
     if (pid == 0) {
         if (flags & RUN_CAPS) 
-			raise_ambient_caps();
+            raise_ambient_caps();
         if (flags & RUN_NULL) {
-			// Redirect stderr to /dev/null
+            // Redirect stderr to /dev/null
             int fd = open("/dev/null", O_WRONLY);
             if (fd != -1) {
                 dup2(fd, STDERR_FILENO);
@@ -103,7 +105,7 @@ int run_cmd(struct sbuf *buf, int flags, const char *fmt, ...)
             }
         }
         execvp(cmd_args[0], cmd_args);
-		// execvp() only returns on failure
+        // execvp() only returns on failure
         _exit(127); 
     }
 

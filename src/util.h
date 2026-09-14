@@ -112,8 +112,8 @@ int setup_signals(struct simple_sig *sig);
  *
  * flags is bitmask of the following RUN_* options:
  *
- * 	RUN_CAPS : raise CAP_NET_ADMIN and CAP_NET_RAW in the child before exec.
- * 	RUN_NULL : redirect child stderr to /dev/null.
+ *  RUN_CAPS : raise CAP_NET_ADMIN and CAP_NET_RAW in the child before exec.
+ *  RUN_NULL : redirect child stderr to /dev/null.
  *
  * Returns the command's exit status, or -1 on error or signal termination.
  */
