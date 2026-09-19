@@ -74,7 +74,20 @@ int rwbuf_writev(struct rwbuf *buf, const struct iovec *iovs, int nbuf);
 #define RWBUF_ADDNUL 0x4 // add nul terminator to line
 
 /*
- * rwbuf_readline(buf, str, max_line, flags) : read a line (CRLF or LF terminated)
+ * Read a line from buffer (CRLF or LF terminated) into line.
+ *
+ * Returns:
+ *   >0  bytes consumed from the buffer
+ *    0  line incomplete
+ *   -1  line exceeds max
+ *
+ * line->len excludes CR/LF.
+ *
+ * Flags:
+ *   RWBUF_EOF    - return return final partial line at EOF
+ *   RWBUF_NOLOG  - don't log max_line error
+ *   RWBUF_ADDNUL - add NUL terminator to line
+ *
  *  e.g
  *   rc = rwbuf_readline(sock->recv_buf, &line, 128, RWBUF_NOLOG)
  */
