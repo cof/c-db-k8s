@@ -407,18 +407,26 @@ static void cfg_add_options(struct dns_config *cfg, struct slice str)
     }
 }
 
-static void cfg_add_search(struct dns_config *cfg, struct slice str)
+// Add domain names from resolv.conf search list
+static void cfg_add_search(struct dns_config *cfg, struct slice search)
 {
-    while (str.len && cfg->num_search < ARR_LEN(cfg->search)) {
-       struct slice name = slice_splitset(&str, STR_LIT(" \t"));
-       if (cfg->store_len + name.len + 1 > sizeof(cfg->store)) return;
-        // copy name
-        char *str = cfg->store + cfg->store_len;
-        memcpy(str, name.ptr, name.len);
-        str[name.len] = '\0';
-        cfg->store_len += name.len + 1;
+    while (search.len && cfg->num_search < ARR_LEN(cfg->search)) {
+        // get domain name
+        struct slice name = slice_splitset(&search, STR_LIT(" \t"));
+        size_t len = name.len + 1;
+
+        // check space
+        if (len > sizeof(cfg->store) - cfg->store_len) return;
+
+        // copy domain name
+        char *dst = cfg->store + cfg->store_len;
+        memcpy(dst, name.ptr, name.len);
+        dst[name.len] = '\0';
+        str_tolower(dst, name.len);
+
         // add to search list
-        cfg->search[cfg->num_search++] = str;
+        cfg->store_len += len;
+        cfg->search[cfg->num_search++] = dst;
     }
 }
 
@@ -480,19 +488,15 @@ static void init_config(struct dns_config *cfg)
 
 static struct dns_sockaddr *hosts_get(struct dns_hosts *hosts, struct slice hostname)
 {
-    struct dns_sockaddr *addr = NULL;
-
     // lowercase name
     char name[DNS_HOSTS_MAXNAME];
-    size_t name_len = slice_tomem(hostname, name, ARR_LEN(name));
-    if (!name_len) return addr;
-    str_tolower(name, name_len);
+    if (!slice_tocstr(hostname, name, ARR_LEN(name))) return NULL;
+    str_tolower(name, hostname.len);
 
     uint32_t idx = map_get(&hosts->name_toaddr, name);
-    if (idx == map_end(&hosts->name_toaddr)) return addr;
-    addr = mkmem(map_val(&hosts->name_toaddr, idx));
+    if (idx == map_end(&hosts->name_toaddr)) return NULL;
 
-    return addr;
+    return mkmem(map_val(&hosts->name_toaddr, idx));
 }
 
 static int hosts_put(struct dns_hosts *hosts, struct slice hostname, struct dns_sockaddr *addr)
@@ -501,23 +505,26 @@ static int hosts_put(struct dns_hosts *hosts, struct slice hostname, struct dns_
 
     // lowercase hostname
     char name[DNS_HOSTS_MAXNAME];
-    size_t name_len = slice_tomem(hostname, name, ARR_LEN(name));
-    if (!name_len) return 0;
-    str_tolower(name, name_len);
+    if (!slice_tocstr(hostname, name, ARR_LEN(name))) return 0;
+    str_tolower(name, hostname.len);
 
     uint32_t idx = map_get(&hosts->name_toaddr, name);
     if (idx == map_end(&hosts->name_toaddr)) {
-        // new name
-        if (hosts->store_len + name_len + 1 > sizeof(hosts->store)) return 0;
-        char *str = hosts->store + hosts->store_len;
-        memcpy(str, name, name_len);
-        str[name_len] = '\0';
+        // new hostname
+        size_t len = hostname.len + 1;
+        if (hosts->store_len + len > sizeof(hosts->store)) return 0;
+
+        // load store with name
+        char *dst = hosts->store + hosts->store_len;
+        memcpy(dst, name, len);
+
         // add to map
         struct dns_sockaddr *sa = &hosts->addrs[hosts->num_addr];
-        idx = map_put(&hosts->name_toaddr, str, umkmem(sa));
+        idx = map_put(&hosts->name_toaddr, dst, umkmem(sa));
         if (idx == map_end(&hosts->name_toaddr)) return 0;
+
         // added
-        hosts->store_len += name_len + 1;
+        hosts->store_len += len;
         hosts->num_addr++;
     }
 
@@ -528,6 +535,7 @@ static int hosts_put(struct dns_hosts *hosts, struct slice hostname, struct dns_
     return 1;
 }
 
+// Add /etc/hosts entry
 static int hosts_add(struct dns_hosts *hosts,
     struct slice ip, struct slice hostname, struct slice aliases)
 {
@@ -584,43 +592,49 @@ static void init_hosts(struct dns_hosts *hosts)
     log_debug("lines %zu services %zu added %zu", lines, total, num_add);
 }
 
-static uint32_t services_get(struct dns_services *svcs, struct slice port)
+static uint32_t services_get(struct dns_services *svcs, struct slice service)
 {
     char name[DNS_SVC_MAXNAME];
-    size_t len = slice_tomem(port, name, ARR_LEN(name));
-    if (!len) return 0;
-    str_tolower(name, len);
+    if (!slice_tocstr(service, name, ARR_LEN(name))) return 0;
+    str_tolower(name, service.len);
 
     uint32_t idx = map_get(&svcs->name_toport, name);
+    if (idx == map_end(&svcs->name_toport)) return 0;
+
     return map_val(&svcs->name_toport, idx);
 }
 
-static int services_put(struct dns_services *svcs,
-    struct slice service, int ptype, int16_t port)
+static int services_put(struct dns_services *services,
+    struct slice service, int protocol, int16_t port)
 {
+    // lowercase service name
     char name[DNS_SVC_MAXNAME];
-    size_t name_len = slice_tomem(service, name, sizeof(name));
-    if (!name_len) return 0;
-    str_tolower(name, name_len);
+    if (!slice_tocstr(service, name, sizeof(name))) return 0;
+    str_tolower(name, service.len);
 
-    uint32_t idx = map_get(&svcs->name_toport, name);
-    if (idx == map_end(&svcs->name_toport)) {
+    uint32_t idx = map_get(&services->name_toport, name);
+    if (idx == map_end(&services->name_toport)) {
         // new service name
-        if (svcs->store_len + name_len + 1 > sizeof(svcs->store)) return 0;
-        char *str = svcs->store + svcs->store_len;
-        memcpy(str, name, name_len);
-        str[name_len] = '\0';
-        idx = map_put(&svcs->name_toport, str, 0);
-        if (idx == map_end(&svcs->name_toport)) return 0;
-        svcs->store_len += name_len + 1;
-        svcs->num_svc++;
+        size_t len = service.len + 1;
+        if (services->store_len + len > sizeof(services->store)) return 0;
+
+        // copy service name to store
+        char *dst = services->store + services->store_len;
+        memcpy(dst, name, len);
+
+        idx = map_put(&services->name_toport, dst, 0);
+        if (idx == map_end(&services->name_toport)) return 0;
+
+        // added
+        services->store_len += len;
+        services->num_svc++;
     }
 
-    // update ptype and port
-    uint32_t val = map_val(&svcs->name_toport, idx);
-    if (ptype == DNS_TCP) val |= port;
-    if (ptype == DNS_UDP) val |= port << 16;
-    map_set(&svcs->name_toport, idx, val);
+    // update protocol and port
+    uint32_t val = map_val(&services->name_toport, idx);
+    if (protocol == DNS_TCP) val |= port;
+    if (protocol == DNS_UDP) val |= port << 16;
+    map_set(&services->name_toport, idx, val);
 
     return 1;
 }
@@ -684,10 +698,8 @@ static struct dns_sockaddr *cache_get(struct dns_cache *cache,
     // lowercase name
     char name[DNS_HOSTS_MAXNAME];
     name[0] = type & DNS_IPV4 ? '4' : '6';
-    size_t name_len = slice_tomem(hostname, name + 1, ARR_LEN(name) - 1);
-    if (!name_len) return addr;
-    name_len++;
-    str_tolower(name, name_len);
+    if (!slice_tocstr(hostname, name + 1, ARR_LEN(name) - 1)) return 0;
+    str_tolower(name + 1, hostname.len);
 
     uint32_t idx = map_get(&cache->name_toaddr, name);
     if (idx == map_end(&cache->name_toaddr)) return addr;
@@ -718,18 +730,16 @@ static int cache_put(struct dns_cache *cache,
     // lowercase name
     char name[DNS_HOSTS_MAXNAME];
     name[0] = type & DNS_IPV4 ? '4' : '6';
-    size_t name_len = slice_tomem(hostname, name + 1, ARR_LEN(name) - 1);
-    if (!name_len) return 0;
-    name_len++;
-    str_tolower(name, name_len);
+    if (!slice_tocstr(hostname, name + 1, ARR_LEN(name) - 1)) return 0;
+    str_tolower(name + 1, hostname.len);
 
     uint32_t idx = map_get(&cache->name_toaddr, name);
     if (idx == map_end(&cache->name_toaddr)) {
         // new name
-        if (cache->store_len + name_len + 1 > sizeof(cache->store)) return 0;
+        size_t len = hostname.len + 1;
+        if (cache->store_len + len > sizeof(cache->store)) return 0;
         char *str = cache->store + cache->store_len;
-        memcpy(str, name, name_len);
-        str[name_len] = '\0';
+        memcpy(str, name, len);
         // find free slot - TODO need array/list
         struct dns_sockaddr *sa = NULL;
         for (size_t i = 0; i < cache->max_addr; i++) {
@@ -743,7 +753,7 @@ static int cache_put(struct dns_cache *cache,
         idx = map_put(&cache->name_toaddr, str, umkmem(sa));
         if (idx == map_end(&cache->name_toaddr)) return 0;
         // added
-        cache->store_len += name_len + 1;
+        cache->store_len += len;
         cache->num_addr++;
     }
 

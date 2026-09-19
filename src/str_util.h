@@ -12,6 +12,7 @@
 #ifndef _STR_UTIL_H_
 #define _STR_UTIL_H_
 
+#include <stdbool.h>
 #include <stdlib.h> // malloc
 #include <string.h> // memset, memove
 #include "macros.h"
@@ -530,8 +531,7 @@ struct slice {
  * SLICE(str)             : macro to extract the slice len and ptr
  * slice_make(str, len)   : return a slice set with str and len
  * slice_make_cstr(str)   : return a slice set with str
- * slice_copy(str)        : return a copy of str
- * slice_tomem(slice, men, len) : copy slice to mem
+ * slice_tocstr(slice, dst, len) :  copy slice to dst and null-terminate
  * -
  * slice_cmp(s1, s2)             : cmp slices - return < 0, 0, > 0 if lt, eq or gt
  * slice_cmpmem(slice, mem, len) : cmp slice to mem - return < 0, 0, > 0 if lt, eq or gt
@@ -573,19 +573,14 @@ static inline struct slice slice_make_cstr(const char *str)
     return slice_make(str, str ? strlen(str) : 0);
 }
 
-static inline struct slice slice_copy(struct slice val)
+static inline bool slice_tocstr(struct slice val, char *dst, size_t len)
 {
-    return val;
-}
+    if (val.len + 1 > len) return false;
 
-static inline int slice_tomem(struct slice val, void *mem, size_t len)
-{
-    if (val.len + 1 > len) return 0;
+    memcpy(dst, val.ptr, val.len);
+    dst[val.len] = '\0';
 
-    memcpy(mem, val.ptr, val.len);
-    ((char *) mem)[val.len] = '\0';
-
-    return len;
+    return true;
 }
 
 static inline int slice_cmp(struct slice str1, struct slice str2)
