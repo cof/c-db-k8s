@@ -24,12 +24,12 @@
  * uint16_toa(buf, val)       : a fast 16-bit value to ascii encoder
  * uint16_toax(buf, val)      : a fast 16-bit value to hex encoder
  * uint8_tostr(val, str, len) : print 8-bit value to string buffer
- * hex_to_nibble : convert hex-char to 4-bit nibble
- * enc_u32(wptr, value) : encode 32-bit at wptr return wptr+4
- * enc_u16(wptr, value) : encode 16-bit at wptr return wptr+2
- * enc_mem(wptr, mem, len) : encode mem at wptr return wptr + len
- * dec_u32(buf) : decode a 32-bit value at buf
- * dec_u16(buf) : decode a 16-bit value at buf
+ * hex_to_nibble              : convert hex-char to 4-bit nibble
+ * enc_u32(wptr, value)       : encode uint32_t at wptr,  return wptr+4
+ * enc_u16(wptr, value)       : encode uint16_t at wptr,  return wptr+2
+ * enc_mem(wptr, mem, len)    : encode mem at wptr, return wptr + len
+ * dec_u32(buf)               : decode a uint32_t value at buf
+ * dec_u16(buf)               : decode a uint16_t value at buf
  */
 
 // A fast 8-bit value to ascii encoder
@@ -180,25 +180,25 @@ size_t ip6_str_encode(const uint8_t addr[static 16], int flags, char *str, size_
 /*
  * String API
  * ----------
- * safe_strlen(str)           : return strlen if not null else 0
- * str_def(str, def_str)      : return str if set else default
- * str_memcpy(dst, src, len)  : memcpy a short string
- * is_white(ch)               : char is whitespace (SP|TAB|VTAB|CR|LF)
- * is_numeric(ch)             : char is a number (0-9)
- * str_cat(dst, src)          : copy src to dst return position of nul
- * str_tolower(str, len)      : lower case a string
- * str_toupper(str, len)      : upper case a string
- * str_countch(str, len, ch)  : count number of ch in str
- * str_cmp(s1,len,s2,len2)     : cmp mem return < 0, 0, > 0 if lt, eq or gt
- * str_casecmp(s1,len,s2,len2) : cmp mem ignore case return < 0, 0, > 0 if lt, eq or gt
- * str_startswith(str,len,ch) : true if str begins with ch
- * str_endswith(str,len,ch)   : true if str ends with ch
- * str_isnumeric(str, len)    : true if str is numeric
- * str_tou32(str, len)        : convert str to uint32_t
- * itoa(val, buf, len)        : print ascii repr of int to string buffer
- * u32toa(val, buf, len)      : print ascii repr of uint32_t to string buffer
- * int_tostr(val)             : convert int-val to string
- * u32_tostr(val)             : convert u32 to string
+ * safe_strlen(str)            : return strlen if not null else 0
+ * str_def(str, def_str)       : return str if set else default
+ * str_memcpy(dst, src, len)   : memcpy a short string
+ * is_white(ch)                : true if whitespace (SP|TAB|VTAB|CR|LF)
+ * is_numeric(ch)              : true if number (0-9)
+ * str_cat(dst, src)           : append src, return position of nul
+ * str_tolower(str, len)       : convert string to lowercase
+ * str_toupper(str, len)       : convert string to uppercase
+ * str_countch(str, len, ch)   : count occurrences of ch
+ * str_cmp(s1,len,s2,len2)     : cmp mem, return < 0, 0, > 0
+ * str_casecmp(s1,len,s2,len2) : cmp mem ignoring case, return < 0, 0, > 0
+ * str_startswith(str,len,ch)  : true if str begins with ch
+ * str_endswith(str,len,ch)    : true if str ends with ch
+ * str_isnumeric(str, len)     : true if str is numeric
+ * str_tou32(str, len)         : convert str to uint32_t
+ * itoa(val, buf, len)         : print ASCII representation of int
+ * u32toa(val, buf, len)       : print ASCII representation of uint32_t
+ * int_tostr(val)              : convert int to string
+ * u32_tostr(val)              : convert uint32_t to string
  */
 
 static inline size_t safe_strlen(const char *str)
@@ -348,30 +348,41 @@ char *u32_tostr(uint32_t val);
 
 
 /*
- * a simple string buffer API
+ * String buffer api
+ * ------------------
+ * A simple bounded buffer for reading/writing strings
+ * - never allocates memory
+ * - tracks current position and remaining capacity
+ * - provides bounded append operations
  */
 
-// string buffer state
 struct sbuf {
     uint8_t *mem; // buffer start
     uint8_t *ptr; // current position
     uint8_t *end; // buffer end
 };
 
-/* string buffer api
- * ----------
+#define SBUF_INIT(_mem, _len) { \
+    (uint8_t *) (_mem), \
+    (uint8_t *) (_mem), \
+    (uint8_t *) (_mem) + (_len) \
+}
+
+
+/* String buffer API reference
+ * ---------------------------
  * SBUF_INIT(mem, len)      : macro for compile-time init
- * sbuf_init(buf, mem, len) : load buffer with mem and size
+ * sbuf_init(buf, mem, len) : initialize buffer with mem and size
  * sbuf_reset(buf)          : rewind buffer ptr to start
  * -
- * sbuf_start(buf)    : return buffer start pointer
- * sbuf_ptr(buf)      : return buffer position pointer
- * sbuf_end(buf)      : return 1 if ptr at end else 0
- * sbuf_len(buf)      : return buffer size
- * sbuf_rem(buf)      : return space remaining
- * sbuf_pos(buf)      : return space used
- * sbuf_mksp(buf,len) : reserve space for len bytes (returns NULL if full)
- * sbuf_endz(buf)     : set last byte of packet buffer to nul char if space
+ * sbuf_start(buf)          : return buffer start pointer
+ * sbuf_ptr(buf)            : return buffer position pointer
+ * sbuf_end(buf)            : return true if ptr at end
+ * sbuf_len(buf)            : return buffer size
+ * sbuf_rem(buf)            : return space remaining
+ * sbuf_pos(buf)            : return space used
+ * sbuf_mksp(buf,len)       : reserve space for len bytes (returns NULL if full)
+ * sbuf_endz(buf)           : set last byte of packet buffer to nul char if space
  * -
  * sbuf_putm(buf,  mem, len)      : append mem
  * sbuf_putmc(buf, mem, len, ch)  : append mem + ch
@@ -381,14 +392,7 @@ struct sbuf {
  * sbuf_puts(buf, str)            : append str
  * sbuf_putn(buf, num)            : append number
  * sbuf_putcn(buf, num)           : append ch + number
- * run_cmd(buf, flags, fmt, ...)  : run a system cmd
  */
-
-#define SBUF_INIT(_mem, _len) { \
-    (uint8_t *) (_mem), \
-    (uint8_t *) (_mem), \
-    (uint8_t *) (_mem) + (_len) \
-}
 
 static inline struct sbuf *sbuf_init(struct sbuf *buf, void *mem, size_t len)
 {
@@ -429,7 +433,7 @@ static inline size_t sbuf_pos(struct sbuf *buf)
     return buf->ptr - buf->mem;
 }
 
-static inline int sbuf_end(struct sbuf *buf)
+static inline bool sbuf_end(struct sbuf *buf)
 {
     return buf->ptr >= buf->end;
 }
