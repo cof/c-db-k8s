@@ -77,15 +77,16 @@ int run_cmd(struct sbuf *buf, int flags, const char *fmt, ...)
     if ((size_t) rc >= avail) return log_error_rf("snprintf: no space");
     log_debug("%s", cmd_str);
 
-    // Construct argv for execvp
+    // construct argv for execvp by replacing spaces with null chars
     char *cmd_args[RUN_MAXARG];
     size_t cmd_idx = 0;
     struct slice str = slice_make_cstr(cmd_str);
     while (str.len) {
         if (cmd_idx >= ARR_LEN(cmd_args)) return log_error_rf("cmd_args: no space");
         struct slice arg = slice_splitch(&str, ' ');
-        arg.ptr[arg.len] = '\0';
-        cmd_args[cmd_idx++] = arg.ptr;
+        char *ptr = UNCONST(char *, arg.ptr);
+        ptr[arg.len] = '\0';
+        cmd_args[cmd_idx++] = ptr;
     }
     if (cmd_idx >= ARR_LEN(cmd_args)) return log_error_rf("cmd_args: no space"); 
     cmd_args[cmd_idx] = NULL;

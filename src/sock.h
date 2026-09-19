@@ -185,7 +185,7 @@ ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[st
  * sock_write_line(sock, line)    : append str-slice + CRLF to send-buffer
  * -
  * sock_send(sock)                : write send-buffer to fd
- * sock_send_mem(sock, buf, len)  : write send-buffer + mem to fd, buffer remaining
+ * sock_send_mem(sock, mem, len)  : write send-buffer + mem to fd, buffer remaining
  * sock_send_str(sock, str)       : write send-buffer + str-slice to fd, buffer remaining
  * sock_send_line(sock, line)     : write send-buffer + str-sline + CRLF to fd, buffer remaining
  * -
@@ -194,12 +194,12 @@ ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[st
  * sock_recv_str(sock,str)         : load str-slice with recv-buffer
  * sock_recvbuf_consume(sock, len) : consume len bytes from recv-buffer
  */
-int sock_write_mem(struct simple_sock *sock, void *mem, size_t len);
+int sock_write_mem(struct simple_sock *sock, const void *mem, size_t len);
 int sock_write_str(struct simple_sock *sock, struct slice str);
 int sock_write_line(struct simple_sock *sock, struct slice line);
 
 int sock_send(struct simple_sock *sock);
-int sock_send_mem(struct simple_sock *sock, void *mem, size_t len);
+int sock_send_mem(struct simple_sock *sock, const void *mem, size_t len);
 int sock_send_str(struct simple_sock *sock, struct slice str);
 int sock_send_line(struct simple_sock *sock, struct slice line);
 

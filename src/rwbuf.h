@@ -60,11 +60,11 @@ void *rwbuf_mkspace(struct rwbuf *buf, size_t need);
  * BUF I/O : read and write data to buffer
  * ---------------------------------------
  * rwbuf_mkspace(buf, need_len)   : reserve write space in buffer
- * rwbuf_write(buf, buf, len)     : append memory buffer
+ * rwbuf_write(buf, mem, len)     : append memory buffer
  * rwbuf_writev(buf, niov, ivovs) : append memory buffers
  */
-int rwbuf_write(struct rwbuf *buf, void *data, size_t len);
-int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf]);
+int rwbuf_write(struct rwbuf *buf, const void *mem, size_t len);
+int rwbuf_writev(struct rwbuf *buf, const struct iovec *iovs, int nbuf);
 
 /*
  * readline flags
@@ -141,9 +141,9 @@ static inline size_t iovs_len(int niov, const struct iovec iovs[static niov])
     return len;
 }
 
-static inline void iov_load(struct iovec *iov, void *buf, size_t len)
+static inline void iov_load(struct iovec *iov, const void *mem, size_t len)
 {
-    iov->iov_base = buf;
+    iov->iov_base = UNCONST(void *, mem);
     iov->iov_len = len;
 }
 

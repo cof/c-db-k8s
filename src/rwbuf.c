@@ -94,22 +94,21 @@ void *rwbuf_mkspace(struct rwbuf *buf, size_t need)
 }
 
 // append memory buffer contents
-int rwbuf_write(struct rwbuf *buf, void *data, size_t len)
+int rwbuf_write(struct rwbuf *buf, const void *mem, size_t len)
 {
     void *space = rwbuf_mkspace(buf, len);
     if (!space) return -1;
 
-    memcpy(space, data, len);
+    memcpy(space, mem, len);
     buf->widx += len;
 
     return 0;
 }
 
 // append memory buffers contents
-int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf])
+int rwbuf_writev(struct rwbuf *buf, const struct iovec *iovs, int nbuf)
 {
     size_t len = iovs_len(nbuf, iovs);
-
     void *space = rwbuf_mkspace(buf, len);
     if (!space) return -1;
 

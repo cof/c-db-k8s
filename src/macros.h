@@ -1,13 +1,15 @@
 /* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
 
 /*
+ * macros API
+ * ----------
  * ARR_LEN(a) - return length of array
  * ARRAY(a) 
  * STR_LIT(s)  - return a string literal and its length
  * ALIGN_UP(n, a)
  * -
- * RMCONST(_t, _v)  - de-const a pointer without a naked (char*)
- * containerof(ptr, type, member)  - retutn ptr to strucure containg field
+ * UNCONST(_t, _v) - cast away constness from pointer to suppress -Wcast-qual
+ * containerof(ptr, type, member) - return enclosing structure containing field
  * mkptr(ptr, offset)  - cast ptr to char *, adding offset
  * mkoffset(base, ptr) - calc offset in bytes between 2 ptrs 
  * mkmem(val)   - convert uint64_t to ptr  (aka TOPTR)
@@ -28,8 +30,8 @@
 #define STR_LIT(s) (s), (sizeof(s) - 1)
 #define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
 
-// ptr macros - mkmem/umkmem aka TOPTR/FROMPTR
-#define RMCONST(_t, _v) ((_t)(uintptr_t)(_v))
+// ptr macros 
+#define UNCONST(_t, _v)  ((_t)(uintptr_t)(const void *)(_v))
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 #define mkptr(ptr, offset)  ((void *)  ( ((char *) ptr) + offset))
 #define mkoffset(base, ptr) ((uint64_t) ((char *) (ptr) - (char *) (base)))

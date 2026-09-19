@@ -530,7 +530,7 @@ ssize_t sock_write_iovs(struct simple_sock *sock, int niov, struct iovec iovs[st
 /* buffer I/O - send and recv buffers */
 
 // append mem-block to send-buffer
-int sock_write_mem(struct simple_sock *sock, void *mem, size_t len)
+int sock_write_mem(struct simple_sock *sock, const void *mem, size_t len)
 {
     int rc = rwbuf_write(&sock->send_buf, mem, len);
     if (rc) sock->sys_err = 1;
@@ -552,7 +552,7 @@ int sock_write_line(struct simple_sock *sock, struct slice line)
     iov_load(iovs + 0, line.ptr, line.len);
     iov_load(iovs + 1, STR_LIT("\r\n"));
 
-    int rc = rwbuf_writev(&sock->send_buf, 2, iovs);
+    int rc = rwbuf_writev(&sock->send_buf, iovs, 2);
     if (rc) {
         sock->sys_err = 1;
         return rc;
@@ -584,7 +584,7 @@ int sock_send(struct simple_sock *sock)
 }
 
 // write send-buffer + mem to fd, buffer remaining
-int sock_send_mem(struct simple_sock *sock, void *mem, size_t len)
+int sock_send_mem(struct simple_sock *sock, const void *mem, size_t len)
 {
     struct iovec iovs[2];
 

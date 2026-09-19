@@ -510,21 +510,23 @@ static inline size_t sbuf_putcn(struct sbuf *buf, int ch, uint32_t num)
 /*
  * String slice API
  * ----------------
- * A simple structure that stores a ptr + len
- * - Ensures buffer + len always available
- * - No more strlen() to check
- * - Can pass by value a ptr + len
- * - Can return by value a ptr + len
+ * Simple structure that stores a pointer and length.
+ * - Replaces unsafe, unbounded null-terminated string functions (CWE-120)
+ * - Enforces explicit bounds tracking to prevent buffer overflow bugs.
+ * - Ensures buffer + length always available
+ * - Eliminates expensive strlen() overhead checks.
+ * - Functions can seamlessly pass and return them by value.
  */
 
-// slice state
 struct slice {
-    char *ptr;
+    const char *ptr;
     size_t len;
 };
 
-/* str slice API
- * -------------
+#define SLICE(x) ((int) (x).len), (x).ptr
+
+/* Striing slice API reference
+ * ---------------------------
  * SLICE(str)             : macro to extract the slice len and ptr
  * slice_make(str, len)   : return a slice set with str and len
  * slice_make_cstr(str)   : return a slice set with str
@@ -552,29 +554,23 @@ struct slice {
  * slice_tou32(str)         : convert slice to uint32_t
  * slice_ltrim(str)         : trim leading whitespace from slice
  * slice_rtrim(str)         : trim trailing whitespace from slice
- * slice_trim(str)          : trim left and right whitespace from slice
- * slice_toupper(str)       : upper case slice
- * slice_tolower(str)       : lowwer case slice
- * slice_strdup(str)        : create a memory copy of str
+ * slice_trim(str)          : trim whitespace from slice
+ * slice_toupper(str)       : converts slice to uppercase - memory must be writable
+ * slice_tolower(str)       : converts slice to lowercase - memory must be writable
+ * slice_strdup(str)        : duplicate slice into newly allocated memory
  * slice_memcpy(buf,len,str)  : copy slice to buf
  * slice_ip4_decode(str, dst) : decode IPv4 str
  * slice_ip6_decode(str, dst) : decode IPv6 str
  */
-#define SLICE(x) (int) (x).len, (x).ptr
 
-static inline struct slice slice_make(char *buf, size_t len)
+static inline struct slice slice_make(const char *str, size_t len)
 {
-    struct slice dst;
-
-    dst.ptr = buf;
-    dst.len = len;
-
-    return dst;
+    return (struct slice){ str, len };
 }
 
 static inline struct slice slice_make_cstr(const char *str)
 {
-    return slice_make(RMCONST(char *, str), str ? strlen(str) : 0);
+    return slice_make(str, str ? strlen(str) : 0);
 }
 
 static inline struct slice slice_copy(struct slice val)
@@ -585,8 +581,10 @@ static inline struct slice slice_copy(struct slice val)
 static inline int slice_tomem(struct slice val, void *mem, size_t len)
 {
     if (val.len + 1 > len) return 0;
+
     memcpy(mem, val.ptr, val.len);
     ((char *) mem)[val.len] = '\0';
+
     return len;
 }
 
@@ -760,14 +758,14 @@ static inline struct slice *slice_trim(struct slice *str)
 
 static inline struct slice slice_toupper(struct slice str)
 {
-    str_toupper(str.ptr, str.len);
+    str_toupper(UNCONST(char *, str.ptr), str.len);
 
     return str;
 }
 
 static inline struct slice slice_tolower(struct slice str)
 {
-    str_tolower(str.ptr, str.len);
+    str_tolower(UNCONST(char *, str.ptr), str.len);
 
     return str;
 }
