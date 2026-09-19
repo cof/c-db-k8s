@@ -322,6 +322,7 @@ static int res_add_addr(struct dns_result *res, struct dns_sockaddr *addr)
     return -1;
 }
 
+// Fix up IPv4 results according to DNS_V4MAPPED/DNS_ALL flags
 static int fixup_addrs(struct dns_result *res)
 {
     uint32_t flags = res->flags & (DNS_V4MAPPED | DNS_ALL);
@@ -358,24 +359,36 @@ static int fixup_addrs(struct dns_result *res)
     return 0;
 }
 
+/*
+ * Read the next line from fd into line.
+ * Returns >0 on success, 0 on EOF, and <0 on error.
+ * line points into buf and is valid until the next read_line call.
+ */
 static int read_line(int fd, struct rwbuf *buf, struct slice *line)
 {
     if (fd == -1) return 0;
-    int flags = rwbuf_used(buf) ? 0 : 1;
-again:
-    if (flags) {
-       // read block from file
-       void *mem = rwbuf_wptr(buf);
-       size_t space = rwbuf_space(buf);
-       ssize_t nread = read(fd, mem, space);
-       if (nread < 0) return -1;
-       flags = nread == 0 ? RWBUF_EOF : 0;
-       buf->widx += nread;
+    int read_state = rwbuf_used(buf) ? 0 : 1;
+
+read_block:
+    if (read_state) {
+        void *mem = rwbuf_wptr(buf);
+        size_t space = rwbuf_space(buf);
+        if (!space) return -1;
+            
+        ssize_t nread = read(fd, mem, space);
+        if (nread < 0) return -1;
+
+        read_state = nread == 0 ? RWBUF_EOF : 0;
+        buf->widx += nread;
     }
-    int rc = rwbuf_readline(buf, line, buf->size, flags);
+
+    // read line - return length or error; stop if buffer is empty
+    int rc = rwbuf_readline(buf, line, buf->size, read_state);
     if (rc || !rwbuf_used(buf)) return rc;
-    flags = 1;
-    goto again;
+
+    // partial line - need more data
+    read_state = 1;
+    goto read_block;
 }
 
 
@@ -688,17 +701,17 @@ static void init_services(struct dns_services *svcs)
     log_debug("lines %zu services %zu added %zu", lines, total, num_add);
 }
 
-static struct dns_sockaddr *cache_get(struct dns_cache *cache,
-    int type, struct slice hostname)
+static struct dns_sockaddr *
+cache_get(struct dns_cache *cache, int family, struct slice hostname)
 {
     struct dns_sockaddr *addr = NULL;
 
-    log_debug("t=%d n=%.*s", type, SLICE(hostname));
+    log_debug("t=%d n=%.*s", family, SLICE(hostname));
 
     // lowercase name
     char name[DNS_HOSTS_MAXNAME];
-    name[0] = type & DNS_IPV4 ? '4' : '6';
-    if (!slice_tocstr(hostname, name + 1, ARR_LEN(name) - 1)) return 0;
+    name[0] = family & DNS_IPV4 ? '4' : '6';
+    if (!slice_tocstr(hostname, name + 1, ARR_LEN(name) - 1)) return NULL;
     str_tolower(name + 1, hostname.len);
 
     uint32_t idx = map_get(&cache->name_toaddr, name);
@@ -719,17 +732,17 @@ static struct dns_sockaddr *cache_get(struct dns_cache *cache,
 }
 
 static int cache_put(struct dns_cache *cache,
-    int type, struct slice hostname,
+    int family, struct slice hostname,
     struct dns_sockaddr *addr, uint32_t ttl)
 {
-    log_debug("t=%d n=%.*s a=%s ttl=%u", type, SLICE(hostname), ADDR_STR(addr), ttl);
+    log_debug("t=%d n=%.*s a=%s ttl=%u", family, SLICE(hostname), ADDR_STR(addr), ttl);
 
     if (cache->num_addr >= cache->max_addr) return 0;
     if (ttl == 0 || ttl & 0x80000000) return 0;
 
     // lowercase name
     char name[DNS_HOSTS_MAXNAME];
-    name[0] = type & DNS_IPV4 ? '4' : '6';
+    name[0] = family & DNS_IPV4 ? '4' : '6';
     if (!slice_tocstr(hostname, name + 1, ARR_LEN(name) - 1)) return 0;
     str_tolower(name + 1, hostname.len);
 
@@ -1010,7 +1023,7 @@ static int set_dnsreq(struct dns_ns *ns, struct dns_query *q)
     return 0;
 }
 
-// add dns answers to result
+// add DNS answers to result
 static int add_dnsans(struct dns_ns *ns)
 {
     struct dns_msg *msg = &ns->msg;
