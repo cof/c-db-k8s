@@ -7,7 +7,7 @@
  * - key 0 reserved as empty, key 0 remaps 0 to -1
  * - Fibonacci hash
  * - open addressing / linear Probing
- * - backshift-shift for deletes
+ * - backshift deletion
  */
 typedef struct MAP_FN(entry) {
     KEY_TYPE key;

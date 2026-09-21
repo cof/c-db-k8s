@@ -41,7 +41,7 @@ by using Docker engine and a Kubernetes cluster to run client/server application
 - MACROS : macros for safe pointer and offset calculation
 - STR_UTIL : custom string buffer and string slice API
 - UTIL :  helpers for signal handling, system execution and command-line parsing
-- HASHMAP : type-safe api uses C11 generics,X-Macros,Fibonacci hashing,open addressing
+- HASHMAP : C11 _Generic,X-Macros,Fibonacci hashing,open addressing, backshift deletion
 - RWBUF   : memory buffer api
 - DNS-PROTO  : rfc1035 compliant codec
 - DNS-RESOLV : DNS subsystem (getaddrinfo replacement)
