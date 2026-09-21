@@ -36,6 +36,18 @@
 #include "sock.h"
 #include "db.h"
 
+// Exit codes
+enum {
+    EXIT_EOK = 0,
+    EXIT_ECREATE,   // 1: State allocation failed
+    EXIT_EARGV,     // 2: Command line parsing failed
+    EXIT_ESIGNAL,   // 3: Signal handler registration failed
+    EXIT_EDNS,      // 4: DNS init failed
+    EXIT_EDB,       // 5: Setup database failed
+    EXIT_ELISTEN,   // 6: Setup listener failed
+    EXIT_ERUN       // 7: Run loop failed
+};
+
 struct simple_client {
     struct simple_sock sock;
     struct list_elem node;
@@ -597,16 +609,16 @@ int main(int argc, char *argv[])
 
     log_init(NULL, LOG_INFO);
 
-    if (!(serv = server_create())) { ec = 1;  goto done; }
-    if (server_argv(serv, argc, argv)) { ec = 2; goto done; }
-    if (setup_signals(&serv->sig)) { ec = 3 ; goto done; }
-    if (dns_init(0, 0, &serv->sig))  { ec = 4; goto done; }
-    if (setup_database(serv))  { ec = 5; goto done; }
-    if (setup_listener(serv))  { ec = 6; goto done; }
-    if (server_run(serv) != 0) { ec = 7; goto done; }
+    if (!(serv = server_create())) { ec = EXIT_ECREATE;  goto done; }
+    if (server_argv(serv, argc, argv)) { ec = EXIT_EARGV; goto done; }
+    if (setup_signals(&serv->sig)) { ec = EXIT_ESIGNAL; goto done; }
+    if (dns_init(0, 0, &serv->sig))  { ec = EXIT_EDNS; goto done; }
+    if (setup_database(serv))  { ec = EXIT_EDB; goto done; }
+    if (setup_listener(serv))  { ec = EXIT_ELISTEN; goto done; }
+    if (server_run(serv) != 0) { ec = EXIT_ERUN; goto done; }
 
     // all done
-    ec = 0;
+    ec = EXIT_EOK;
 
 done:
     if (serv) server_destroy(serv);
