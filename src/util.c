@@ -34,24 +34,36 @@
 #include "util.h"
 
 /*
- * Add network capabilities (CAP_NET_ADMIN/CAP_NET_RAW) to the ambient set
- * so they are passed to the child process when execvp() is called.
- * The parent process must already have these capabilities in its permitted set.
+ * Allow network capabilities transfer to child processes (e.g. ip link).
+ *
+ * Linux kernel security rules state that a child process does not automatically
+ * inherit it parent's capabilities unless those capabilities are explicitly
+ * moved into the Ambient Capability Set.
  */
 static bool raise_ambient_caps(void)
 {
-    struct __user_cap_header_struct hdr = { _LINUX_CAPABILITY_VERSION_3, 0 };
-    struct __user_cap_data_struct data[2];
+    struct __user_cap_header_struct hdr = { 
+        .version = _LINUX_CAPABILITY_VERSION_3,
+        .pid = 0 
+    };
+    struct __user_cap_data_struct data[_LINUX_CAPABILITY_U32S_3];
 
-    // get process capabilities
+    // get current process capabilities
     if (syscall(SYS_capget, &hdr, data) < 0) return false;
 
-    // copy permitted capabilities to inheritable set
-    data[0].inheritable = data[0].permitted;
-    data[1].inheritable = data[1].permitted;
+    // copy all permitted capabilities to inheritable set
+    for (int i = 0; i < _LINUX_CAPABILITY_U32S_3; i++) {
+        data[i].inheritable = data[i].permitted;
+
+    }
+
+    /* Commit updated capability sets back to the process context.
+     * A capability MUST be in the Inheritable set before the kernel allows
+     * prctl(PR_CAP_AMBIENT_RAISE) to successfully promote it to the Ambient set.
+     */
     if (syscall(SYS_capset, &hdr, data) < 0) return false;
 
-    // preserve network capabilities for the child process
+    // add CAP_NET_ADMIN/CAP_NET_RAW to the ambient set
     if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_NET_ADMIN, 0, 0) < 0) return false;
     if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_NET_RAW, 0, 0)  < 0) return false;
 
