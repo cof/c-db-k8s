@@ -699,12 +699,10 @@ static int lau_init(struct lau_ctx *lau)
     // setup default dirs
     lau->base_dir = gen_path(lau->cur_dir, BASE_DIR);
     if (!lau->base_dir) return -1;
-    str_setval(&lau->src_dir, "cur-dir", lau->cur_dir);
-    if (!lau->src_dir) return -1;
-    str_setval(&lau->netns_suffix, "netns-suffix", "-ns");
-    if (!&lau->netns_suffix) return -1;
-    str_setval(&lau->veth_prefix, "veth-prefix", "veth-");
-    if (!&lau->veth_prefix) return -1;
+
+    if (str_setval(&lau->src_dir, "cur-dir", lau->cur_dir)) return -1;
+    if (str_setval(&lau->netns_suffix, "netns-suffix", "-ns")) return -1;
+    if (str_setval(&lau->veth_prefix, "veth-prefix", "veth-")) return -1;
 
     lau->dir_mode = STANDARD_MODE;
     lau->euid = geteuid();
@@ -712,16 +710,13 @@ static int lau_init(struct lau_ctx *lau)
     // get sudo
     char *env;
     if ((env = getenv("SUDO_USER")) != NULL) {
-        str_setval(&lau->sudo_user, "sudo_user", env);
-        if (!lau->sudo_user) return -1;
+        if (str_setval(&lau->sudo_user, "sudo_user", env)) return -1;
     }
     if ((env = getenv("SUDO_UID")) != NULL) {
-        int_setval(&lau->sudo_uid, "sudo_uid", env);
-        if (!lau->sudo_uid) return -1;
+        if (int_setval(&lau->sudo_uid, "sudo_uid", env)) return -1;
     }
     if ((env = getenv("SUDO_GID")) != NULL) {
-        int_setval(&lau->sudo_gid, "sudo_gid", env);
-        if (!lau->sudo_gid) return -1;
+        if (int_setval(&lau->sudo_gid, "sudo_gid", env)) return -1;
     }
 
     return 0;
