@@ -12,10 +12,12 @@
 #ifndef _DB_H_
 #define _DB_H_
 
-// errors hdr id
-#define DB_FAIL   -1
-#define DB_REINIT -2
+// header id
 #define DB_MAGIC 0x4D594442U // MYDB
+
+// error codes
+#define DB_FAIL   (-1)
+#define DB_REINIT (-2)
 
 /*
  * Initialization

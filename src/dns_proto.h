@@ -114,7 +114,8 @@
 #define DNS_MAX_JMP        16 // max number of compression pointer jmps
 #define DNS_MAX_SUFFIX     32 // max number of compression names
 
-#define DNS_FAIL -1
+// error codes
+#define DNS_FAIL (-1)
 
 // DNS header flags
 #define DNS_FLAGS_QR      0x8000 // query response

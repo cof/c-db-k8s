@@ -82,7 +82,6 @@ void _log_msg(const char *file, int line, const char *func,
     __attribute__((format(printf, 7, 8)));
 void log_argv(const char *what, int argc, char *argv[]);
 
-#define LOG_FAIL -1
 
 // logger levels
 #define LOG_NONE  0
@@ -90,6 +89,9 @@ void log_argv(const char *what, int argc, char *argv[]);
 #define LOG_ERROR 2
 #define LOG_INFO  3
 #define LOG_DEBUG 4
+
+// error codes
+#define LOG_FAIL (-1)
 
 /*
  * macros : various msg-str and fmt-str macros

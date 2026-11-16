@@ -28,8 +28,8 @@
 
 // system errors
 #define UTIL_OK    0
-#define UTIL_FAIL -1
-#define UTIL_EOF  -2
+#define UTIL_FAIL (-1)
+#define UTIL_EOF  (-2)
 
 /* String helpers
  * --------------

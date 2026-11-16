@@ -45,14 +45,14 @@
 #include "resolv.h"
 #include "rwbuf.h"
 
-// socket errors
+// socket error codes
 #define SOCK_OK       0 // read return 0 - nothing to do
 #define SOCK_DATA     1 // read or write worked
-#define SOCK_ERROR   -1 // open|read|write|close error
-#define SOCK_AGAIN   -2 // read would block (EAGAIN|EWOULDBLOCK)
-#define SOCK_CLOSED  -3 // read returned 0
-#define SOCK_TIMEOUT -4 // read|write timeout
-#define SOCK_CREATE  -5 // create socket failed
+#define SOCK_ERROR   (-1) // open|read|write|close error
+#define SOCK_AGAIN   (-2) // read would block (EAGAIN|EWOULDBLOCK)
+#define SOCK_CLOSED  (-3) // read returned 0
+#define SOCK_TIMEOUT (-4) // read|write timeout
+#define SOCK_CREATE  (-5) // create socket failed
 
 
 #define MAX_EVENTS    10
