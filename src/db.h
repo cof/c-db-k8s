@@ -5,12 +5,15 @@
  * ---------------------------------
  * A simple API for key value store management featuring
  * - Flexible storage : can use a pure memory store or mmap file for database
- * - file : mmap file is secure and safe from corruption
- * - file : uses a header and
- * - No fragmention : record state, key, value are stored as one block in memory
+ * - Single block     : record header, key and value stored as one block
+ * - file : fixed-size file with header, bucket table and aligned records
+ * - file : validated on open (magic, version, bounds, alignment, chain loops)
+ * - file : append-only - deleted records are flagged, space not yet reclaimed
  */
 #ifndef _DB_H_
 #define _DB_H_
+
+#include "str_util.h" // struct slice
 
 // header id
 #define DB_MAGIC 0x4D594442U // MYDB
@@ -22,14 +25,14 @@
 /*
  * Initialization
  * --------------
- * db_init(file) : setup database - use file store if set else use memory store 
- * db_deinit()   : shutdown database
+ * db_init(file) : file store if set, else memory - returns 0 ok, < 0 on error
+ * db_deinit()   : shutdown store
  *
  * key-value api
  * -------------
- * db_set(key, value) : store a key value
- * db_get(key)        : get value for key
- * db_del(key)        : delete key
+ * db_set(key, value) : store key value - returns 0 ok, DB_FAIL on error
+ * db_get(key)        : get value for key - returns empty slice if not found
+ * db_del(key)        : delete key - returns 0 if ok, -1 if not found
  */
 
 int db_init(const char *file);
