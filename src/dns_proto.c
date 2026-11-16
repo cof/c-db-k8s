@@ -20,7 +20,6 @@
  */
 #include <errno.h>
 #include <arpa/inet.h>
-#include <arpa/inet.h>
 #include <stdarg.h>
 
 #include "util.h"
@@ -571,17 +570,17 @@ int dns_sects_tostr(struct dns_msg *msg, char *buf, size_t len)
     sect_init(&sect, msg->an, ARR_LEN(msg->an), &msg->an_len);
     rc = dns_sect_tostr(&sect, buf, len);
     if (rc < 0) return rc;
-    nw += nw;
+    nw += rc;
 
     sect_init(&sect, msg->ns, ARR_LEN(msg->ns), &msg->ns_len);
     rc = dns_sect_tostr(&sect, buf, len);
     if (rc < 0) return rc;
-    nw += nw;
+    nw += rc;
 
     sect_init(&sect, msg->ar, ARR_LEN(msg->ar), &msg->ar_len);
     rc = dns_sect_tostr(&sect, buf, len);
     if (rc < 0) return rc;
-    nw += nw;
+    nw += rc;
 
     return nw;
 }
@@ -868,6 +867,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         break;
     }
     case DNS_TYPE_TXT: // Text Strings
+        if (rr) rr->rdata.txt.num_str = 0;
         while (dec->offset < rd_end) {
             // Length
             len = dec->pkt_buf[dec->offset++];
@@ -901,7 +901,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         if (rr) memcpy(rr->rdata.aaaa, rdata, rdlen);
         // describe
         if (dec->need_emsg) {
-            if (!ip4_str_encode(rdata, wptr, wend - wptr)) {
+            if (!ip6_str_encode(rdata, 0, wptr, wend - wptr)) {
                 log_error("ip6_str_decode failed");
                 rdata_str = "???";
             }
@@ -1486,9 +1486,9 @@ static int dns_rr_encode(struct dns_enc *enc, struct dns_rr *rr, int sc)
         wptr = enc_fld_mkspace(enc, 2 + len_cpu + len_os, sc, rr->type);
         if (!wptr) return -1;
         *wptr++ = len_cpu;
-        if (len_cpu)  memcpy(wptr, rr->rdata.hinfo.cpu_str, len_cpu);
+        wptr = mempcpy(wptr, rr->rdata.hinfo.cpu_str, len_cpu);
         *wptr++ = len_os;
-        if (len_os) memcpy(wptr, rr->rdata.hinfo.os_str, len_os);
+        wptr = mempcpy(wptr, rr->rdata.hinfo.os_str, len_os);
         break;
     }
     case DNS_TYPE_MX: // Mail Exchange
@@ -1532,7 +1532,7 @@ static int dns_rr_encode(struct dns_enc *enc, struct dns_rr *rr, int sc)
         // rewind to class field
         wptr = rdlen_ptr - (4 + 2);
         wptr = enc_u16(wptr, rr->rdata.opt.udp_size);
-        wptr = enc_u16(wptr, ttl);
+        wptr = enc_u32(wptr, ttl);
         break;
     }
     case DNS_TYPE_ANY: // Wildcard match (Query only)
@@ -1710,7 +1710,8 @@ static int dns_sect_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dn
         rr->rdata.mx.name = msg_store_name(msg, src_rr->rdata.mx.name);
         if (!rr->rdata.mx.name) return -1;
         break;
-    case DNS_TYPE_TXT:
+    case DNS_TYPE_TXT: // Text string
+        rr->rdata.txt.num_str = 0;
         for (int i = 0; i < src_rr->rdata.txt.num_str; i++) {
             char *src_str = src_rr->rdata.txt.str[i];
             if (rr->rdata.txt.num_str >= ARR_LEN(rr->rdata.txt.str)) return -1;
@@ -1719,7 +1720,7 @@ static int dns_sect_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dn
             rr->rdata.txt.num_str++;
         }
         break;
-    case DNS_TYPE_AAAA:  // IPv6 Address
+    case DNS_TYPE_AAAA: // IPv6 Address
         mempcpy(rr->rdata.aaaa, src_rr->rdata.aaaa, 16);
         break;
     case DNS_TYPE_SRV: // Service Locator
@@ -1736,6 +1737,7 @@ static int dns_sect_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dn
         rr->rdata.opt.ext_rcode = src_rr->rdata.opt.ext_rcode;
         rr->rdata.opt.edns_ver = src_rr->rdata.opt.edns_ver;
         rr->rdata.opt.do_bit = src_rr->rdata.opt.do_bit;
+        rr->rdata.opt.z_bits    = src_rr->rdata.opt.z_bits;
         break;
     default:
         break;
