@@ -77,7 +77,8 @@ static int dns_wmsg(struct dns_dec *dec, const char *fmt, ...) \
     X(DNS_EHDRLEN, "header len") \
     X(DNS_EBADJMP, "Invalid compression pointer (outside range)") \
     X(DNS_EMAXJMP, "Invalid compression pointer (loop detected)") \
-    X(DNS_ENAMELEN, "Name length bigger than pkt size") \
+    X(DNS_EBADLABEL, "Invalid label length (reserved label type)") \
+    X(DNS_ELABELTRUNC, "Label runs past end of packet") \
     X(DNS_EOUTLEN, "Name bigger than buf size") \
     X(DNS_ENONULL, "Name missing null char") \
     X(DNS_ETRUNC,  "Truncated packet") \
@@ -360,22 +361,24 @@ static int decode_name(struct dns_dec *dec, char *name, size_t nlen)
     while (pkt_idx < dec->pkt_len) {
         // get label length
         len = dec->pkt_buf[pkt_idx++];
+
         // compression pointer - rfc1035 - 4.1.4. Message compression
         if ((len & DNS_COMP_PTR) == DNS_COMP_PTR) {
             if (pkt_idx == dec->pkt_len)  return -DNS_EBADJMP;
             if (njmp++ > DNS_MAX_JMP) return -DNS_EMAXJMP;
             if (njmp == 1) dec->offset += 2;
-            // convert to jmp position
+            // convert pointer to packet index
             len = ((len & 0x3F) << 8) | dec->pkt_buf[pkt_idx];
             if (len < 12) return -DNS_EBADJMP;
-            if ((size_t) len > dec->pkt_len) return -DNS_EBADJMP;
-            // jmp to position
+            if ((size_t) len >= dec->pkt_len) return -DNS_EBADJMP;
+            // jump to new packet index
             pkt_idx = len;
             continue;
         }
 
         // label len (0-63)
-        if ((size_t) len > dec->pkt_len - pkt_idx) return -DNS_ENAMELEN;
+        if (len > DNS_LABEL_MAXSTR) return -DNS_EBADLABEL;
+        if ((size_t) len > dec->pkt_len - pkt_idx) return -DNS_ELABELTRUNC;
         if ((size_t) len > out_len) return -DNS_EOUTLEN;
         if (!njmp) dec->offset += 1 + len;
 
