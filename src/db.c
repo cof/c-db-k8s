@@ -7,6 +7,7 @@
  */
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -32,15 +33,7 @@
 
 #define DB_REC_DEL   0x1
 #define DB_FILE_MODE 0666
-
-// database record - note key and val are stored at end of rec
-struct db_rec {
-    uint64_t next;
-    uint64_t flags;
-    size_t key_len;
-    size_t val_len;
-    char data[];
-};
+#define DB_VERSION 1U
 
 // database file header
 struct db_hdr {
@@ -51,13 +44,24 @@ struct db_hdr {
     uint64_t next_offset;
 };
 
+// database record - note key and val are stored at end of rec
+struct db_rec {
+    uint64_t next;
+    uint64_t flags;
+    size_t key_len;
+    size_t val_len;
+    char data[];
+};
+
+#define DB_REC_ALIGN _Alignof(struct db_rec)
+
 // our database
 static uint64_t *db_buckets;
 static void     *db_mmap_ptr;
 static size_t   db_size;
 static struct db_hdr *db_hdr;
-static int      db_file;
-static int      init_done;
+static bool db_file;
+static int  init_done;
 
 // calc hash for key
 static int calc_hash(struct slice key)
@@ -72,12 +76,13 @@ static struct db_rec *create_rec(struct slice key, struct slice val)
     size_t rec_size = sizeof(*rec) + key.len + val.len;
 
     if (db_file) {
-         if (db_hdr->next_offset + rec_size > db_size) {
-            return log_error_rn("mmap rec_size %zu failed", rec_size);
-         }
-         rec = mkptr(db_mmap_ptr, db_hdr->next_offset);
-         db_hdr->next_offset += rec_size;
-         db_hdr->num_rec++;
+        // pad so next record in mmap file starts aligned (malloc already aligns)
+        size_t alloc_size = ALIGN_UP(rec_size, DB_REC_ALIGN);
+        if (db_hdr->next_offset + alloc_size > db_size)
+            return log_error_rn("db file full: need %zu bytes", alloc_size);
+        rec = mkptr(db_mmap_ptr, db_hdr->next_offset);
+        db_hdr->next_offset += alloc_size;
+        db_hdr->num_rec++;
     }
     else {
         rec = malloc(rec_size);
@@ -190,32 +195,40 @@ static struct db_rec *hash_put(struct slice key, struct slice val)
 // check database file is valid
 static int file_check(void)
 {
-    //uint64_t db_offset = 0;
-    struct db_rec *rec;
-    size_t rec_size;
+    // check header
+    if (be32toh(db_hdr->magic) != DB_MAGIC)
+        return log_error_rf("db-hdr magic 0x%08x != 0x%08x", be32toh(db_hdr->magic), DB_MAGIC);
+    if (db_hdr->version != DB_VERSION)
+        return log_error_rf("db-hdr version %u != %u", db_hdr->version, DB_VERSION);
 
-    if (be32toh(db_hdr->magic) != DB_MAGIC) {
-        return log_error_rf("db-hdr magic 0x%08x != 0x%08x", db_hdr->magic, DB_MAGIC);
-    }
+    // check data area
+    uint64_t data_start = sizeof(*db_hdr) + DB_NUM_BUCKETS * sizeof(uint64_t);
+    uint64_t data_end = db_hdr->next_offset;
+    if (data_end < data_start || data_end > db_size || data_end % DB_REC_ALIGN)
+        return log_error_rf("db-hdr next_offset %lu invalid", data_end);
 
-    if (db_hdr->version != 1) {
-        return log_error_rf("db-hdr version %u != %d", db_hdr->version, 1);
-    }
-
+    // check buckets
+    uint64_t max_recs = (data_end - data_start) / sizeof(struct db_rec);
     for (int i = 0; i < DB_NUM_BUCKETS; i++) {
-        uint64_t db_link = db_buckets[i];
-        while (db_link) {
-            rec_size = sizeof(*rec);
-            if (db_link + rec_size > db_size) {
-                return log_error_rf("truncated rec-hdr at offset %lu", db_link);
-            }
-            rec = mkptr(db_mmap_ptr, db_link);
-            rec_size += rec->key_len + rec->val_len;
-            if (db_link + rec_size > db_size) {
-                return log_error_rf("truncated rec-data at offset %lu", db_link);
-            }
-            //db_offset += rec_size;
-            db_link = rec->next;
+        uint64_t rec_offset = db_buckets[i];
+        uint64_t chain_len = 0;
+        while (rec_offset) {
+            // check record start
+            if (rec_offset < data_start || rec_offset % DB_REC_ALIGN)
+                return log_error_rf("bad rec-offset at %lu", rec_offset);
+            if (data_end - rec_offset < sizeof(struct db_rec))
+                return log_error_rf("truncated rec-hdr at offset %lu", rec_offset);
+            // check record data
+            struct db_rec *rec = mkptr(db_mmap_ptr, rec_offset);
+            uint64_t avail = data_end - rec_offset - sizeof(*rec);
+            if (rec->key_len > avail || rec->val_len > avail - rec->key_len)
+                return log_error_rf("truncated rec-data at offset %lu", rec_offset);
+            if (rec->flags & DB_REC_DEL)
+                return log_error_rf("deleted rec in chain at offset %lu", rec_offset);
+            if (++chain_len > max_recs)
+                return log_error_rf("chain loop in bucket %d at offset %lu", i, rec_offset);
+            // next record
+            rec_offset = rec->next;
         }
     }
 
@@ -258,7 +271,7 @@ static int file_init(const char *file)
         if (ftruncate(fd, file_size) == -1) {
             int ec = errno;
             close(fd);
-            return log_ec_rf(ec, "open db-file %s failed", file);
+            return log_ec_rf(ec, "ftruncate file=%s size=%zu failed", file, file_size);
         }
     }
 
@@ -266,20 +279,21 @@ static int file_init(const char *file)
     flags = MAP_SHARED;
     void *mmap_ptr = mmap(NULL, file_size, prot, flags, fd, 0);
     close(fd);
-    if (mmap_ptr == MAP_FAILED) return log_errno_rf("mmap stack %zu failed", file_size);
+    if (mmap_ptr == MAP_FAILED) return log_errno_rf("mmap file=%s size=%zu failed", file, file_size);
 
     // setup db file
-    db_file = 1;
+    db_file = true;
+    db_size = file_size;
     db_mmap_ptr = mmap_ptr;
-    db_size    = file_size;
-    db_hdr     = mkptr(db_mmap_ptr, 0);
+    db_hdr  = mkptr(db_mmap_ptr, 0);
     db_buckets = mkptr(db_mmap_ptr, sizeof(*db_hdr));
 
     int rc = 0;
     if (new_file) {
         db_hdr->magic = htobe32(DB_MAGIC);
-        db_hdr->version = 1;
+        db_hdr->version = DB_VERSION;
         db_hdr->num_rec = 0;
+        db_hdr->num_del = 0;
         db_hdr->next_offset = sizeof(*db_hdr) + table_size;
         memset(db_buckets, 0, table_size);
     }
