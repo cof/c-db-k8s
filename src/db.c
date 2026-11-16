@@ -61,7 +61,7 @@ static void     *db_mmap_ptr;
 static size_t   db_size;
 static struct db_hdr *db_hdr;
 static bool db_file;
-static int  init_done;
+static bool init_done;
 
 // calc hash for key
 static int calc_hash(struct slice key)
@@ -312,7 +312,7 @@ static void hash_deinit(void)
     for (int i = 0; i < DB_NUM_BUCKETS; i++) {
         // free chain in every slot
         while (db_buckets[i]) {
-            struct db_rec *rec = (struct db_rec *) db_buckets[i];
+            struct db_rec *rec = mkmem(db_buckets[i]);
             db_buckets[i] = rec->next;
             del_rec(rec);
         }
@@ -334,18 +334,35 @@ static int hash_init(void)
 // setup database - if file set use file store else use memory store
 int db_init(const char *file)
 {
-    if (init_done) return DB_REINIT;
+    if (init_done)
+        return DB_REINIT;
 
     int rc = file ? file_init(file) : hash_init();
     if (rc) return rc;
-    init_done = 1;
+
+    init_done = true;
 
     return 0;
 }
 
-void db_deinit()
+void db_deinit(void)
 {
-    if (!db_file) hash_deinit();
+    if (db_file) {
+        if (db_mmap_ptr) {
+            msync(db_mmap_ptr, db_size, MS_SYNC);
+            munmap(db_mmap_ptr, db_size);
+        }
+        db_mmap_ptr = NULL;
+        db_hdr = NULL;
+        db_buckets = NULL;
+        db_size = 0;
+        db_file = false;
+    }
+    else {
+        hash_deinit();
+    }
+
+    init_done = false;
 }
 
 int db_set(struct slice key, struct slice val)

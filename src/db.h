@@ -20,7 +20,7 @@
 /*
  * Initialization
  * --------------
- * db_init(file) : setup database - use file store if set else use memory store
+ * db_init(file) : setup database - use file store if set else use memory store 
  * db_deinit()   : shutdown database
  *
  * key-value api
