@@ -15,7 +15,7 @@
 // errors hdr id
 #define DB_FAIL   -1
 #define DB_REINIT -2
-#define DB_MAGIC 0x4D594442 // MYDB
+#define DB_MAGIC 0x4D594442U // MYDB
 
 /*
  * Initialization

@@ -114,7 +114,7 @@ static int hash_del(struct slice key)
     while (*pp) {
         // get hash or mmap entry
         struct db_rec *rec = db_file ? mkptr(db_mmap_ptr, *pp) : mkmem(*pp);
-        if (!slice_cmpmem(key, rec->data, key.len)) {
+        if (!slice_cmpmem(key, rec->data, rec->key_len)) {
             // unchain
             *pp = rec->next;
             // delete existing entry
@@ -138,7 +138,7 @@ static struct db_rec *hash_search(int idx, struct slice key)
     while (db_link) {
         // get hash or mmap entry
         struct db_rec *rec = db_file ? mkptr(db_mmap_ptr, db_link) : mkmem(db_link);
-        if (!slice_cmpmem(key, rec->data, key.len)) return rec;
+        if (!slice_cmpmem(key, rec->data, rec->key_len)) return rec;
         db_link = rec->next;
     }
 
@@ -162,7 +162,7 @@ static struct db_rec *hash_put(struct slice key, struct slice val)
         // get hash or mmap entry
         struct db_rec *rec = db_file ? mkptr(db_mmap_ptr, *pp) : mkmem(*pp);
         // does record match key
-        if (!slice_cmpmem(key, rec->data, key.len)) {
+        if (!slice_cmpmem(key, rec->data, rec->key_len)) {
             // replace existing entry
             struct db_rec *new_rec = create_rec(key, val);
             if (!new_rec) return NULL;
@@ -195,7 +195,7 @@ static int file_check(void)
     size_t rec_size;
 
     if (be32toh(db_hdr->magic) != DB_MAGIC) {
-        return log_error_rf("db-hdr magic 0x%08x != 0x%08d", db_hdr->magic, DB_MAGIC);
+        return log_error_rf("db-hdr magic 0x%08x != 0x%08x", db_hdr->magic, DB_MAGIC);
     }
 
     if (db_hdr->version != 1) {
