@@ -29,7 +29,7 @@ by using Docker engine and a Kubernetes cluster to run client/server application
 - **make all** (Default): Compiles server,client,launcher
 - **make deploy**  Deploy client and server into k8s pods
 - **make test-full** Run all tests (cmds,launcher,k8s)
-- **make spotless**: wipe complied binaries, VMS, k8s pods
+- **make spotless**: wipe compiled binaries, VMS, k8s pods
 
 ## Design
 
@@ -56,7 +56,7 @@ DNS-RESOLV is a complete DNS subsystem designed to be a getaddrinfo replacement.
 - hostname resolution using /etc/hosts 
 - resolver configuration using /etc/resolv.conf 
 - nameserver management supporting attempts/timeout/ndots/search
-- Hyrbid UDP and TCP support
+- Hybrid UDP and TCP support
 - Parallel AAAA and A query support
 - Truncation (TC) support for UDP fall back to TCP
 - EDNS0 supporting UDP packet sizes > 512 bytes

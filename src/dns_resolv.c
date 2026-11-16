@@ -9,7 +9,7 @@
  * - port name resolution using /etc/service
  * - hostname resolution using /etc/hosts
  * - resolver configuration using /etc/resolv.conf
- * - nameserver management supportng attempts/timeout/ndots/search
+ * - nameserver management supporting attempts/timeout/ndots/search
  * - UDP and TCP support
  * - Parallel A and AAAA query support
  * - Truncation (TC) support for UDP fall back to TCP
