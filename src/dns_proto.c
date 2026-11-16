@@ -1492,7 +1492,7 @@ static int dns_rr_encode(struct dns_enc *enc, struct dns_rr *rr, int sc)
         break;
     }
     case DNS_TYPE_MX: // Mail Exchange
-        len = sizeof(uint32_t);
+        len = sizeof(uint16_t);
         wptr = enc_fld_mkspace(enc, len, sc, rr->type);
         if (!wptr) return -1;
         wptr = enc_u16(wptr, rr->rdata.mx.pref);
@@ -1515,7 +1515,7 @@ static int dns_rr_encode(struct dns_enc *enc, struct dns_rr *rr, int sc)
         break;
     case DNS_TYPE_SRV: // Service Locator
         len = sizeof(uint16_t) * 3;
-        wptr = enc_fld_mkspace(enc, 2, sc, rr->type);
+        wptr = enc_fld_mkspace(enc, len, sc, rr->type);
         if (!wptr) return -1;
         wptr = enc_u16(wptr, rr->rdata.srv.prior);
         wptr = enc_u16(wptr, rr->rdata.srv.weight);
