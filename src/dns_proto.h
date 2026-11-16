@@ -88,7 +88,7 @@
  * References
  * ----------
  * rfc1035 - DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION
- * rfc6891 - Extension Mechanisms for DNS (EDNS(0))
+ * rfc6891 - Extension Mechanisms for DNS - EDNS(0)
  */
 #ifndef _DNS_PROTO_H_
 #define _DNS_PROTO_H_

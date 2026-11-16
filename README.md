@@ -11,7 +11,7 @@ Project first looks at how to implement a container runtime like Docker and LXC
 using a combination of clone() and Linux namespace ABI calls to create and run 
 sandboxed applications.
 
-Project then looks at how real-world container environemts are created and managed
+Project then looks at how real-world container environments are created and managed
 by using Docker engine and a Kubernetes cluster to run client/server applications.
 
 ## Prerequisites
@@ -55,11 +55,11 @@ DNS-RESOLV is a complete DNS subsystem designed to be a getaddrinfo replacement.
 - port name resolution using /etc/service
 - hostname resolution using /etc/hosts 
 - resolver configuration using /etc/resolv.conf 
-- nameserver management supportng attempts/timeout/ndots/search
+- nameserver management supporting attempts/timeout/ndots/search
 - Hyrbid UDP and TCP support
 - Parallel AAAA and A query support
 - Truncation (TC) support for UDP fall back to TCP
-- ESDN0 supporting UDP packet sizes > 512 bytes
+- EDNS0 supporting UDP packet sizes > 512 bytes
 - Uses DNS-PROTO a full rfc1035 compliant codec (no mallocs).
 - DNS cache with TTL support
 - non-blocking I/O using poll

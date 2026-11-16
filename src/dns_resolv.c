@@ -13,7 +13,7 @@
  * - UDP and TCP support
  * - Parallel A and AAAA query support
  * - Truncation (TC) support for UDP fall back to TCP
- * - ESDN0 supporting UDP packet sizes > 512 bytes
+ * - EDNS0 supporting UDP packet sizes > 512 bytes
  * - Uses DNS-PROTO a rfc1035 compliant codec
  * - DNS cache with TTL support
  * - non-blocking I/O using poll
@@ -168,7 +168,7 @@ struct dns_ns {
     struct dns_query v6_query;
     struct dns_msg msg;
     unsigned int use_tcp   : 1;
-    unsigned int use_esdn  : 1;
+    unsigned int use_edns  : 1;
     unsigned int have_ans  : 1;
     unsigned int have_ip4  : 1;
     unsigned int have_ip6  : 1;
@@ -1005,8 +1005,8 @@ static int set_dnsreq(struct dns_ns *ns, struct dns_query *q)
     int rc = dns_add_qdn(msg, name.ptr, name.len, q->qtype, q->qclass);
     if (rc) return rc;
 
-    if (ns->use_esdn) {
-        // add ESDN0
+    if (ns->use_edns) {
+        // add EDNS0
         struct dns_rr rr = {
             .type = DNS_TYPE_OPT,
             .rdata.opt.udp_size = min(sizeof(ns->sock.rx_buf), 1232)
@@ -1317,7 +1317,7 @@ static int try_nameserver(struct slice name,
         .res =  res,
         .timeout_ms = timeout_secs * 1000,
         .use_tcp = use_tcp,
-        .use_esdn = 1
+        .use_edns = 1
     };
 
     struct pollfd fd;
