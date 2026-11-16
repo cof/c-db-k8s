@@ -120,12 +120,13 @@
 // DNS header flags
 #define DNS_FLAGS_QR      0x8000 // query response
 #define DNS_FLAGS_OPCODE  0x7800 // 4 bit Opcode (0 .. 5)
-#define DNS_FLAGS_CD      0x0800 // Checking Disabled (DNSSEC)
 #define DNS_FLAGS_AA      0x0400 // Authoritative Answer
 #define DNS_FLAGS_TC      0x0200 // Truncated
-#define DNS_FLAGS_AD      0x0020 // Authentic Data
 #define DNS_FLAGS_RD      0x0100 // Recursion Desired
 #define DNS_FLAGS_RA      0x0080 // Recursion Available
+#define DNS_FLAGS_Z       0x0040 // Reserved (0)
+#define DNS_FLAGS_AD      0x0020 // Authentic Data
+#define DNS_FLAGS_CD      0x0010 // Checking Disabled (DNSSEC)
 #define DNS_FLAGS_RCODE   0x000F // 4 bit Response Code
 
 // DNS opcodes

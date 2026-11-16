@@ -16,7 +16,7 @@
  * References
  * ----------
  * rfc1035 - DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION
- * rfc6891 - Extension Mechanisms for DNS (EDNS(0))
+ * rfc6891 - Extension Mechanisms for DNS - EDNS(0)
  */
 #include <errno.h>
 #include <arpa/inet.h>
