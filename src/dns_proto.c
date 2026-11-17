@@ -164,6 +164,7 @@ static const char *dec_code_tostr(int code)
 const char *dns_class_tostr(int code)
 {
     if (code == 1) return "IN";
+    if (code == 2) return "CS";
     if (code == 3) return "CH";
     if (code == 4) return "HS";
     if (code == 254) return "NONE";
@@ -179,6 +180,7 @@ const char *dns_type_tostr(int code)
     if (code == 5)  return "CNAME";
     if (code == 6)  return "SOA";
     if (code == 12) return "PTR";
+    if (code == 13) return "HINFO";
     if (code == 15) return "MX";
     if (code == 16) return "TXT";
     if (code == 28) return "AAAA";
