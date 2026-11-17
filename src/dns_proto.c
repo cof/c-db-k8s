@@ -262,8 +262,8 @@ static int dns_wmsg(struct dns_dec *dec, const char *fmt, ...)
     int nw = vsnprintf(ptr, avail, fmt, args);
     va_end(args);
 
-    if (nw < 0) return log_errno_rf("dns_wnsg: wwriter failed");
-    if ((size_t) nw >= avail) return log_error_rf("dns_wnsg: no space");
+    if (nw < 0) return log_errno_rf("printf failed");
+    if ((size_t) nw >= avail) return log_error_rf("prinf: no space");
 
     buf->ptr += nw;
 
@@ -271,7 +271,7 @@ static int dns_wmsg(struct dns_dec *dec, const char *fmt, ...)
     return 0;
 }
 
-// log ad dns error
+// log a DNS decode error
 static int dns_dec_err(struct dns_dec *dec, int group, int field, int ec)
 {
     if (dec->nerr >= ARR_LEN(dec->errs)) {
@@ -532,7 +532,7 @@ int dns_rr_tostr(struct dns_rr *rr, char *mem, size_t len)
         sbuf_putcn(buf, ' ', rr->rdata.opt.ext_rcode);
         sbuf_putcm(buf, ' ', STR_LIT("EDNS0:"));
         sbuf_putcn(buf, ' ', rr->rdata.opt.edns_ver);
-        sbuf_putcm(buf, ' ', STR_LIT("DNSEC-OK:"));
+        sbuf_putcm(buf, ' ', STR_LIT("DNSSEC-OK:"));
         sbuf_putcn(buf, ' ', rr->rdata.opt.do_bit);
         break;
     default:
@@ -698,7 +698,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         // describe
         if (dec->need_emsg) {
             if (!ip4_str_encode(rdata, wptr, wend - wptr)) {
-                log_error("ip4_str_decode failed");
+                log_error("ip4_str_encode failed");
                 rdata_str = "???";
             }
             wptr += strlen(rdata_str);
@@ -738,7 +738,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         // Primary Master Name Server - MNAME
         if (dec->need_emsg) {
             rc = snprintf(wptr,wend - wptr, "MNAME=");
-            if (rc < 0) log_errno_rn("snprintf SOA:NNAME failed");
+            if (rc < 0) log_errno_rf("snprintf SOA:MNAME failed");
             wptr += rc;
         }
         // decode mname
@@ -805,7 +805,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         // store rdata
         if (rr) {
             rr->rdata.ptr_name = msg_store_name(msg, wptr);
-            if (!rr->rdata.ptr_name) return log_errno_rf("No space to store PTR");
+            if (!rr->rdata.ptr_name) return log_errno_rf("Store PTR failed");
         }
         wptr += rc;
         rdata_desc = rdata_str;
@@ -828,7 +828,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         if (rr) {
             const char *str = mkptr(dec->pkt_buf, dec->offset);
             rr->rdata.hinfo.cpu_str = msg_store_str(msg, str, len);
-            if (!rr->rdata.hinfo.cpu_str) return log_errno_rf("No space to store HINFO:CPU");
+            if (!rr->rdata.hinfo.cpu_str) return log_errno_rf("Store HINFO:CPU failed");
         }
         dec->offset += len;
 
@@ -840,14 +840,14 @@ static int dns_rr_decode(struct dns_dec *dec,
         if (dec->need_emsg) {
             const char *str = mkptr(dec->pkt_buf, dec->offset);
             rc = snprintf(wptr,wend - wptr, " os-str=%.*s", len, str);
-            if (rc < 0) log_errno_rf("snprintf HINFO:CPU failed");
+            if (rc < 0) log_errno_rf("snprintf HINFO:OS failed");
             wptr += rc;
         }
         // store rdata
         if (rr)  {
             const char *str = mkptr(dec->pkt_buf, dec->offset);
             rr->rdata.hinfo.os_str = msg_store_str(msg, str, len);
-            if (!rr->rdata.hinfo.os_str) return log_errno_rf("No space to store HINFO:OS");
+            if (!rr->rdata.hinfo.os_str) return log_errno_rf("Store HINFO:OS failed");
         }
         dec->offset += len;
         // decoded
@@ -872,7 +872,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         if (rr) {
             rr->rdata.mx.pref = pref;
             rr->rdata.mx.name = msg_store_name(msg, wptr);
-            if (!rr->rdata.mx.name) return log_errno_rf("No space to store mx_name");
+            if (!rr->rdata.mx.name) return log_errno_rf("Store MX_NAME failed");
         }
         wptr += rc;
         // decoded
@@ -889,7 +889,7 @@ static int dns_rr_decode(struct dns_dec *dec,
             if (dec->need_emsg)  {
                 const char *str = mkptr(dec->pkt_buf, dec->offset);
                 rc = snprintf(wptr,wend - wptr, " txt=%.*s", len, str);
-                if (rc < 0) log_errno_rf("snprintf HINFO:CPU failed");
+                if (rc < 0) log_errno_rf("snprintf TXT failed");
                 wptr += rc;
             }
             // store rdata
@@ -897,7 +897,7 @@ static int dns_rr_decode(struct dns_dec *dec,
                 const char *str = mkptr(dec->pkt_buf, dec->offset);
                 size_t max_str = ARR_LEN(rr->rdata.txt.str);
                 size_t num_str = rr->rdata.txt.num_str;
-                if (num_str >= max_str) return log_errno_rf("No space for TXT entry");
+                if (num_str >= max_str) return log_errno_rf("Store TXT failed");
                 rr->rdata.txt.str[num_str] = msg_store_str(msg, str, len);
                 if (!rr->rdata.txt.str[num_str]) return log_errno_rf("No space to store TXT str");
                 rr->rdata.txt.num_str++;
@@ -915,7 +915,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         // describe
         if (dec->need_emsg) {
             if (!ip6_str_encode(rdata, 0, wptr, wend - wptr)) {
-                log_error("ip6_str_decode failed");
+                log_error("ip6_str_encode failed");
                 rdata_str = "???";
             }
             wptr += strlen(rdata_str);

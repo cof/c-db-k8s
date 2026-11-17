@@ -33,7 +33,7 @@
  *  char buf[1280];
  *  struct dns_msg msg;
  *
- *  / set hdr,add question
+ *  // set hdr,add question
  *  dns_msg_reset(&msg);
  *  dns_msg_init(&msg, 0x1234, DNS_FLAGS_RD);
  *  rc = dns_add_qd(&msg, "example.com", DNS_TYPE_A, DNS_CLASS_IN);
@@ -56,23 +56,23 @@
  *
  * API
  * ---
- * dns_hdr_reset(hdr)            : decode DNS header from buffer
+ * dns_hdr_reset(hdr)            : reset header fields to 0
  * dns_hdr_init(hdr, id, flags)  : set id, flags
  * dns_hdr_decode(hdr, buf, len) : decode DNS header from buffer
  * dns_msg_reset(msg)            : reset hdr/len fields to 0
  * dns_msg_init(msg, id, flags)  : set hdr-id, hdr-flags
  * -
- * dns_add_qdl(msg, qname, len, qtype, qclass) : add to qd to msg
+ * dns_add_qdn(msg, qname, len, qtype, qclass) : add to qd to msg
  * dns_add_qd(msg, qname, qtype, qclass)       : add to qd section - no qname len
  * dns_add_rr(msg, sc, rr)                     : add rr to an|ns|ar section
- * dns_cnt_rr(mg)  : count total resource records in msg
+ * dns_cnt_rr(msg)  : count total resource records in msg
  * dns_get_rr(msg) : get first resource record if available
  * -
  * dns_msg_decode(msg, buf, len) : decode DNS message from buffer
  * dns_msg_encode(msg, buf, len) : encode DNS message to buffer
  * dns_validate(pkt, len, emsg, emsg_len) : check pkt valid and print desc to esmg
  * -
- * dnss_qd_tostr(qd, buf, len)    : print qd to buffer
+ * dns_qd_tostr(qd, buf, len)    : print qd to buffer
  * dns_sects_tostr(msg, buf, len) : print sections to buffer
  * dns_rr_tostr(rr, buf, len) : print record to str buffer
  * -
@@ -82,7 +82,7 @@
  * dns_type_tostr(type)   :
  * dns_get_type(str)      :
  * dns_get_class(str)     :
- * dns_get_flag(str)      : convert flags code to str
+ * dns_get_flag(str)      : convert flag str to code
  * dns_sc_tostr(sc)       : convert MSG_AN|MSG_NS|MSG_AR to str
  *
  * References
@@ -167,7 +167,7 @@
 
 struct dns_hdr {
     uint16_t id;        // Transaction ID
-    uint16_t flags;     // Flags (QR, Opcode, AA, TC, RD, RA, Z, RCODE)
+    uint16_t flags;     // Flags (QR, OPCODE, AA, TC, RD, RA, Z, AD, CD, RCODE)
     uint16_t qd_count;  // Number of Question Data
     uint16_t an_count;  // Number of Answer RR
     uint16_t ns_count;  // Number of Authority RR
