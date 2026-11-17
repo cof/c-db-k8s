@@ -567,18 +567,29 @@ int dns_sects_tostr(struct dns_msg *msg, char *buf, size_t len)
     struct dns_sect sect;
     int rc, nw = 0;
 
+    if (!len) return DNS_FAIL;
+    buf[0] = '\0';
+
     sect_init(&sect, msg->an, ARR_LEN(msg->an), &msg->an_len);
-    rc = dns_sect_tostr(&sect, buf, len);
+    rc = dns_sect_tostr(&sect, buf + nw, len - nw);
     if (rc < 0) return rc;
     nw += rc;
 
     sect_init(&sect, msg->ns, ARR_LEN(msg->ns), &msg->ns_len);
-    rc = dns_sect_tostr(&sect, buf, len);
+    if (nw && msg->ns_len) {
+        if ((size_t) nw + 1 >= len) return DNS_FAIL;
+        buf[nw++] = '\n';
+    }
+    rc = dns_sect_tostr(&sect, buf + nw, len - nw);
     if (rc < 0) return rc;
     nw += rc;
 
     sect_init(&sect, msg->ar, ARR_LEN(msg->ar), &msg->ar_len);
-    rc = dns_sect_tostr(&sect, buf, len);
+    if (nw && msg->ar_len) {
+        if ((size_t) nw + 1 >= len) return DNS_FAIL;
+        buf[nw++] = '\n';
+    }
+    rc = dns_sect_tostr(&sect, buf + nw, len - nw);
     if (rc < 0) return rc;
     nw += rc;
 
@@ -669,7 +680,7 @@ static int dns_rr_decode(struct dns_dec *dec,
     }
 
     // rdata
-    uint16_t rd_end = dec->offset + rdlen;
+    size_t rd_end = dec->offset + rdlen;
     if (rd_end > dec->pkt_len) return dns_dec_err(dec, DNS_RR, DNS_RDATA, DNS_ETRUNC);
     const uint8_t *rdata = dec->pkt_buf + dec->offset;
     const char *rdata_str = wptr;
@@ -728,7 +739,7 @@ static int dns_rr_decode(struct dns_dec *dec,
             if (rc < 0) log_errno_rn("snprintf SOA:NNAME failed");
             wptr += rc;
         }
-        // decode name
+        // decode mname
         rc = decode_name(dec, wptr, wend - wptr);
         if (rc < 0) return dns_dec_err(dec, DNS_RR, DNS_SOA, -rc);
         rc = fix_label(rc, wptr, wend);
@@ -745,7 +756,7 @@ static int dns_rr_decode(struct dns_dec *dec,
             if (rc < 0) log_errno_rf("snprintf SOA:RNAME failed");
             wptr += rc;
         }
-        // decode name
+        // decode rname
         rc = decode_name(dec, wptr, wend - wptr);
         if (rc < 0) return dns_dec_err(dec, DNS_RR, DNS_SOA, -rc);
         rc = fix_label(rc, wptr, wend);
@@ -753,7 +764,7 @@ static int dns_rr_decode(struct dns_dec *dec,
         // store rdata
         if (rr) {
             rr->rdata.soa.rname = msg_store_name(msg, wptr);
-            if (!rr->rdata.soa.mname) return log_errno_rf("No space to store rname");
+            if (!rr->rdata.soa.rname) return log_errno_rf("No space to store rname");
         }
         wptr += rc;
 
@@ -786,7 +797,7 @@ static int dns_rr_decode(struct dns_dec *dec,
     case DNS_TYPE_PTR: // Domain Name Pointer (Reverse DNS)
         // decode name
         rc = decode_name(dec, wptr, wend - wptr);
-        if (rc < 0) return dns_dec_err(dec, DNS_RR, DNS_CNAME, -rc);
+        if (rc < 0) return dns_dec_err(dec, DNS_RR, DNS_PTR, -rc);
         rc = fix_label(rc, wptr, wend);
         if (rc < 0) return rc;
         // store rdata
@@ -1308,10 +1319,10 @@ static uint8_t *encode_name(struct dns_enc *enc, uint8_t *wptr, const char *name
 
         // look for next label
         const char *dot_ptr = strchr(name, '.');
-        uint8_t len = dot_ptr ? dot_ptr - name : name_end - name;
+        size_t len = dot_ptr ? dot_ptr - name : name_end - name;
         if (len > DNS_LABEL_MAXSTR) {
             return log_error_rn(
-                "Cannot encode label for name - len %d > max %d", len, DNS_LABEL_MAXSTR
+                "Cannot encode label for name - len %zu > max %d", len, DNS_LABEL_MAXSTR
             );
 
         }
@@ -1672,10 +1683,10 @@ static int dns_sect_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dn
 
     // store rdata
     switch(rr->type) {
-    case DNS_TYPE_A:
+    case DNS_TYPE_A: // IPv4 address
         memcpy(rr->rdata.a, src_rr->rdata.a, 4);
         break;
-    case DNS_TYPE_NS:
+    case DNS_TYPE_NS: // Name Server
         rr->rdata.ns_name = msg_store_name(msg, src_rr->rdata.ns_name);
         if (!rr->rdata.ns_name) return -1;
         break;
@@ -1689,7 +1700,7 @@ static int dns_sect_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dn
         if (!rr->rdata.soa.mname) return -1;
         // Responsible Person's Email - RNAME
         rr->rdata.soa.rname = msg_store_name(msg, src_rr->rdata.soa.rname);
-        if (!rr->rdata.soa.mname) return -1;
+        if (!rr->rdata.soa.rname) return -1;
         rr->rdata.soa.serial   = src_rr->rdata.soa.serial;
         rr->rdata.soa.refresh  = src_rr->rdata.soa.refresh;
         rr->rdata.soa.retry    = src_rr->rdata.soa.retry;
@@ -1703,7 +1714,9 @@ static int dns_sect_add_rr(struct dns_msg *msg, struct dns_sect *sect, struct dn
         break;
     case DNS_TYPE_HINFO: // Host Information
         rr->rdata.hinfo.cpu_str = msg_store_name(msg, src_rr->rdata.hinfo.cpu_str);
-        rr->rdata.hinfo.os_str  = msg_store_name(msg, src_rr->rdata.hinfo.os_str);
+        if (!rr->rdata.hinfo.cpu_str) return -1;
+        rr->rdata.hinfo.os_str = msg_store_name(msg, src_rr->rdata.hinfo.os_str);
+        if (!rr->rdata.hinfo.os_str ) return -1;
         break;
     case DNS_TYPE_MX: // Mail Exchange
         rr->rdata.mx.pref = src_rr->rdata.mx.pref;
