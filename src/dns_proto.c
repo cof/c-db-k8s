@@ -1153,54 +1153,30 @@ static int decode_hdr(struct dns_dec *dec, struct dns_msg *msg)
     struct sbuf buf = SBUF_INIT(tmp, sizeof(tmp));
     tmp[0] = '\0';
 
+    // request/response flags
+    if (qr && (flags & DNS_FLAGS_AA)) sbuf_puticm(&buf, ' ', STR_LIT("AA:1"));
+    if (flags & DNS_FLAGS_TC)         sbuf_puticm(&buf, ' ', STR_LIT("TC:1"));
+    if (flags & DNS_FLAGS_RD)         sbuf_puticm(&buf, ' ', STR_LIT("RD:1"));
+    if (qr && (flags & DNS_FLAGS_RA)) sbuf_puticm(&buf, ' ', STR_LIT("RA:1"));
+    if (flags & DNS_FLAGS_Z)          sbuf_puticm(&buf, ' ', STR_LIT("Z:1"));
+    if (flags & DNS_FLAGS_AD)         sbuf_puticm(&buf, ' ', STR_LIT("AD:1"));
+    if (flags & DNS_FLAGS_CD)         sbuf_puticm(&buf, ' ', STR_LIT("CD:1"));
+
     if (qr) {
-        // query response
-        int as = flags & DNS_FLAGS_AA ? 1 : 0;
-        int tc = flags & DNS_FLAGS_TC ? 1 : 0;
-        int rd = flags & DNS_FLAGS_RD ? 1 : 0;
-        int ra = flags & DNS_FLAGS_RA ? 1 : 0;
         int rcode = flags & DNS_FLAGS_RCODE;
-
-        // add flags
-        if (as) sbuf_puticm(&buf, ' ', STR_LIT("AS:1"));
-        if (tc) sbuf_puticm(&buf, ' ', STR_LIT("TC:1"));
-        if (rd) sbuf_puticm(&buf, ' ', STR_LIT("RD:1"));
-        if (ra) sbuf_puticm(&buf, ' ', STR_LIT("RA:1"));
-
-        // convert RCODE to str
-        const char *rcode_str = rcode_tostr(rcode);
         sbuf_puticm(&buf, ' ', STR_LIT("RCODE:"));
-        sbuf_puts(&buf, rcode_str);
-
-        // validate OPCODE range
-        if (opcode == 3 || opcode > 5) {
-            sbuf_puticm(&buf, ' ', STR_LIT("bad-opcode"));
-        }
-
+        sbuf_puts(&buf, rcode_tostr(rcode));
         // validate RCODE range
         if (rcode > 10) {
             sbuf_puticm(&buf, ' ', STR_LIT("bad-rcode"));
             dns_dec_err(dec, DNS_PDU, DNS_HDR, DNS_ERCODE);
         }
     }
-    else {
-        // query
-        int tc = flags & DNS_FLAGS_TC ? 1 : 0;
-        int rd = flags & DNS_FLAGS_RD ? 1 : 0;
-        int cd = flags & DNS_FLAGS_CD ? 1 : 0;
-        int ad = flags & DNS_FLAGS_AD ? 1 : 0;
 
-        // add flags
-        if (tc) sbuf_puticm(&buf, ' ', STR_LIT("TC:1"));
-        if (rd) sbuf_puticm(&buf, ' ', STR_LIT("RD:1"));
-        if (cd) sbuf_puticm(&buf, ' ', STR_LIT("CD:1"));
-        if (ad) sbuf_puticm(&buf, ' ', STR_LIT("AD:1"));
-
-        // validate OPCODE range
-        if (opcode == 3 || opcode > 5) {
-            sbuf_puticm(&buf, ' ', STR_LIT("bad-opcode"));
-            dns_dec_err(dec, DNS_PDU, DNS_HDR, DNS_EOPCODE);
-        }
+    // validate OPCODE range
+    if (opcode == 3 || opcode > 5) {
+        sbuf_puticm(&buf, ' ', STR_LIT("bad-opcode"));
+        dns_dec_err(dec, DNS_PDU, DNS_HDR, DNS_EOPCODE);
     }
 
     // desc PDU as we decode
